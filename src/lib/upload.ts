@@ -1,0 +1,35 @@
+// Validação de uploads pelo conteúdo real (assinatura do arquivo), não pela extensão ou pelo tipo informado pelo navegador.
+import type { AiFile } from "./ai";
+
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+export type UploadKind = "text" | "pdf" | "image";
+
+export class UploadError extends Error {}
+
+function sniff(buf: Buffer): { kind: UploadKind; mime: string } | null {
+  if (buf.subarray(0, 5).toString("latin1") === "%PDF-") return { kind: "pdf", mime: "application/pdf" };
+  if (buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return { kind: "image", mime: "image/png" };
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return { kind: "image", mime: "image/jpeg" };
+  if (buf.subarray(0, 4).toString("latin1") === "RIFF" && buf.subarray(8, 12).toString("latin1") === "WEBP") return { kind: "image", mime: "image/webp" };
+  // Texto: sem bytes nulos nem de controle (exceto tab, quebras de linha e form feed) no início
+  const head = buf.subarray(0, 8192);
+  for (const b of head) if (b === 0 || (b < 0x20 && ![0x09, 0x0a, 0x0c, 0x0d].includes(b))) return null;
+  return { kind: "text", mime: "text/plain" };
+}
+
+export async function readUpload(entry: FormDataEntryValue | null, allowed: UploadKind[]): Promise<AiFile | null> {
+  if (!(entry instanceof File) || entry.size === 0) return null;
+  if (entry.size > MAX_UPLOAD_BYTES) throw new UploadError(`O arquivo "${entry.name}" excede 10 MB.`);
+  const data = Buffer.from(await entry.arrayBuffer());
+  const t = sniff(data);
+  if (!t || !allowed.includes(t.kind))
+    throw new UploadError(`O arquivo "${entry.name}" não é de um tipo aceito aqui (${allowed.join(", ")}).`);
+  const name = entry.name.replace(/[^\w.\- ()À-ú]/g, "_").slice(0, 120);
+  return { name, mime: t.mime, data };
+}
+
+// CNAB, OFX e CSV de bancos brasileiros costumam vir em Latin-1
+export function decodeText(buf: Buffer) {
+  const utf8 = buf.toString("utf8");
+  return utf8.includes("�") ? buf.toString("latin1") : utf8;
+}

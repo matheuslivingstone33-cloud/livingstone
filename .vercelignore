@@ -1,0 +1,7 @@
+# Segredos e artefatos locais nunca vão para a Vercel
+.env*
+!.env.example
+.demo-online.txt
+node_modules
+.next
+.claude

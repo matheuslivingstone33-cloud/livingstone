@@ -1,0 +1,265 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  ANALISTA
+  AUDITOR
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  // Configurações da instituição: layout CNAB, chave Pix, limites de PLD, crédito e cobrança
+  settings  Json     @default("{}")
+  createdAt DateTime @default(now())
+  users     User[]
+  restricted RestrictedEntry[]
+  audits    AuditLog[]
+  reconciliations Reconciliation[]
+  credits   CreditAnalysis[]
+  legacies  LegacyAnalysis[]
+  debts     Debt[]
+  pldBatches PldBatch[]
+  pldCases   PldCase[]
+}
+
+model User {
+  id           String       @id @default(cuid())
+  name         String
+  email        String       @unique
+  passwordHash String
+  role         Role         @default(ANALISTA)
+  orgId        String
+  org          Organization @relation(fields: [orgId], references: [id])
+  active       Boolean      @default(true)
+  // Bloqueio contra força bruta
+  failedLogins Int          @default(0)
+  lockedUntil  DateTime?
+  // Incrementado para derrubar todas as sessões do usuário (troca de senha, desativação, mudança de perfil)
+  sessionVersion Int        @default(0)
+  lastLoginAt  DateTime?
+  createdAt    DateTime     @default(now())
+  audits       AuditLog[]
+}
+
+// Listas restritivas e de PEP importadas pela instituição (CSNU, OFAC, CGU/PEP, listas internas)
+model RestrictedEntry {
+  id        String       @id @default(cuid())
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id])
+  source    String // CSNU | OFAC | PEP | INTERNA
+  name      String
+  nameKey   String // nome normalizado para comparação
+  document  String? // apenas dígitos (pode ser parcial, ex.: CPF mascarado da CGU)
+  reason    String?
+  importedAt DateTime    @default(now())
+
+  @@index([orgId, document])
+  @@index([orgId, nameKey])
+}
+
+model AuditLog {
+  id        String       @id @default(cuid())
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id])
+  userId    String?
+  user      User?        @relation(fields: [userId], references: [id])
+  action    String
+  detail    String?
+  ip        String?
+  // Encadeamento: cada registro guarda o hash do anterior, então alterar ou apagar um quebra a corrente
+  prevHash  String?
+  hash      String?
+  createdAt DateTime     @default(now())
+
+  @@index([orgId, createdAt])
+}
+
+model Reconciliation {
+  id            String       @id @default(cuid())
+  orgId         String
+  org           Organization @relation(fields: [orgId], references: [id])
+  name          String
+  bankFileName  String
+  bankFormat    String
+  expectedFileName String
+  totalExpected Decimal      @db.Decimal(14, 2)
+  totalReceived Decimal      @db.Decimal(14, 2)
+  matched       Int
+  divergent     Int
+  missing       Int
+  unexpected    Int
+  createdAt     DateTime     @default(now())
+  items         ReconciliationItem[]
+}
+
+model ReconciliationItem {
+  id               String         @id @default(cuid())
+  reconciliationId String
+  reconciliation   Reconciliation @relation(fields: [reconciliationId], references: [id], onDelete: Cascade)
+  reference        String
+  payer            String?
+  expectedAmount   Decimal?       @db.Decimal(14, 2)
+  receivedAmount   Decimal?       @db.Decimal(14, 2)
+  paidAt           DateTime?
+  status           String // CONCILIADO | DIVERGENTE | PENDENTE | NAO_ESPERADO
+  note             String?
+}
+
+model CreditAnalysis {
+  id          String       @id @default(cuid())
+  orgId       String
+  org         Organization @relation(fields: [orgId], references: [id])
+  applicant   String
+  document    String?
+  requested   Decimal      @db.Decimal(14, 2)
+  score       Int
+  decision    String // APROVAR | ANALISAR | RECUSAR
+  extracted   Json
+  flags       Json
+  opinion     String
+  aiProvider  String
+  fileNames   String[]
+  createdAt   DateTime     @default(now())
+}
+
+model LegacyAnalysis {
+  id          String       @id @default(cuid())
+  orgId       String
+  org         Organization @relation(fields: [orgId], references: [id])
+  fileName    String
+  language    String
+  target      String
+  linesOfCode Int
+  summary     String
+  rules       Json
+  modernCode  String
+  aiProvider  String
+  createdAt   DateTime     @default(now())
+}
+
+// Cobrança e renegociação
+model Debt {
+  id           String       @id @default(cuid())
+  orgId        String
+  org          Organization @relation(fields: [orgId], references: [id])
+  contract     String
+  debtor       String
+  document     String
+  phone        String?
+  email        String?
+  product      String?
+  principal    Decimal      @db.Decimal(14, 2)
+  dueDate      DateTime
+  status       String       @default("EM_ABERTO") // EM_ABERTO | NEGOCIANDO | ACORDO | QUITADO
+  importedFrom String?
+  createdAt    DateTime     @default(now())
+  agreements   Agreement[]
+
+  @@unique([orgId, contract])
+}
+
+model Agreement {
+  id            String    @id @default(cuid())
+  debtId        String
+  debt          Debt      @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  token         String    @unique
+  daysLate      Int
+  updatedDebt   Decimal   @db.Decimal(14, 2)
+  discountPct   Decimal   @db.Decimal(5, 2)
+  total         Decimal   @db.Decimal(14, 2)
+  installments  Int
+  installment   Decimal   @db.Decimal(14, 2)
+  options       Json
+  message       String
+  aiProvider    String
+  status        String    @default("PROPOSTO") // PROPOSTO | ACEITO | PAGO | CANCELADO
+  acceptedAt    DateTime?
+  paidAt        DateTime?
+  paidAmount    Decimal?  @db.Decimal(14, 2)
+  expiresAt     DateTime
+  payments      Payment[]
+  createdAt     DateTime  @default(now())
+}
+
+// Prevenção à lavagem de dinheiro (PLD)
+model PldBatch {
+  id           String           @id @default(cuid())
+  orgId        String
+  org          Organization     @relation(fields: [orgId], references: [id])
+  fileName     String
+  transactions Int
+  clients      Int
+  alerts       Int
+  periodStart  DateTime
+  periodEnd    DateTime
+  createdAt    DateTime         @default(now())
+  txs          PldTransaction[]
+  cases        PldCase[]
+}
+
+model PldTransaction {
+  id           String   @id @default(cuid())
+  batchId      String
+  batch        PldBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  date         DateTime
+  clientDoc    String
+  clientName   String
+  type         String
+  direction    String // C (crédito) | D (débito)
+  amount       Decimal  @db.Decimal(14, 2)
+  counterparty String?
+  counterDoc   String?
+
+  @@index([batchId, clientDoc])
+}
+
+model PldCase {
+  id            String       @id @default(cuid())
+  orgId         String
+  org           Organization @relation(fields: [orgId], references: [id])
+  batchId       String
+  batch         PldBatch     @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  clientDoc     String
+  clientName    String
+  declaredIncome Decimal?    @db.Decimal(14, 2)
+  pep           Boolean      @default(false)
+  score         Int
+  risk          String // ALTO | MEDIO | BAIXO
+  alerts        Json
+  totalIn       Decimal      @db.Decimal(14, 2)
+  totalOut      Decimal      @db.Decimal(14, 2)
+  status        String       @default("EM_ANALISE") // EM_ANALISE | ARQUIVADO | COMUNICADO
+  mandatory     Boolean      @default(false) // comunicação obrigatória (COE), ex.: espécie >= R$ 50 mil
+  dueAt         DateTime
+  dossier       String?
+  dossierAi     String?
+  decision      String?
+  protocol      String?
+  decidedBy     String?
+  decidedAt     DateTime?
+  createdAt     DateTime     @default(now())
+
+  @@index([orgId, status])
+}
+
+// Pagamentos recebidos (manual ou webhook Pix). endToEndId único garante que o mesmo Pix não seja baixado duas vezes.
+model Payment {
+  id          String    @id @default(cuid())
+  agreementId String
+  agreement   Agreement @relation(fields: [agreementId], references: [id], onDelete: Cascade)
+  amount      Decimal   @db.Decimal(14, 2)
+  paidAt      DateTime
+  source      String // MANUAL | PIX_WEBHOOK
+  endToEndId  String?   @unique
+  txid        String?
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+}

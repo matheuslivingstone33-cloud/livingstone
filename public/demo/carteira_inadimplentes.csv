@@ -1,0 +1,13 @@
+contrato;devedor;cpf_cnpj;telefone;email;produto;valor;vencimento
+CT-2024-0101;Roberto Carlos Mendes;321.654.987-11;(11) 98765-4321;roberto.mendes@exemplo.com;Empréstimo pessoal;4200,00;05/10/2026
+CT-2024-0102;Fernanda Lima Rocha;456.789.123-22;(21) 99876-5432;fernanda.rocha@exemplo.com;Cartão de crédito;1850,40;22/09/2026
+CT-2024-0103;Lucas Martins Prado;789.123.456-33;(31) 98123-4567;;Cheque especial;980,00;02/09/2026
+CT-2024-0104;Juliana Alves Costa;147.258.369-44;(41) 99234-5678;juliana.costa@exemplo.com;Empréstimo pessoal;7600,00;03/08/2026
+CT-2024-0105;Paulo Sérgio Nunes;258.369.147-55;(51) 98345-6789;;Financiamento de veículo;15800,00;29/06/2026
+CT-2024-0106;Marcos Vinícius Teixeira;369.147.258-66;(61) 99456-7890;marcos.teixeira@exemplo.com;Cartão de crédito;3240,90;20/05/2026
+CT-2024-0107;Beatriz Santos Ferreira;159.357.486-77;(71) 98567-8901;;Empréstimo pessoal;5500,00;31/03/2026
+CT-2024-0108;Ricardo Gomes Barbosa;357.159.684-88;(81) 99678-9012;ricardo.barbosa@exemplo.com;Capital de giro;22000,00;31/12/2025
+CT-2024-0109;Patrícia Oliveira Dias;951.753.852-99;(85) 98789-0123;;Cheque especial;1200,00;12/09/2025
+CT-2024-0110;Eduardo Ramos Cardoso;753.951.258-00;(19) 99890-1234;eduardo.cardoso@exemplo.com;Empréstimo pessoal;9800,00;25/04/2025
+CT-2024-0111;Camila Freitas Moura;852.456.753-12;(27) 98901-2345;;Cartão de crédito;640,00;29/09/2026
+CT-2024-0112;Gustavo Henrique Pires;12.345.678/0001-90;(11) 3456-7890;financeiro@pireseletrica.com.br;Capital de giro;38500,00;14/07/2026

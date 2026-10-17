@@ -1,0 +1,57 @@
+// Webhook Pix (padrão da API Pix do Banco Central): o PSP avisa cada Pix recebido e o acordo é baixado automaticamente.
+// URL a cadastrar no PSP: {APP_URL}/api/pix/webhook/{orgId}?secret={segredo}  (o PSP costuma acrescentar "/pix" ao final).
+// Em produção, prefira também mTLS no PSP/proxy; o segredo aqui é uma segunda camada.
+import { timingSafeEqual } from "node:crypto";
+import { db } from "@/lib/db";
+import { auditRaw } from "@/lib/auth";
+import { parseTxid } from "@/lib/collection";
+import { getSettings } from "@/lib/settings";
+import { applyPayment } from "@/lib/payments";
+
+type PixEvent = { endToEndId?: string; txid?: string; valor?: string; horario?: string };
+
+const safeEqual = (a: string, b: string) => {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+};
+
+export async function POST(req: Request, { params }: { params: Promise<{ orgId: string }> }) {
+  const { orgId } = await params;
+  const org = await db.organization.findUnique({ where: { id: orgId }, select: { id: true } });
+  const secret = org ? (await getSettings(orgId)).pix.webhookSecret : "";
+  const given = req.headers.get("x-webhook-secret") ?? new URL(req.url).searchParams.get("secret") ?? "";
+  // Mesma resposta para organização inexistente ou segredo errado: não revela quais IDs existem
+  if (!org || !secret || secret.length < 24 || !safeEqual(given, secret)) return new Response("Não autorizado", { status: 401 });
+
+  let body: { pix?: PixEvent[] };
+  try {
+    body = await req.json();
+  } catch {
+    return new Response("JSON inválido", { status: 400 });
+  }
+  const events = Array.isArray(body.pix) ? body.pix.slice(0, 500) : [];
+  const results: Record<string, string> = {};
+
+  for (const ev of events) {
+    const key = ev.endToEndId ?? ev.txid ?? "?";
+    const ref = ev.txid ? parseTxid(ev.txid) : null;
+    const amount = Number(ev.valor);
+    if (!ref || !ev.endToEndId || !(amount > 0)) {
+      results[key] = "ignorado";
+      continue;
+    }
+    const a = await db.agreement.findFirst({ where: { token: ref.tokenPrefix, debt: { orgId } }, include: { debt: true } });
+    if (!a) {
+      results[key] = "acordo_nao_encontrado";
+      continue;
+    }
+    const paidAt = ev.horario && !isNaN(Date.parse(ev.horario)) ? new Date(ev.horario) : new Date();
+    const r = await applyPayment({ agreementId: a.id, amount, paidAt, source: "PIX_WEBHOOK", endToEndId: ev.endToEndId, txid: ev.txid });
+    results[key] = r.status;
+    if (r.status === "applied")
+      await auditRaw(orgId, null, "cobranca.pix_webhook", `Contrato ${a.debt.contract}: R$ ${amount.toFixed(2)} (parcela ${ref.installment}, E2E ${ev.endToEndId})`);
+  }
+  // 200 mesmo com eventos ignorados: o PSP não deve reenviar o lote; duplicados são descartados pelo endToEndId
+  return Response.json({ recebidos: events.length, resultados: results });
+}

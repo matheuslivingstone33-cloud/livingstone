@@ -1,0 +1,12 @@
+DEMONSTRATIVO DE PAGAMENTO - SETEMBRO/2026
+Empresa: Tecnologia Horizonte S.A.
+Funcionário: Maria Aparecida Souza
+CPF: 123.456.789-09
+Cargo: Analista Financeira Pleno
+
+Salário base ............ R$ 8.200,00
+INSS .................... R$   951,62
+IRRF .................... R$   887,11
+Vale-transporte ......... R$   180,00
+
+Líquido a receber: R$ 6.181,27
