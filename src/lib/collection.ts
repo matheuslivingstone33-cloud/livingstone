@@ -174,3 +174,19 @@ export function parseDebtsCsv(text: string): DebtRow[] {
     return row.contract && row.debtor && row.principal > 0 && !isNaN(row.dueDate.getTime()) ? [row] : [];
   });
 }
+
+// Decide como um pagamento afeta o acordo. "strict" (registro manual) recusa valor acima do saldo;
+// "accept_excess" (webhook Pix: o dinheiro já entrou) registra tudo e devolve o excedente para revisão.
+export type PaymentDecision =
+  | { kind: "reject_overpaid"; remaining: number }
+  | { kind: "apply"; paid: number; settled: boolean; overpaid: number };
+
+
+export function decidePayment(total: number, alreadyPaid: number, amount: number, mode: "strict" | "accept_excess"): PaymentDecision {
+  const remaining = r2(total - alreadyPaid);
+  if (mode === "strict" && amount > remaining + 0.01) return { kind: "reject_overpaid", remaining };
+  const paid = r2(alreadyPaid + amount);
+  const excess = r2(paid - total);
+  // Diferença de até 1 centavo é arredondamento, não pagamento a maior
+  return { kind: "apply", paid, settled: paid >= total - 0.01, overpaid: excess > 0.01 ? excess : 0 };
+}

@@ -94,6 +94,9 @@ export async function registerPayment(agreementId: string, form: FormData) {
   if (amount > remaining + 0.01) fail(back, `O valor excede o saldo do acordo (${remaining.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}).`);
 
   const r = await applyPayment({ agreementId: a.id, amount, source: "MANUAL", createdBy: s.name });
+  // Rechecado dentro da transação: um Pix pode ter chegado entre a conferência acima e a gravação
+  if (r.status === "exceeds_balance")
+    fail(back, `O valor excede o saldo do acordo (${(r.remaining ?? 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}).`);
   if (r.status !== "applied") fail(back, "Este acordo não está aguardando pagamento.");
   await audit(s, "cobranca.pagamento", `Contrato ${a.debt.contract}: R$ ${amount.toFixed(2)} (manual)`);
   revalidatePath(back);

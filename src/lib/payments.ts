@@ -1,6 +1,7 @@
 // Aplicação de pagamentos a acordos: usada pelo registro manual e pelo webhook Pix.
 import { randomInt } from "node:crypto";
 import { db } from "./db";
+import { decidePayment } from "./collection";
 
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
 
@@ -19,7 +20,14 @@ export function appUrl() {
   return u.replace(/\/+$/, "");
 }
 
-export type ApplyResult = { status: "applied" | "duplicate" | "not_found" | "not_payable"; settled?: boolean; paid?: number };
+export type ApplyResult = {
+  status: "applied" | "duplicate" | "not_found" | "not_payable" | "exceeds_balance";
+  settled?: boolean;
+  paid?: number;
+  overpaid?: number;
+  remaining?: number;
+  agreementStatus?: string;
+};
 
 export async function applyPayment(p: {
   agreementId: string;
@@ -35,8 +43,14 @@ export async function applyPayment(p: {
     const rows = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "Agreement" WHERE id = ${p.agreementId} FOR UPDATE`;
     if (!rows.length) return { status: "not_found" };
     const a = await tx.agreement.findUniqueOrThrow({ where: { id: p.agreementId } });
-    if (a.status !== "ACEITO") return { status: "not_payable" };
+    const webhook = p.source === "PIX_WEBHOOK";
+    // Pix que chega depois da quitação já está na conta: é registrado como excedente, não descartado
+    if (a.status !== "ACEITO" && !(webhook && a.status === "PAGO")) return { status: "not_payable", agreementStatus: a.status };
     if (p.endToEndId && (await tx.payment.findUnique({ where: { endToEndId: p.endToEndId } }))) return { status: "duplicate" };
+
+    // Decidido sob o FOR UPDATE: registros manuais e webhook simultâneos não passam do saldo juntos
+    const d = decidePayment(Number(a.total), Number(a.paidAmount ?? 0), p.amount, webhook ? "accept_excess" : "strict");
+    if (d.kind === "reject_overpaid") return { status: "exceeds_balance", remaining: d.remaining };
 
     await tx.payment.create({
       data: {
@@ -49,10 +63,11 @@ export async function applyPayment(p: {
         createdBy: p.createdBy,
       },
     });
-    const paid = Math.round((Number(a.paidAmount ?? 0) + p.amount) * 100) / 100;
-    const settled = paid >= Number(a.total) - 0.01;
-    await tx.agreement.update({ where: { id: a.id }, data: { status: settled ? "PAGO" : "ACEITO", paidAt: p.paidAt ?? new Date(), paidAmount: paid } });
+    const { paid, settled, overpaid } = d;
+    // Em acordo já quitado, a data de quitação é preservada
+    const paidAt = a.status === "PAGO" ? undefined : (p.paidAt ?? new Date());
+    await tx.agreement.update({ where: { id: a.id }, data: { status: settled ? "PAGO" : "ACEITO", paidAt, paidAmount: paid } });
     await tx.debt.update({ where: { id: a.debtId }, data: { status: settled ? "QUITADO" : "ACORDO" } });
-    return { status: "applied", settled, paid };
+    return { status: "applied", settled, paid, overpaid };
   });
 }

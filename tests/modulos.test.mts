@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { validCnpj, validCpf } from "../src/lib/validators";
 import { DEFAULT_CNAB400, parseBankFile, parseExpectedCsv, reconcile } from "../src/lib/reconcile";
-import { buildOptions, crc16, parseDebtsCsv, parseTxid, pixPayload, pixTxid, updateDebt } from "../src/lib/collection";
+import { buildOptions, crc16, decidePayment, parseDebtsCsv, parseTxid, pixPayload, pixTxid, updateDebt } from "../src/lib/collection";
 import { analyzeClient, groupByClient, parseTransactionsCsv, scoreOf } from "../src/lib/pld";
 import { buildIndex, nameKey, parseList } from "../src/lib/lists";
 import { analyzeCredit } from "../src/lib/credit";
@@ -130,4 +130,14 @@ test("Segurança: política de senha, configurações e hash da auditoria", () =
   assert.ok(validateSettings({ ...DEFAULTS, pld: { ...DEFAULTS.pld, analysisDays: 60 } }));
   const base = { prevHash: "GENESIS", orgId: "o", userId: "u", action: "login", detail: null, ip: null, createdAt: new Date(0) };
   assert.notEqual(auditHash(base), auditHash({ ...base, detail: "alterado" }));
+});
+
+test("Cobrança: saldo do acordo, excedente do Pix e tolerância de centavos", () => {
+  assert.deepEqual(decidePayment(100, 0, 40, "strict"), { kind: "apply", paid: 40, settled: false, overpaid: 0 });
+  assert.deepEqual(decidePayment(100, 0, 99.99, "strict"), { kind: "apply", paid: 99.99, settled: true, overpaid: 0 });
+  assert.deepEqual(decidePayment(100, 90, 20, "accept_excess"), { kind: "apply", paid: 110, settled: true, overpaid: 10 });
+  assert.deepEqual(decidePayment(100, 90, 20, "strict"), { kind: "reject_overpaid", remaining: 10 });
+  assert.equal(decidePayment(100, 90, 10.01, "strict").kind, "apply");
+  assert.deepEqual(decidePayment(100, 100, 50, "accept_excess"), { kind: "apply", paid: 150, settled: true, overpaid: 50 });
+  assert.deepEqual(decidePayment(0.3, 0.1, 0.2, "strict"), { kind: "apply", paid: 0.3, settled: true, overpaid: 0 });
 });

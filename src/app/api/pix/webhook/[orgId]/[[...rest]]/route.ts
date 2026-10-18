@@ -48,9 +48,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
     }
     const paidAt = ev.horario && !isNaN(Date.parse(ev.horario)) ? new Date(ev.horario) : new Date();
     const r = await applyPayment({ agreementId: a.id, amount, paidAt, source: "PIX_WEBHOOK", endToEndId: ev.endToEndId, txid: ev.txid });
-    results[key] = r.status;
+    results[key] = r.overpaid ? "applied_overpaid" : r.status;
     if (r.status === "applied")
       await auditRaw(orgId, null, "cobranca.pix_webhook", `Contrato ${a.debt.contract}: R$ ${amount.toFixed(2)} (parcela ${ref.installment}, E2E ${ev.endToEndId})`);
+    if (r.overpaid)
+      await auditRaw(orgId, null, "cobranca.pix_excedente", `Contrato ${a.debt.contract}: Pix de R$ ${amount.toFixed(2)} excede o saldo em R$ ${r.overpaid.toFixed(2)} (E2E ${ev.endToEndId}). Revisar devolução.`);
+    // Nenhum Pix recebido fica sem rastro, mesmo quando não pode ser aplicado
+    if (r.status === "not_payable")
+      await auditRaw(orgId, null, "cobranca.pix_nao_aplicado", `Contrato ${a.debt.contract}: Pix de R$ ${amount.toFixed(2)} com acordo ${r.agreementStatus} (E2E ${ev.endToEndId}). Revisar.`);
   }
   // 200 mesmo com eventos ignorados: o PSP não deve reenviar o lote; duplicados são descartados pelo endToEndId
   return Response.json({ recebidos: events.length, resultados: results });

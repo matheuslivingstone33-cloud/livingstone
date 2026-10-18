@@ -89,6 +89,11 @@ export default async function DebtDetail({ params }: { params: Promise<{ id: str
                         </span>
                         <span className="text-xs text-slate-400">último em {dt(a.paidAt)}</span>
                       </div>
+                      {Number(a.paidAmount) > Number(a.total) + 0.01 && (
+                        <div className="mb-2 rounded bg-amber-100 px-2 py-1 text-xs text-amber-800">
+                          Pago a maior: {brl(Number(a.paidAmount) - Number(a.total))}. Verificar devolução ao devedor.
+                        </div>
+                      )}
                       <div className="h-2 rounded bg-slate-100">
                         <div className="h-2 rounded bg-emerald-500" style={{ width: `${Math.min(100, (Number(a.paidAmount) / Number(a.total)) * 100)}%` }} />
                       </div>
