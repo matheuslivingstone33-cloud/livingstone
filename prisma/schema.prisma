@@ -96,6 +96,8 @@ model Reconciliation {
   divergent     Int
   missing       Int
   unexpected    Int
+  totalExcess   Decimal      @default(0) @db.Decimal(14, 2)
+  options       Json         @default("{}") // regras usadas: tolerâncias e casamento por valor+data
   createdAt     DateTime     @default(now())
   items         ReconciliationItem[]
 }
@@ -110,6 +112,9 @@ model ReconciliationItem {
   receivedAmount   Decimal?       @db.Decimal(14, 2)
   paidAt           DateTime?
   status           String // CONCILIADO | DIVERGENTE | PENDENTE | NAO_ESPERADO
+  rule             String? // REFERENCIA | REFERENCIA_DV | VALOR_DATA (nulo em conciliações antigas)
+  dueAt            DateTime?
+  excess           Decimal?       @db.Decimal(14, 2)
   note             String?
 }
 

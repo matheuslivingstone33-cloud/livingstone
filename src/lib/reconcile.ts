@@ -181,46 +181,109 @@ export function parseBankFile(fileName: string, text: string, cnab400: Cnab400La
 
 const cents = (n: number) => Math.round(n * 100);
 
-export function reconcile(expected: ExpectedEntry[], received: BankEntry[]): ResultItem[] {
-  const pending = new Map<string, BankEntry[]>();
-  for (const r of received) {
-    const k = normRef(r.reference);
-    pending.set(k, [...(pending.get(k) ?? []), r]);
-  }
-  const items: ResultItem[] = [];
+export type MatchRule = "REFERENCIA" | "REFERENCIA_DV" | "VALOR_DATA";
+export type MatchedItem = ResultItem & { rule?: MatchRule; dueAt?: Date; excess?: number };
 
+export type ReconcileOptions = {
+  /** Diferença de valor (em centavos) aceita como conciliada; 0 = só valor exato */
+  toleranciaCentavos: number;
+  /** Liga a 2ª passada: sem referência, casa por valor exato e data dentro de ±toleranciaDias */
+  casarPorValorData: boolean;
+  toleranciaDias: number;
+};
+
+export const DEFAULT_RECONCILE: ReconcileOptions = { toleranciaCentavos: 0, casarPorValorData: false, toleranciaDias: 0 };
+
+const DAY = 86_400_000;
+const money = (c: number) => (c / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+export function reconcileWith(expected: ExpectedEntry[], received: BankEntry[], options: Partial<ReconcileOptions> = {}): MatchedItem[] {
+  const opts = { ...DEFAULT_RECONCILE, ...options };
+  const pool = received.map((r) => ({ r, key: normRef(r.reference), used: false }));
+  const hits: ({ r: BankEntry; rule: MatchRule } | undefined)[] = [];
+
+  // 1ª passada: referência exata; depois, nosso número com 1–2 dígitos verificadores anexados pelo banco
   for (const e of expected) {
     const k = normRef(e.reference);
-    let hit = pending.get(k)?.shift();
-    // Bancos podem anexar o dígito verificador ao nosso número: aceita 1–2 dígitos a mais no final
-    if (!hit && /^\d{5,}$/.test(k))
-      for (const [key, list] of pending)
-        if (list.length && key.startsWith(k) && key.length - k.length <= 2) {
-          hit = list.shift();
-          break;
-        }
-    if (!hit) {
-      items.push({ reference: e.reference, payer: e.payer, expectedAmount: e.amount, status: "PENDENTE", note: "Pagamento não localizado no arquivo do banco" });
-      continue;
+    let rule: MatchRule = "REFERENCIA";
+    let c = pool.find((p) => !p.used && p.key === k);
+    if (!c && /^\d{5,}$/.test(k)) {
+      c = pool.find((p) => !p.used && p.key.startsWith(k) && p.key.length - k.length <= 2);
+      rule = "REFERENCIA_DV";
     }
-    const diff = cents(hit.amount) - cents(e.amount);
-    items.push({
-      reference: e.reference,
-      payer: e.payer ?? hit.payer,
-      expectedAmount: e.amount,
-      receivedAmount: hit.amount,
-      paidAt: hit.paidAt,
-      status: diff === 0 ? "CONCILIADO" : "DIVERGENTE",
-      note:
-        diff === 0
-          ? undefined
-          : `Diferença de ${(diff / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} (${diff > 0 ? "pago a maior: juros/multa?" : "pago a menor: desconto/abatimento?"})`,
-    });
+    if (c) c.used = true;
+    hits.push(c && { r: c.r, rule });
   }
 
-  for (const rest of pending.values())
-    for (const r of rest)
-      items.push({ reference: r.reference, payer: r.payer, receivedAmount: r.amount, paidAt: r.paidAt, status: "NAO_ESPERADO", note: "Crédito sem título correspondente" });
+  // 2ª passada: valor exato e data próxima. Só casa quando o par é único dos dois lados (evita falso positivo)
+  const ambiguous = new Set<number>();
+  if (opts.casarPorValorData) {
+    const near = (e: ExpectedEntry, r: BankEntry) =>
+      cents(e.amount) === cents(r.amount) &&
+      !!e.dueAt && !!r.paidAt &&
+      Math.abs(r.paidAt.getTime() - e.dueAt.getTime()) <= opts.toleranciaDias * DAY;
+    const open = expected.map((e, i) => ({ e, i })).filter(({ i }) => !hits[i]);
+    for (const { e, i } of open) {
+      const cands = pool.filter((p) => !p.used && near(e, p.r));
+      if (cands.length > 1) ambiguous.add(i);
+      if (cands.length !== 1) continue;
+      if (open.filter((o) => !hits[o.i] && near(o.e, cands[0].r)).length > 1) {
+        ambiguous.add(i);
+        continue;
+      }
+      cands[0].used = true;
+      hits[i] = { r: cands[0].r, rule: "VALOR_DATA" };
+    }
+  }
+
+  const items: MatchedItem[] = expected.map((e, i): MatchedItem => {
+    const h = hits[i];
+    if (!h)
+      return {
+        reference: e.reference, payer: e.payer, expectedAmount: e.amount, dueAt: e.dueAt, status: "PENDENTE",
+        note: ambiguous.has(i) ? "Mais de um crédito com o mesmo valor e data: concilie manualmente" : "Pagamento não localizado no arquivo do banco",
+      };
+    const diff = cents(h.r.amount) - cents(e.amount);
+    const within = Math.abs(diff) <= opts.toleranciaCentavos;
+    const notes = [
+      h.rule === "VALOR_DATA" ? "Casado por valor e data (sem referência no banco)" : undefined,
+      diff === 0 ? undefined
+      : within ? `Diferença de ${money(diff)} dentro da tolerância`
+      : `Diferença de ${money(diff)} (${diff > 0 ? "pago a maior: juros/multa?" : "pago a menor: desconto/abatimento?"})`,
+    ].filter(Boolean);
+    return {
+      reference: e.reference,
+      payer: e.payer ?? h.r.payer,
+      expectedAmount: e.amount,
+      receivedAmount: h.r.amount,
+      paidAt: h.r.paidAt,
+      dueAt: e.dueAt,
+      rule: h.rule,
+      status: within ? "CONCILIADO" : "DIVERGENTE",
+      excess: diff > 0 && !within ? diff / 100 : undefined,
+      note: notes.join(" · ") || undefined,
+    };
+  });
+
+  for (const p of pool)
+    if (!p.used)
+      items.push({ reference: p.r.reference, payer: p.r.payer, receivedAmount: p.r.amount, paidAt: p.r.paidAt, status: "NAO_ESPERADO", note: "Crédito sem título correspondente" });
 
   return items;
+}
+
+/** Atalho com as regras padrão: só referência e valor exato */
+export function reconcile(expected: ExpectedEntry[], received: BankEntry[]): MatchedItem[] {
+  return reconcileWith(expected, received);
+}
+
+export function summarize(items: MatchedItem[]) {
+  const n = (st: ItemStatus) => items.filter((i) => i.status === st).length;
+  return {
+    matched: n("CONCILIADO"),
+    divergent: n("DIVERGENTE"),
+    missing: n("PENDENTE"),
+    unexpected: n("NAO_ESPERADO"),
+    excess: items.reduce((a, i) => a + cents(i.excess ?? 0), 0) / 100,
+  };
 }

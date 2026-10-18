@@ -4,6 +4,9 @@ import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, day, dt } from "@/lib/format";
 import { PageTitle, Stat, StatusBadge } from "@/components/ui";
+import type { ReconcileOptions } from "@/lib/reconcile";
+
+const ruleLabel: Record<string, string> = { REFERENCIA: "Referência", REFERENCIA_DV: "Referência + DV", VALOR_DATA: "Valor e data" };
 
 const filters = [
   { key: "", label: "Todos" },
@@ -30,6 +33,11 @@ export default async function ConciliacaoDetalhe({
     orderBy: [{ status: "asc" }, { reference: "asc" }],
   });
   const diff = Number(r.totalReceived) - Number(r.totalExpected);
+  const opts = (r.options ?? {}) as Partial<ReconcileOptions>;
+  const rules = [
+    opts.toleranciaCentavos ? `tolerância de ${opts.toleranciaCentavos} centavo(s)` : "",
+    opts.casarPorValorData ? `valor e data (±${opts.toleranciaDias ?? 0} dia(s))` : "",
+  ].filter(Boolean).join(", ");
 
   return (
     <>
@@ -44,6 +52,12 @@ export default async function ConciliacaoDetalhe({
         <Stat label="Diferença" value={brl(diff)} tone={diff === 0 ? "green" : "amber"} />
         <Stat label="Conciliados" value={`${r.matched} de ${r.matched + r.divergent + r.missing}`} tone="blue" />
       </div>
+      {(Number(r.totalExcess) > 0 || rules) && (
+        <p className="mb-4 text-sm text-slate-600">
+          {Number(r.totalExcess) > 0 && <>Pago a maior (excedente): <strong>{brl(r.totalExcess)}</strong>. </>}
+          {rules && <>Regras usadas: {rules}.</>}
+        </p>
+      )}
 
       <div className="mb-3 flex flex-wrap gap-2">
         {filters.map((f) => (
@@ -60,7 +74,7 @@ export default async function ConciliacaoDetalhe({
       <div className="card overflow-x-auto">
         <table className="table">
           <thead>
-            <tr><th>Referência</th><th>Pagador</th><th>Esperado</th><th>Recebido</th><th>Pago em</th><th>Status</th><th>Observação</th></tr>
+            <tr><th>Referência</th><th>Pagador</th><th>Esperado</th><th>Recebido</th><th>Pago em</th><th>Status</th><th>Regra</th><th>Observação</th></tr>
           </thead>
           <tbody>
             {items.map((i) => (
@@ -71,6 +85,7 @@ export default async function ConciliacaoDetalhe({
                 <td>{brl(i.receivedAmount)}</td>
                 <td>{day(i.paidAt)}</td>
                 <td><StatusBadge status={i.status} /></td>
+                <td className="text-slate-500">{i.rule ? ruleLabel[i.rule] ?? i.rule : "—"}</td>
                 <td className="text-slate-500">{i.note ?? ""}</td>
               </tr>
             ))}

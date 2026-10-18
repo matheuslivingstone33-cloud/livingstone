@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { validCnpj, validCpf } from "../src/lib/validators";
-import { DEFAULT_CNAB400, parseBankFile, parseExpectedCsv, reconcile } from "../src/lib/reconcile";
+import { DEFAULT_CNAB400, parseBankFile, parseExpectedCsv, reconcile, reconcileWith, summarize } from "../src/lib/reconcile";
 import { buildOptions, crc16, decidePayment, parseDebtsCsv, parseTxid, pixPayload, pixTxid, updateDebt } from "../src/lib/collection";
 import { analyzeClient, groupByClient, parseTransactionsCsv, scoreOf } from "../src/lib/pld";
 import { buildIndex, nameKey, parseList } from "../src/lib/lists";
@@ -50,6 +50,61 @@ test("Conciliação CNAB 240 (FEBRABAN) e nosso número com dígito verificador"
   // Título esperado sem o dígito final "7": casa com o nosso número 123457
   const items = reconcile([{ reference: "12345", amount: 150 }], entries);
   assert.equal(items[0].status, "CONCILIADO");
+});
+
+const ofx = (...trns: string[]) =>
+  `OFXHEADER:100\n<OFX><BANKTRANLIST>\n${trns.map((t) => `<STMTTRN><TRNTYPE>CREDIT${t}</STMTTRN>`).join("\n")}\n</BANKTRANLIST></OFX>`;
+const counts = (items: ReturnType<typeof reconcile>) => {
+  const s = summarize(items);
+  return [s.matched, s.divergent, s.missing, s.unexpected];
+};
+
+test("Conciliação OFX: resultado conhecido do extrato de exemplo (tarifa ignorada)", () => {
+  const expected = parseExpectedCsv(demo("titulos_esperados.csv").toString());
+  const { format, entries } = parseBankFile("extrato.ofx", demo("extrato.ofx").toString());
+  assert.equal(format, "OFX");
+  const items = reconcile(expected, entries);
+  assert.deepEqual(counts(items), [5, 1, 6, 0]);
+  const g = items.find((i) => i.reference === "10000112")!;
+  assert.equal(g.status, "DIVERGENTE");
+  assert.equal(g.excess, undefined); // pago a menor não é excedente
+  assert.ok(items.filter((i) => i.status === "CONCILIADO").every((i) => i.rule === "REFERENCIA"));
+});
+
+test("Conciliação por valor e data: só com a opção ligada e dentro da tolerância de dias", () => {
+  const expected = parseExpectedCsv(demo("titulos_esperados.csv").toString());
+  const { entries } = parseBankFile("x.ofx", ofx("<DTPOSTED>20261011120000<TRNAMT>980.00<FITID>X1<MEMO>PIX RECEBIDO"));
+  assert.equal(reconcile(expected, entries).find((i) => i.reference === "10000108")!.status, "PENDENTE");
+  const ok = reconcileWith(expected, entries, { casarPorValorData: true, toleranciaDias: 3 }).find((i) => i.reference === "10000108")!;
+  assert.equal(ok.status, "CONCILIADO");
+  assert.equal(ok.rule, "VALOR_DATA");
+  const far = reconcileWith(expected, entries, { casarPorValorData: true, toleranciaDias: 1 });
+  assert.equal(far.find((i) => i.reference === "10000108")!.status, "PENDENTE");
+  assert.equal(far.find((i) => i.status === "NAO_ESPERADO")?.receivedAmount, 980);
+});
+
+test("Conciliação por valor e data: ambiguidade não casa", () => {
+  const exp = [
+    { reference: "A1", amount: 1250, dueAt: new Date(Date.UTC(2026, 9, 5)) },
+    { reference: "A2", amount: 1250, dueAt: new Date(Date.UTC(2026, 9, 5)) },
+  ];
+  const { entries } = parseBankFile("x.ofx", ofx("<DTPOSTED>20261005<TRNAMT>1250.00<FITID>Z9"));
+  const items = reconcileWith(exp, entries, { casarPorValorData: true, toleranciaDias: 3 });
+  assert.deepEqual(counts(items), [0, 0, 2, 1]);
+  assert.match(items[0].note!, /manualmente/);
+});
+
+test("Conciliação: excedente e tolerância de centavos", () => {
+  const exp = [{ reference: "10000101", amount: 1250 }, { reference: "10000102", amount: 100 }];
+  const rec = [{ reference: "10000101", amount: 1300 }, { reference: "10000102", amount: 100.01 }];
+  const strict = reconcile(exp, rec);
+  assert.equal(strict[0].excess, 50);
+  assert.equal(summarize(strict).excess, 50.01);
+  const tol = reconcileWith(exp, rec, { toleranciaCentavos: 1 });
+  assert.equal(tol[1].status, "CONCILIADO");
+  assert.match(tol[1].note!, /tolerância/);
+  assert.equal(tol[1].excess, undefined);
+  assert.equal(tol[0].status, "DIVERGENTE");
 });
 
 test("Pix: CRC do exemplo oficial do Banco Central e txid de ida e volta", () => {

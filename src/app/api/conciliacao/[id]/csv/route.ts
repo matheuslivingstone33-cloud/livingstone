@@ -17,9 +17,12 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
   if (!r) return new Response("Não encontrado", { status: 404 });
 
   const rows = [
-    ["referencia", "pagador", "valor_esperado", "valor_recebido", "pago_em", "status", "observacao"].join(";"),
+    ["referencia", "pagador", "valor_esperado", "valor_recebido", "excedente", "vencimento", "pago_em", "status", "regra", "observacao"].join(";"),
     ...r.items.map((i) =>
-      [cell(i.reference), cell(i.payer), num(i.expectedAmount), num(i.receivedAmount), i.paidAt?.toISOString().slice(0, 10) ?? "", i.status, cell(i.note)].join(";"),
+      [
+        cell(i.reference), cell(i.payer), num(i.expectedAmount), num(i.receivedAmount), num(i.excess),
+        i.dueAt?.toISOString().slice(0, 10) ?? "", i.paidAt?.toISOString().slice(0, 10) ?? "", i.status, i.rule ?? "", cell(i.note),
+      ].join(";"),
     ),
   ];
   await audit(s, "conciliacao.exportar", r.name);

@@ -16,7 +16,6 @@ import {
   passwordProblem,
   requireSession,
 } from "@/lib/auth";
-import { BankFileError, parseBankFile, parseExpectedCsv, reconcile } from "@/lib/reconcile";
 import { fail } from "@/lib/errors";
 import { analyzeCredit } from "@/lib/credit";
 import { analyzeLegacy } from "@/lib/legacy";
@@ -61,47 +60,6 @@ export async function logout() {
   if (s) await audit(s, "logout");
   await destroySession();
   redirect("/login");
-}
-
-export async function createReconciliation(form: FormData) {
-  const s = await requireSession(["ADMIN", "ANALISTA"]);
-  const back = "/conciliacao";
-  const bank = await readUpload(form.get("bankFile"), ["text"]).catch((e: Error) => fail(back, e.message));
-  const exp = await readUpload(form.get("expectedFile"), ["text"]).catch((e: Error) => fail(back, e.message));
-  if (!bank || !exp) fail(back, "Envie os dois arquivos.");
-
-  const cfg = await getSettings(s.orgId);
-  let parsed: ReturnType<typeof parseBankFile>;
-  try {
-    parsed = parseBankFile(bank.name, decodeText(bank.data), cfg.cnab400);
-  } catch (e) {
-    fail(back, e instanceof BankFileError ? e.message : "Não foi possível ler o arquivo do banco.");
-  }
-  const { format, entries } = parsed;
-  const expected = parseExpectedCsv(decodeText(exp.data));
-  if (!expected.length) fail(back, "Nenhum título válido na lista de esperados. Confira as colunas referencia e valor.");
-  const items = reconcile(expected, entries);
-  const count = (st: string) => items.filter((i) => i.status === st).length;
-
-  const rec = await db.reconciliation.create({
-    data: {
-      orgId: s.orgId,
-      name: String(form.get("name") || `Conciliação ${new Date().toLocaleDateString("pt-BR")}`).slice(0, 120),
-      bankFileName: bank.name,
-      bankFormat: format,
-      expectedFileName: exp.name,
-      totalExpected: expected.reduce((a, e) => a + e.amount, 0),
-      totalReceived: entries.reduce((a, e) => a + e.amount, 0),
-      matched: count("CONCILIADO"),
-      divergent: count("DIVERGENTE"),
-      missing: count("PENDENTE"),
-      unexpected: count("NAO_ESPERADO"),
-      items: { create: items },
-    },
-  });
-  await audit(s, "conciliacao.criar", `${rec.name} (${format}, ${items.length} itens)`);
-  revalidatePath("/conciliacao");
-  redirect(`/conciliacao/${rec.id}`);
 }
 
 export async function createCreditAnalysis(form: FormData) {

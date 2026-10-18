@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, dt } from "@/lib/format";
-import { createReconciliation } from "../../actions";
+import { createReconciliation } from "../../actions-conciliacao";
 import { PageTitle, Empty, DemoFiles } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 
@@ -28,6 +28,27 @@ export default async function ConciliacaoPage() {
             <label className="label" htmlFor="expectedFile">Títulos esperados (CSV)</label>
             <input className="input" id="expectedFile" name="expectedFile" type="file" accept=".csv,.txt" required />
           </div>
+          <details className="md:col-span-3">
+            <summary className="cursor-pointer text-sm font-medium text-slate-700">Regras avançadas</summary>
+            <div className="mt-3 grid gap-4 md:grid-cols-3">
+              <div>
+                <label className="label" htmlFor="toleranciaCentavos">Tolerância de valor (centavos)</label>
+                <input className="input" id="toleranciaCentavos" name="toleranciaCentavos" type="number" min={0} max={100} defaultValue={0} />
+                <p className="mt-1 text-xs text-slate-500">Diferenças até esse valor contam como conciliadas, com observação.</p>
+              </div>
+              <div>
+                <label className="flex items-center gap-2 text-sm" htmlFor="casarPorValorData">
+                  <input id="casarPorValorData" name="casarPorValorData" type="checkbox" />
+                  Casar por valor e data quando faltar a referência
+                </label>
+                <p className="mt-1 text-xs text-slate-500">Só casa quando há um único crédito possível; se houver empate, fica para conciliação manual.</p>
+              </div>
+              <div>
+                <label className="label" htmlFor="toleranciaDias">Tolerância de data (dias)</label>
+                <input className="input" id="toleranciaDias" name="toleranciaDias" type="number" min={0} max={10} defaultValue={3} />
+              </div>
+            </div>
+          </details>
           <div className="flex flex-wrap items-center justify-between gap-3 md:col-span-3">
             <DemoFiles
               files={[
