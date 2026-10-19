@@ -3,7 +3,7 @@ import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, dt } from "@/lib/format";
 import { createReconciliation } from "../../actions-conciliacao";
-import { PageTitle, Empty, DemoFiles } from "@/components/ui";
+import { PageTitle, Empty, DemoFiles, CardHeader } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 
 export default async function ConciliacaoPage() {
@@ -13,9 +13,12 @@ export default async function ConciliacaoPage() {
 
   return (
     <>
-      <PageTitle title="Conciliação bancária" subtitle="Cruze o arquivo do banco (CNAB 400, OFX ou CSV) com os títulos esperados" />
+      <PageTitle eyebrow="Conciliação" title="Conciliação bancária" subtitle="Cruze o arquivo do banco (CNAB 400, OFX ou CSV) com os títulos esperados" />
       {canEdit && (
-        <form action={createReconciliation} className="card mb-6 grid gap-4 md:grid-cols-3">
+        <form action={createReconciliation} className="card mb-8 grid gap-4 md:grid-cols-3">
+          <div className="md:col-span-3">
+            <CardHeader title="Nova conciliação">Arquivo do banco × títulos esperados</CardHeader>
+          </div>
           <div>
             <label className="label" htmlFor="name">Nome</label>
             <input className="input" id="name" name="name" placeholder="Ex.: Retorno Sicoob 14/10" />
@@ -28,20 +31,20 @@ export default async function ConciliacaoPage() {
             <label className="label" htmlFor="expectedFile">Títulos esperados (CSV)</label>
             <input className="input" id="expectedFile" name="expectedFile" type="file" accept=".csv,.txt" required />
           </div>
-          <details className="md:col-span-3">
-            <summary className="cursor-pointer text-sm font-medium text-slate-700">Regras avançadas</summary>
-            <div className="mt-3 grid gap-4 md:grid-cols-3">
+          <details className="disclosure rounded-xl border border-line bg-paper/50 px-4 py-3 md:col-span-3">
+            <summary>Regras avançadas</summary>
+            <div className="mt-4 grid gap-4 md:grid-cols-3">
               <div>
                 <label className="label" htmlFor="toleranciaCentavos">Tolerância de valor (centavos)</label>
                 <input className="input" id="toleranciaCentavos" name="toleranciaCentavos" type="number" min={0} max={100} defaultValue={0} />
-                <p className="mt-1 text-xs text-slate-500">Diferenças até esse valor contam como conciliadas, com observação.</p>
+                <p className="hint">Diferenças até esse valor contam como conciliadas, com observação.</p>
               </div>
               <div>
-                <label className="flex items-center gap-2 text-sm" htmlFor="casarPorValorData">
-                  <input id="casarPorValorData" name="casarPorValorData" type="checkbox" />
+                <label className="flex min-h-10 items-center gap-2.5 text-sm font-medium text-ink-700" htmlFor="casarPorValorData">
+                  <input id="casarPorValorData" name="casarPorValorData" type="checkbox" className="size-4 accent-brand-600" />
                   Casar por valor e data quando faltar a referência
                 </label>
-                <p className="mt-1 text-xs text-slate-500">Só casa quando há um único crédito possível; se houver empate, fica para conciliação manual.</p>
+                <p className="hint">Só casa quando há um único crédito possível; se houver empate, fica para conciliação manual.</p>
               </div>
               <div>
                 <label className="label" htmlFor="toleranciaDias">Tolerância de data (dias)</label>
@@ -49,7 +52,7 @@ export default async function ConciliacaoPage() {
               </div>
             </div>
           </details>
-          <div className="flex flex-wrap items-center justify-between gap-3 md:col-span-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4 md:col-span-3">
             <DemoFiles
               files={[
                 { href: "/demo/retorno_cnab400.ret", label: "retorno CNAB 400" },
@@ -62,25 +65,29 @@ export default async function ConciliacaoPage() {
         </form>
       )}
 
-      <div className="card overflow-x-auto">
+      <section className="card p-0 md:p-0">
+        <div className="px-5 pt-5 md:px-6">
+          <CardHeader title="Histórico">{list.length ? `${list.length} conciliação(ões)` : undefined}</CardHeader>
+        </div>
+        <div className="overflow-x-auto px-2 pb-3 md:px-3">
         {list.length ? (
           <table className="table">
             <thead>
               <tr>
-                <th>Nome</th><th>Formato</th><th>Recebido</th><th>Conciliados</th><th>Divergentes</th><th>Não pagos</th><th>Não esperados</th><th>Data</th>
+                <th>Nome</th><th>Formato</th><th className="num">Recebido</th><th className="num">Conciliados</th><th className="num">Divergentes</th><th className="num">Não pagos</th><th className="num">Não esperados</th><th>Data</th>
               </tr>
             </thead>
             <tbody>
               {list.map((r) => (
                 <tr key={r.id}>
-                  <td><Link className="text-brand-600 hover:underline" href={`/conciliacao/${r.id}`}>{r.name}</Link></td>
-                  <td>{r.bankFormat}</td>
-                  <td>{brl(r.totalReceived)}</td>
-                  <td className="text-emerald-700">{r.matched}</td>
-                  <td className="text-amber-700">{r.divergent}</td>
-                  <td className="text-red-700">{r.missing}</td>
-                  <td className="text-violet-700">{r.unexpected}</td>
-                  <td className="text-slate-500">{dt(r.createdAt)}</td>
+                  <td><Link className="link-action" href={`/conciliacao/${r.id}`}>{r.name}</Link></td>
+                  <td><span className="rounded-md bg-paper-2 px-1.5 py-0.5 font-mono text-xs text-ink-600">{r.bankFormat}</span></td>
+                  <td className="num font-medium">{brl(r.totalReceived)}</td>
+                  <td className="num text-emerald-700">{r.matched}</td>
+                  <td className="num text-amber-700">{r.divergent}</td>
+                  <td className="num text-red-700">{r.missing}</td>
+                  <td className="num text-violet-700">{r.unexpected}</td>
+                  <td className="whitespace-nowrap text-ink-500">{dt(r.createdAt)}</td>
                 </tr>
               ))}
             </tbody>
@@ -88,7 +95,8 @@ export default async function ConciliacaoPage() {
         ) : (
           <Empty>Nenhuma conciliação. Use os arquivos de exemplo acima para testar.</Empty>
         )}
-      </div>
+        </div>
+      </section>
     </>
   );
 }

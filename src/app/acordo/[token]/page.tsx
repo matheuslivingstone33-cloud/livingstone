@@ -6,6 +6,7 @@ import { getSettings } from "@/lib/settings";
 import { acceptAgreement } from "../../actions-cobranca";
 import { CopyButton } from "@/components/CopyButton";
 import { SubmitButton } from "@/components/SubmitButton";
+import { Icon } from "@/components/Icon";
 
 export const metadata = { title: "Proposta de acordo", robots: { index: false } };
 
@@ -17,12 +18,16 @@ const maskDoc = (doc: string) => {
 
 function Shell({ org, children }: { org?: string; children: React.ReactNode }) {
   return (
-    <main className="min-h-screen bg-slate-100 px-4 py-8">
-      <div className="mx-auto max-w-md space-y-4">
-        <div className="text-center">
-          <div className="text-lg font-bold text-brand-900">{org ?? "Proposta de acordo"}</div>
-          <div className="text-xs text-slate-500">Ambiente seguro de negociação</div>
-        </div>
+    <main className="min-h-screen bg-paper text-ink-900">
+      <div className="h-1.5 bg-brand-600" aria-hidden="true" />
+      <div className="mx-auto max-w-md space-y-4 px-4 pb-12 pt-8">
+        <header className="pb-2 text-center">
+          <div className="font-display text-2xl font-semibold tracking-tight text-ink-900">{org ?? "Proposta de acordo"}</div>
+          <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-3 py-1 text-xs font-medium text-brand-800">
+            <Icon name="lock" size={13} strokeWidth={2} />
+            Ambiente seguro de negociação
+          </div>
+        </header>
         {children}
       </div>
     </main>
@@ -35,7 +40,7 @@ export default async function AcordoPage({ params }: { params: Promise<{ token: 
   if (!a || a.status === "CANCELADO")
     return (
       <Shell>
-        <div className="card text-center text-sm text-slate-600">Esta proposta não está mais disponível. Entre em contato com a instituição.</div>
+        <div className="card text-center text-base leading-relaxed text-ink-700">Esta proposta não está mais disponível. Entre em contato com a instituição.</div>
       </Shell>
     );
 
@@ -47,32 +52,47 @@ export default async function AcordoPage({ params }: { params: Promise<{ token: 
   if (a.status === "PROPOSTO" && !expired)
     return (
       <Shell org={d.org.name}>
-        <div className="card space-y-1">
-          <p className="text-lg">Olá, <b>{first}</b>!</p>
-          <p className="text-sm text-slate-600">
-            Contrato <b>{d.contract}</b>{d.product && ` (${d.product})`} · CPF/CNPJ {maskDoc(d.document)}
-          </p>
-          <p className="text-sm text-slate-600">
-            Vencido em {day(d.dueDate)} · valor atualizado <b>{brl(a.updatedDebt)}</b>
-          </p>
+        <div className="card space-y-3">
+          <p className="text-xl">Olá, <b>{first}</b>!</p>
+          <dl className="divide-y divide-line text-[15px]">
+            <div className="flex justify-between gap-3 py-2">
+              <dt className="text-ink-500">Contrato</dt>
+              <dd className="text-right font-medium">{d.contract}{d.product && ` (${d.product})`}</dd>
+            </div>
+            <div className="flex justify-between gap-3 py-2">
+              <dt className="text-ink-500">CPF/CNPJ</dt>
+              <dd className="font-mono text-sm">{maskDoc(d.document)}</dd>
+            </div>
+            <div className="flex justify-between gap-3 py-2">
+              <dt className="text-ink-500">Vencido em</dt>
+              <dd className="font-medium">{day(d.dueDate)}</dd>
+            </div>
+            <div className="flex justify-between gap-3 py-2">
+              <dt className="text-ink-500">Valor atualizado</dt>
+              <dd className="font-semibold tabular-nums">{brl(a.updatedDebt)}</dd>
+            </div>
+          </dl>
         </div>
-        <form action={acceptAgreement.bind(null, token)} className="card space-y-3">
-          <h1 className="font-semibold">Escolha como prefere pagar</h1>
-          {options.map((o, i) => (
-            <label key={o.label} className="flex cursor-pointer items-center gap-3 rounded-lg border border-slate-200 p-3 has-[:checked]:border-brand-600 has-[:checked]:bg-brand-50">
-              <input type="radio" name="option" value={i} defaultChecked={o.installments === a.installments} className="accent-brand-600" />
-              <div className="flex-1">
-                <div className="font-medium">
-                  {o.installments === 1 ? `À vista: ${brl(o.total)}` : `${o.installments}x de ${brl(o.installment)}`}
+        <form action={acceptAgreement.bind(null, token)} className="card space-y-3 [&_.btn]:min-h-12 [&_.btn]:w-full [&_.btn]:text-base">
+          <h1 className="font-display text-xl font-semibold tracking-tight">Escolha como prefere pagar</h1>
+          <fieldset className="space-y-3">
+            <legend className="sr-only">Opções de pagamento</legend>
+            {options.map((o, i) => (
+              <label key={o.label} className="flex min-h-16 cursor-pointer items-center gap-4 rounded-2xl border-2 border-line bg-white p-4 transition-colors hover:border-line-strong has-[:checked]:border-brand-600 has-[:checked]:bg-brand-50 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-brand-600 has-[:focus-visible]:ring-offset-2">
+                <input type="radio" name="option" value={i} defaultChecked={o.installments === a.installments} className="size-5 shrink-0 accent-brand-600" />
+                <div className="flex-1">
+                  <div className="text-base font-semibold tabular-nums">
+                    {o.installments === 1 ? `À vista: ${brl(o.total)}` : `${o.installments}x de ${brl(o.installment)}`}
+                  </div>
+                  <div className="mt-0.5 text-sm text-ink-500">
+                    Total {brl(o.total)}{o.discountPct > 0 && <span className="font-medium text-emerald-700"> · {o.discountPct.toFixed(0)}% de desconto</span>}
+                  </div>
                 </div>
-                <div className="text-xs text-slate-500">
-                  Total {brl(o.total)}{o.discountPct > 0 && <span className="text-emerald-700"> · {o.discountPct.toFixed(0)}% de desconto</span>}
-                </div>
-              </div>
-            </label>
-          ))}
+              </label>
+            ))}
+          </fieldset>
           <SubmitButton pending="Confirmando...">Aceitar acordo</SubmitButton>
-          <p className="text-center text-xs text-slate-500">Proposta válida até {day(a.expiresAt)}.</p>
+          <p className="text-center text-sm text-ink-500">Proposta válida até {day(a.expiresAt)}.</p>
         </form>
       </Shell>
     );
@@ -80,17 +100,21 @@ export default async function AcordoPage({ params }: { params: Promise<{ token: 
   if (expired)
     return (
       <Shell org={d.org.name}>
-        <div className="card text-center text-sm text-slate-600">Esta proposta expirou em {day(a.expiresAt)}. Fale com a instituição para receber uma nova.</div>
+        <div className="card text-center text-base leading-relaxed text-ink-700">Esta proposta expirou em {day(a.expiresAt)}. Fale com a instituição para receber uma nova.</div>
       </Shell>
     );
 
   if (a.status === "PAGO")
     return (
       <Shell org={d.org.name}>
-        <div className="card text-center">
-          <div className="text-3xl">✓</div>
-          <p className="font-semibold text-emerald-700">Pagamento recebido. Obrigado, {first}!</p>
-          <p className="text-sm text-slate-500">Valor: {brl(a.paidAmount)}</p>
+        <div className="card space-y-3 py-10 text-center">
+          <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-600 text-white">
+            <Icon name="check" size={32} strokeWidth={2.5} />
+          </span>
+          <p className="text-xl font-semibold text-emerald-800">Pagamento recebido. Obrigado, {first}!</p>
+          <p className="text-base text-ink-600">
+            Valor: <b className="tabular-nums">{brl(a.paidAmount)}</b>
+          </p>
         </div>
       </Shell>
     );
@@ -104,27 +128,38 @@ export default async function AcordoPage({ params }: { params: Promise<{ token: 
 
   return (
     <Shell org={d.org.name}>
-      <div className="card space-y-1 text-center">
-        <p className="font-semibold text-emerald-700">Acordo confirmado!</p>
-        <p className="text-sm text-slate-600">
+      <div className="card flex items-center gap-4 border-emerald-200 bg-emerald-50">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white">
+          <Icon name="check" size={22} strokeWidth={2.5} />
+        </span>
+        <div>
+        <p className="text-lg font-semibold text-emerald-900">Acordo confirmado!</p>
+        <p className="text-sm text-emerald-900/80">
           {a.installments === 1 ? `Pagamento à vista de ${brl(a.total)}` : `${a.installments} parcelas de ${brl(a.installment)} (total ${brl(a.total)})`}
         </p>
+        </div>
       </div>
-      <div className="card space-y-3 text-center">
-        <h1 className="font-semibold">
+      <div className="card space-y-4 text-center [&_.btn-ghost]:min-h-12 [&_.btn-ghost]:w-full [&_.btn-ghost]:border-brand-600 [&_.btn-ghost]:bg-brand-600 [&_.btn-ghost]:text-base [&_.btn-ghost]:font-semibold [&_.btn-ghost]:text-white [&_.btn-ghost:hover]:bg-brand-700">
+        <h1 className="font-display text-xl font-semibold leading-snug tracking-tight">
           Pague {a.installments === 1 ? "" : `a ${nth}ª parcela (de ${a.installments}) `}com Pix: {brl(amount)}
         </h1>
         {pix && qr ? (
           <>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={qr} alt="QR Code Pix" className="mx-auto h-60 w-60" />
-            <p className="break-all rounded-lg bg-slate-50 p-2 font-mono text-[11px] text-slate-600">{pix}</p>
+            <div className="mx-auto w-fit rounded-2xl border border-line bg-white p-3 shadow-card">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={qr} alt="QR Code Pix" className="h-64 w-64 max-w-full [image-rendering:pixelated]" />
+            </div>
+            <ol className="mx-auto max-w-xs space-y-1 text-left text-sm text-ink-600">
+              <li><b className="text-ink-900">1.</b> Abra o app do seu banco e escolha Pix.</li>
+              <li><b className="text-ink-900">2.</b> Leia o QR Code ou use “Pix Copia e Cola”.</li>
+            </ol>
             <CopyButton text={pix} label="Copiar código Pix" />
+            <p className="break-all rounded-xl border border-line bg-paper p-3 text-left font-mono text-xs leading-relaxed text-ink-600">{pix}</p>
           </>
         ) : (
-          <p className="text-sm text-amber-700">Pix indisponível no momento. Entre em contato com a instituição.</p>
+          <p className="notice notice-warning mb-0 text-left text-base">Pix indisponível no momento. Entre em contato com a instituição.</p>
         )}
-        {a.installments > 1 && <p className="text-xs text-slate-500">As próximas parcelas serão enviadas mensalmente.</p>}
+        {a.installments > 1 && <p className="text-sm text-ink-500">As próximas parcelas serão enviadas mensalmente.</p>}
       </div>
     </Shell>
   );

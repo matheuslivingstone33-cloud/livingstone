@@ -3,7 +3,7 @@ import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, dt } from "@/lib/format";
 import { createCreditAnalysis } from "../../actions";
-import { PageTitle, Empty, StatusBadge, DemoFiles } from "@/components/ui";
+import { PageTitle, Empty, StatusBadge, DemoFiles, CardHeader, TableCard } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 
 export default async function CreditoPage() {
@@ -12,9 +12,12 @@ export default async function CreditoPage() {
 
   return (
     <>
-      <PageTitle title="Análise de crédito" subtitle="A IA lê os documentos, extrai os dados e aplica as regras de crédito da instituição" />
+      <PageTitle eyebrow="Crédito" title="Análise de crédito" subtitle="A IA lê os documentos, extrai os dados e aplica as regras de crédito da instituição" />
       {s.role !== "AUDITOR" && (
-        <form action={createCreditAnalysis} className="card mb-6 grid gap-4 md:grid-cols-3">
+        <form action={createCreditAnalysis} className="card mb-8 grid gap-4 md:grid-cols-3">
+          <div className="md:col-span-3">
+            <CardHeader title="Nova análise">Dados da proposta e documentos do solicitante</CardHeader>
+          </div>
           <div>
             <label className="label" htmlFor="applicant">Solicitante</label>
             <input className="input" id="applicant" name="applicant" required />
@@ -39,7 +42,7 @@ export default async function CreditoPage() {
             <label className="label" htmlFor="docs">Documentos (holerite, extrato…)</label>
             <input className="input" id="docs" name="docs" type="file" multiple accept=".txt,.csv,.pdf,image/*" required />
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-3 md:col-span-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4 md:col-span-3">
             <DemoFiles
               files={[
                 { href: "/demo/holerite_maria.txt", label: "holerite (bom pagador)" },
@@ -53,21 +56,21 @@ export default async function CreditoPage() {
         </form>
       )}
 
-      <div className="card overflow-x-auto">
+      <TableCard title="Análises" meta={list.length ? `${list.length} análise(s)` : undefined}>
         {list.length ? (
           <table className="table">
             <thead>
-              <tr><th>Solicitante</th><th>Valor</th><th>Score</th><th>Sugestão</th><th>IA</th><th>Data</th></tr>
+              <tr><th>Solicitante</th><th className="num">Valor</th><th className="num">Score</th><th>Sugestão</th><th>IA</th><th>Data</th></tr>
             </thead>
             <tbody>
               {list.map((c) => (
                 <tr key={c.id}>
-                  <td><Link className="text-brand-600 hover:underline" href={`/credito/${c.id}`}>{c.applicant}</Link></td>
-                  <td>{brl(c.requested)}</td>
-                  <td className="font-semibold">{c.score}</td>
+                  <td><Link className="link-action" href={`/credito/${c.id}`}>{c.applicant}</Link></td>
+                  <td className="num">{brl(c.requested)}</td>
+                  <td className="num font-semibold">{c.score}</td>
                   <td><StatusBadge status={c.decision} /></td>
-                  <td className="text-slate-500">{c.aiProvider === "claude" ? "Claude" : "Demonstração"}</td>
-                  <td className="text-slate-500">{dt(c.createdAt)}</td>
+                  <td className="text-ink-500">{c.aiProvider === "claude" ? "Claude" : "Demonstração"}</td>
+                  <td className="whitespace-nowrap text-ink-500">{dt(c.createdAt)}</td>
                 </tr>
               ))}
             </tbody>
@@ -75,7 +78,7 @@ export default async function CreditoPage() {
         ) : (
           <Empty>Nenhuma análise. Use os documentos de exemplo para testar.</Empty>
         )}
-      </div>
+      </TableCard>
     </>
   );
 }

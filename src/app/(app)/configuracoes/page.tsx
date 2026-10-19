@@ -4,7 +4,7 @@ import { getSettings } from "@/lib/settings";
 import { appUrl } from "@/lib/payments";
 import { saveSettings, rotateWebhookSecret } from "../../actions-config";
 import { importRestrictedList } from "../../actions-pld";
-import { PageTitle } from "@/components/ui";
+import { PageTitle, Notice } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 import { CopyButton } from "@/components/CopyButton";
 import { dt } from "@/lib/format";
@@ -15,9 +15,21 @@ function Field({ label, name, value, hint, suffix }: { label: string; name: stri
       <label className="label" htmlFor={name}>{label}</label>
       <div className="flex items-center gap-2">
         <input className="input" id={name} name={name} defaultValue={value} />
-        {suffix && <span className="shrink-0 text-sm text-slate-500">{suffix}</span>}
+        {suffix && <span className="shrink-0 text-xs font-medium text-ink-500">{suffix}</span>}
       </div>
-      {hint && <p className="mt-1 text-xs text-slate-500">{hint}</p>}
+      {hint && <p className="hint">{hint}</p>}
+    </div>
+  );
+}
+
+function SectionHead({ n, title, children }: { n: string; title: string; children?: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-4 border-b border-line pb-4">
+      <span className="font-display mt-0.5 text-lg tabular-nums text-gold-600" aria-hidden="true">{n}</span>
+      <div className="min-w-0">
+        <h2 className="card-title">{title}</h2>
+        {children && <p className="mt-1 text-sm leading-relaxed text-ink-500">{children}</p>}
+      </div>
     </div>
   );
 }
@@ -33,13 +45,19 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
 
   return (
     <>
-      <PageTitle title="Configurações" subtitle="Ajustes da instituição: valem para todos os usuários e ficam registrados na auditoria" />
-      {q.salvo && <p className="mb-4 rounded-lg bg-emerald-50 px-4 py-2 text-sm text-emerald-800">Configurações salvas.</p>}
-      {q.lista && <p className="mb-4 rounded-lg bg-emerald-50 px-4 py-2 text-sm text-emerald-800">Lista {q.lista} importada: {q.n} registros.</p>}
+      <PageTitle eyebrow="Administração" title="Configurações" subtitle="Ajustes da instituição: valem para todos os usuários e ficam registrados na auditoria" />
+      {q.salvo && <Notice>Configurações salvas.</Notice>}
+      {q.lista && <Notice>Lista {q.lista} importada: {q.n} registros.</Notice>}
+
+      <nav aria-label="Seções das configurações" className="mb-6 flex flex-wrap gap-2">
+        {[["#pix", "Pix"], ["#cnab", "CNAB 400"], ["#credito", "Crédito"], ["#cobranca", "Cobrança"], ["#pld", "PLD"], ["#webhook", "Webhook"], ["#listas", "Listas"]].map(([h, l]) => (
+          <a key={h} href={h} className="chip">{l}</a>
+        ))}
+      </nav>
 
       <form action={saveSettings} className="space-y-6">
-        <section className="card space-y-4" id="pix">
-          <h2 className="font-semibold">Pix (recebimento dos acordos)</h2>
+        <section className="card space-y-5" id="pix">
+          <SectionHead n="01" title="Pix (recebimento dos acordos)" />
           <div className="grid gap-4 md:grid-cols-3">
             <Field label="Chave Pix" name="pix_key" value={c.pix.key} hint="E-mail, +55 telefone, CPF, CNPJ ou chave aleatória" />
             <Field label="Nome do recebedor" name="pix_merchant" value={c.pix.merchant} hint="Até 25 caracteres, como no banco" />
@@ -47,9 +65,10 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
           </div>
         </section>
 
-        <section className="card space-y-4">
-          <h2 className="font-semibold">Layout CNAB 400 do banco</h2>
-          <p className="text-sm text-slate-500">Posições do registro de detalhe (1 a 400) conforme o manual de retorno do banco. O CNAB 240 segue o padrão FEBRABAN e não precisa de ajuste.</p>
+        <section className="card space-y-5" id="cnab">
+          <SectionHead n="02" title="Layout CNAB 400 do banco">
+            Posições do registro de detalhe (1 a 400) conforme o manual de retorno do banco. O CNAB 240 segue o padrão FEBRABAN e não precisa de ajuste.
+          </SectionHead>
           <div className="grid gap-4 md:grid-cols-4">
             {([
               ["cnab_nn", "Nosso número", c.cnab400.nossoNumero],
@@ -61,7 +80,7 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
                 <div className="label">{l}</div>
                 <div className="flex items-center gap-2">
                   <input className="input" name={`${k}_ini`} defaultValue={a} aria-label={`${l}: início`} />
-                  <span className="text-slate-400">a</span>
+                  <span className="text-xs text-ink-500">a</span>
                   <input className="input" name={`${k}_fim`} defaultValue={b} aria-label={`${l}: fim`} />
                 </div>
               </div>
@@ -70,8 +89,8 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
           <Field label="Códigos de liquidação" name="cnab_codigos" value={c.cnab400.codigosLiquidacao.join(", ")} hint="Ocorrências que significam pagamento (ex.: 06, 08, 10)" />
         </section>
 
-        <section className="card space-y-4">
-          <h2 className="font-semibold">Política de crédito</h2>
+        <section className="card space-y-5" id="credito">
+          <SectionHead n="03" title="Política de crédito" />
           <div className="grid gap-4 md:grid-cols-4">
             <Field label="Comprometimento máximo" name="cr_max" value={P(c.credit.maxCommitment)} suffix="% da renda" />
             <Field label="Comprometimento de atenção" name="cr_warn" value={P(c.credit.warnCommitment)} suffix="% da renda" />
@@ -80,8 +99,8 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
           </div>
         </section>
 
-        <section className="card space-y-4">
-          <h2 className="font-semibold">Política de cobrança</h2>
+        <section className="card space-y-5" id="cobranca">
+          <SectionHead n="04" title="Política de cobrança" />
           <div className="grid gap-4 md:grid-cols-5">
             <Field label="Multa" name="co_multa" value={P(c.collection.multa)} suffix="%" hint="Máximo 2% (CDC)" />
             <Field label="Juros de mora" name="co_juros" value={P(c.collection.jurosMes)} suffix="% a.m." />
@@ -89,8 +108,8 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
             <Field label="Parcela mínima" name="co_min" value={c.collection.minInstallment} suffix="R$" />
             <Field label="Validade da proposta" name="co_validade" value={c.collection.validityDays} suffix="dias" />
           </div>
-          <div className="overflow-x-auto">
-            <table className="table">
+          <div className="overflow-x-auto rounded-xl border border-line">
+            <table className="table [&_td]:px-2 [&_td]:py-2 [&_.input]:min-w-24">
               <thead><tr><th>Faixa</th><th>Até (dias de atraso)</th><th>Desconto à vista (%)</th><th>Desconto parcelado (%)</th><th>Máx. parcelas</th></tr></thead>
               <tbody>
                 {c.collection.bands.map((b, i) => (
@@ -107,9 +126,10 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
           </div>
         </section>
 
-        <section className="card space-y-4">
-          <h2 className="font-semibold">Monitoramento de PLD</h2>
-          <p className="text-sm text-slate-500">Calibre com o perfil da sua carteira e documente a escolha na Avaliação Interna de Risco (Circular 3.978, art. 10).</p>
+        <section className="card space-y-5" id="pld">
+          <SectionHead n="05" title="Monitoramento de PLD">
+            Calibre com o perfil da sua carteira e documente a escolha na Avaliação Interna de Risco (Circular 3.978, art. 10).
+          </SectionHead>
           <div className="grid gap-4 md:grid-cols-5">
             <Field label="Limite de espécie" name="pld_cash" value={c.pld.cashLimit} suffix="R$" />
             <Field label="Janela de fracionamento" name="pld_frac_dias" value={c.pld.structuringDays} suffix="dias" />
@@ -124,32 +144,34 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
           </div>
         </section>
 
-        <SubmitButton pending="Salvando...">Salvar configurações</SubmitButton>
+        <div className="sticky bottom-4 z-10 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-white/90 px-5 py-3 shadow-lift backdrop-blur-md">
+          <p className="text-xs text-ink-500">As alterações valem para todos os usuários e ficam registradas na auditoria.</p>
+          <SubmitButton pending="Salvando...">Salvar configurações</SubmitButton>
+        </div>
       </form>
 
-      <section className="card mt-6 space-y-3">
-        <h2 className="font-semibold">Baixa automática do Pix (webhook)</h2>
-        <p className="text-sm text-slate-600">
+      <section className="card mt-6 space-y-4" id="webhook">
+        <SectionHead n="06" title="Baixa automática do Pix (webhook)">
           Cadastre esta URL no seu banco/PSP como webhook da chave Pix. Cada Pix recebido de um acordo é baixado automaticamente, sem digitação. O mesmo Pix nunca é baixado duas vezes.
-        </p>
+        </SectionHead>
         {webhookUrl ? (
           <div className="flex flex-wrap items-center gap-2">
-            <code className="break-all rounded bg-slate-100 px-2 py-1 text-xs">{webhookUrl.replace(c.pix.webhookSecret, "••••••••")}</code>
+            <code className="min-w-0 flex-1 break-all rounded-xl border border-line bg-paper px-3 py-2 font-mono text-xs text-ink-700">{webhookUrl.replace(c.pix.webhookSecret, "••••••••")}</code>
             <CopyButton text={webhookUrl} label="Copiar URL completa" />
           </div>
         ) : (
-          <p className="text-sm text-amber-700">Nenhum segredo gerado ainda: o webhook está desligado.</p>
+          <p className="notice notice-warning mb-0">Nenhum segredo gerado ainda: o webhook está desligado.</p>
         )}
         <form action={rotateWebhookSecret}>
           <SubmitButton pending="Gerando...">{webhookUrl ? "Gerar novo segredo (invalida o anterior)" : "Ativar webhook"}</SubmitButton>
         </form>
       </section>
 
-      <section className="card mt-6 space-y-4">
-        <h2 className="font-semibold">Listas restritivas e PEP</h2>
-        <div className="overflow-x-auto">
+      <section className="card mt-6 space-y-5" id="listas">
+        <SectionHead n="07" title="Listas restritivas e PEP" />
+        <div className="overflow-x-auto rounded-xl border border-line">
           <table className="table">
-            <thead><tr><th>Lista</th><th>Onde obter</th><th>Registros</th><th>Atualizada em</th></tr></thead>
+            <thead><tr><th>Lista</th><th>Onde obter</th><th className="num">Registros</th><th>Atualizada em</th></tr></thead>
             <tbody>
               {[
                 ["CSNU", "XML consolidado do Conselho de Segurança da ONU (scsanctions.un.org)"],
@@ -161,9 +183,9 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
                 return (
                   <tr key={src}>
                     <td className="font-medium">{src}</td>
-                    <td className="text-slate-600">{where}</td>
-                    <td>{l?._count ?? 0}</td>
-                    <td className="text-slate-500">{l?._max.importedAt ? dt(l._max.importedAt) : "nunca"}</td>
+                    <td className="text-ink-600">{where}</td>
+                    <td className="num">{l?._count ?? 0}</td>
+                    <td className="whitespace-nowrap text-ink-500">{l?._max.importedAt ? dt(l._max.importedAt) : "nunca"}</td>
                   </tr>
                 );
               })}
@@ -186,7 +208,7 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
           </div>
           <SubmitButton pending="Importando...">Importar (substitui a lista)</SubmitButton>
         </form>
-        <p className="text-xs text-slate-500">Atualize as listas de sanções ao menos semanalmente: a Lei 13.810/2019 exige cumprimento imediato das resoluções do CSNU.</p>
+        <p className="hint">Atualize as listas de sanções ao menos semanalmente: a Lei 13.810/2019 exige cumprimento imediato das resoluções do CSNU.</p>
       </section>
     </>
   );

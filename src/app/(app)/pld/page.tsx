@@ -3,7 +3,7 @@ import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, day, dt } from "@/lib/format";
 import { importPld } from "../../actions-pld";
-import { PageTitle, Stat, Empty, DemoFiles } from "@/components/ui";
+import { PageTitle, Stat, Empty, DemoFiles, Notice, CardHeader, TableCard, FilterBar } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 import { PLD_STATUS, RiskBadge, DueBadge } from "./badges";
 
@@ -25,60 +25,67 @@ export default async function PldPage({ searchParams }: { searchParams: Promise<
 
   return (
     <>
-      <PageTitle title="Prevenção à lavagem de dinheiro" subtitle="Monitoramento de transações, análise de casos e comunicação ao COAF (Circular BCB 3.978/2020)" />
+      <PageTitle eyebrow="PLD / COAF" title="Prevenção à lavagem de dinheiro" subtitle="Monitoramento de transações, análise de casos e comunicação ao COAF (Circular BCB 3.978/2020)" />
       {lastBatch && (
-        <p className="mb-4 rounded-lg bg-emerald-50 px-4 py-2 text-sm text-emerald-800">
+        <Notice>
           {lastBatch.fileName}: {lastBatch.transactions} transações de {lastBatch.clients} clientes analisadas, {lastBatch.alerts} alerta(s) gerado(s).
-        </p>
+        </Notice>
       )}
 
-      <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="mb-6 grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 lg:grid-cols-4">
         <Stat label="Casos em análise" value={n.EM_ANALISE ?? 0} tone="amber" href="?status=EM_ANALISE" />
         <Stat label="Vencendo em 7 dias" value={overdue} tone={overdue ? "red" : "green"} />
         <Stat label="Comunicados ao COAF" value={n.COMUNICADO ?? 0} tone="blue" href="?status=COMUNICADO" />
         <Stat label="Arquivados" value={n.ARQUIVADO ?? 0} href="?status=ARQUIVADO" />
       </div>
 
-      <div className="mb-6 grid gap-4 lg:grid-cols-3">
+      <div className="mb-8 grid gap-4 lg:grid-cols-3">
         {s.role !== "AUDITOR" && (
           <form action={importPld} className="card space-y-3">
-            <h2 className="font-semibold">Analisar transações</h2>
+            <CardHeader title="Analisar transações" />
             <input className="input" name="file" type="file" accept=".csv,.txt" required />
-            <p className="text-xs text-slate-500">CSV: data; cliente; cpf_cnpj; renda_mensal; pep; tipo; valor; contraparte; doc_contraparte</p>
+            <p className="hint mt-0">CSV: data; cliente; cpf_cnpj; renda_mensal; pep; tipo; valor; contraparte; doc_contraparte</p>
             <DemoFiles files={[{ href: "/demo/transacoes_pld.csv", label: "transações de exemplo (60 dias)" }]} />
             <SubmitButton pending="Analisando...">Analisar</SubmitButton>
           </form>
         )}
-        <div className="card lg:col-span-2">
-          <h2 className="mb-3 font-semibold">Regras monitoradas</h2>
-          <ul className="grid gap-x-6 gap-y-1 text-sm text-slate-600 sm:grid-cols-2">
-            <li>• Espécie ≥ R$ 50 mil (comunicação obrigatória)</li>
-            <li>• Fracionamento de depósitos/saques em espécie</li>
-            <li>• Movimentação incompatível com a renda</li>
-            <li>• Conta de passagem (entra e sai em 48h)</li>
-            <li>• Muitos remetentes distintos</li>
-            <li>• Valores redondos repetidos</li>
-            <li>• Contraparte em lista restritiva</li>
-            <li>• Pessoa exposta politicamente (PEP)</li>
-          </ul>
+        <section className={`card ${s.role !== "AUDITOR" ? "lg:col-span-2" : "lg:col-span-3"}`}>
+          <CardHeader title="Regras monitoradas">8 regras</CardHeader>
+          <ol className="grid gap-x-6 gap-y-2.5 text-sm text-ink-700 sm:grid-cols-2">
+            {[
+              "Espécie ≥ R$ 50 mil (comunicação obrigatória)",
+              "Fracionamento de depósitos/saques em espécie",
+              "Movimentação incompatível com a renda",
+              "Conta de passagem (entra e sai em 48h)",
+              "Muitos remetentes distintos",
+              "Valores redondos repetidos",
+              "Contraparte em lista restritiva",
+              "Pessoa exposta politicamente (PEP)",
+            ].map((r, i) => (
+              <li key={r} className="flex items-start gap-3">
+                <span className="font-display mt-px w-5 shrink-0 text-right text-sm tabular-nums text-gold-600">{i + 1}</span>
+                {r}
+              </li>
+            ))}
+          </ol>
           {batches.length > 0 && (
-            <p className="mt-3 text-xs text-slate-500">
+            <p className="mt-5 border-t border-line pt-3 text-xs text-ink-500">
               Último lote: {batches[0].fileName} · período {day(batches[0].periodStart)} a {day(batches[0].periodEnd)} · {dt(batches[0].createdAt)}
             </p>
           )}
-        </div>
+        </section>
       </div>
 
-      <div className="mb-3 flex flex-wrap gap-2">
+      <FilterBar label="Filtrar casos por situação">
         {[["EM_ANALISE", "Em análise"], ["COMUNICADO", "Comunicados"], ["ARQUIVADO", "Arquivados"], ["TODOS", "Todos"]].map(([k, label]) => (
-          <Link key={k} href={`?status=${k}`} className={`btn-ghost ${status === k ? "border-brand-600 text-brand-700" : ""}`}>{label}</Link>
+          <Link key={k} href={`?status=${k}`} aria-current={status === k ? "page" : undefined} className="chip">{label}</Link>
         ))}
-      </div>
-      <div className="card overflow-x-auto">
+      </FilterBar>
+      <TableCard title="Casos" meta={`${cases.length} caso(s)`}>
         {cases.length ? (
           <table className="table">
             <thead>
-              <tr><th>Cliente</th><th>Risco</th><th>Alertas</th><th>Créditos</th><th>Débitos</th><th>Situação</th><th>Prazo</th></tr>
+              <tr><th>Cliente</th><th>Risco</th><th>Alertas</th><th className="num">Créditos</th><th className="num">Débitos</th><th>Situação</th><th>Prazo</th></tr>
             </thead>
             <tbody>
               {cases.map((c) => {
@@ -86,19 +93,19 @@ export default async function PldPage({ searchParams }: { searchParams: Promise<
                 return (
                   <tr key={c.id}>
                     <td>
-                      <Link className="font-medium text-brand-600 hover:underline" href={`/pld/${c.id}`}>{c.clientName}</Link>
-                      <div className="text-xs text-slate-500">
-                        {c.clientDoc}
-                        {c.pep && <span className="badge ml-2 bg-violet-100 text-violet-800">PEP</span>}
-                        {c.mandatory && <span className="badge ml-2 bg-red-100 text-red-800">Comunicação obrigatória</span>}
+                      <Link className="link-action" href={`/pld/${c.id}`}>{c.clientName}</Link>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-ink-500">
+                        <span className="font-mono">{c.clientDoc}</span>
+                        {c.pep && <span className="badge bg-violet-50 text-violet-800">PEP</span>}
+                        {c.mandatory && <span className="badge bg-red-50 text-red-800">Comunicação obrigatória</span>}
                       </div>
                     </td>
                     <td><RiskBadge risk={c.risk} score={c.score} /></td>
-                    <td className="max-w-xs text-xs text-slate-600">{alerts.map((a) => a.title).join(" · ")}</td>
-                    <td>{brl(c.totalIn)}</td>
-                    <td>{brl(c.totalOut)}</td>
+                    <td className="min-w-48 max-w-xs text-xs leading-relaxed text-ink-600">{alerts.map((a) => a.title).join(" · ")}</td>
+                    <td className="num text-emerald-700">{brl(c.totalIn)}</td>
+                    <td className="num text-red-700">{brl(c.totalOut)}</td>
                     <td><span className={`badge ${PLD_STATUS[c.status][1]}`}>{PLD_STATUS[c.status][0]}</span></td>
-                    <td>{c.status === "EM_ANALISE" ? <DueBadge dueAt={c.dueAt} /> : <span className="text-xs text-slate-500">{day(c.decidedAt)}</span>}</td>
+                    <td>{c.status === "EM_ANALISE" ? <DueBadge dueAt={c.dueAt} /> : <span className="text-xs text-ink-500">{day(c.decidedAt)}</span>}</td>
                   </tr>
                 );
               })}
@@ -107,7 +114,7 @@ export default async function PldPage({ searchParams }: { searchParams: Promise<
         ) : (
           <Empty>Nenhum caso nesta situação. Analise o arquivo de transações de exemplo para testar.</Empty>
         )}
-      </div>
+      </TableCard>
     </>
   );
 }

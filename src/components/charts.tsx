@@ -2,7 +2,7 @@
 // Regras: uma só escala, marcas finas, grade discreta, texto em tinta neutra (nunca na cor da série),
 // legenda sempre visível e dica ao passar o mouse em cada ponto/barra.
 
-export const CHART = { c1: "#0d9488", c2: "#b45309", c3: "#4338ca", c4: "#be185d", grid: "#e2e8f0", ink: "#475569" };
+export const CHART = { c1: "#0d9488", c2: "#b45309", c3: "#4338ca", c4: "#be185d", grid: "#e3e4dc", ink: "#4b6470" };
 
 type Point = { label: string; value: number };
 
@@ -106,11 +106,11 @@ export function Bars({
       {rows.map((r) => (
         <li key={r.label} title={`${r.label}: ${format(r.value)}${r.hint ? ` · ${r.hint}` : ""}`}>
           <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
-            <span className="text-slate-700">{r.label}</span>
-            <span className="font-medium tabular-nums text-slate-900">{format(r.value)}</span>
+            <span className="text-ink-700">{r.label}</span>
+            <span className="font-semibold tabular-nums text-ink-900">{format(r.value)}</span>
           </div>
-          <div className="h-2 rounded-full bg-slate-100">
-            <div className="h-2 rounded-r-full rounded-l-sm" style={{ width: `${Math.max((r.value / max) * 100, r.value > 0 ? 2 : 0)}%`, background: color }} />
+          <div className="h-2 overflow-hidden rounded-full bg-paper-2">
+            <div className="grow-x h-2 rounded-full" style={{ width: `${Math.max((r.value / max) * 100, r.value > 0 ? 2 : 0)}%`, background: color }} />
           </div>
         </li>
       ))}
@@ -124,18 +124,18 @@ export function StackBar({ parts }: { parts: { label: string; value: number; col
   if (!total) return null;
   return (
     <div>
-      <div className="flex h-3 gap-0.5 overflow-hidden rounded-full" role="img" aria-label={parts.map((p) => `${p.label}: ${p.value}`).join(", ")}>
+      <div className="flex h-2.5 gap-0.5 overflow-hidden rounded-full bg-paper-2" role="img" aria-label={parts.map((p) => `${p.label}: ${p.value}`).join(", ")}>
         {parts
           .filter((p) => p.value > 0)
           .map((p) => (
             <div key={p.label} title={`${p.label}: ${p.value} (${Math.round((p.value / total) * 100)}%)`} style={{ width: `${(p.value / total) * 100}%`, background: p.color }} />
           ))}
       </div>
-      <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm">
+      <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 text-sm">
         {parts.map((p) => (
-          <li key={p.label} className="flex items-center gap-2 text-slate-600">
-            <span className="h-2.5 w-2.5 rounded-sm" style={{ background: p.color }} />
-            {p.label} <b className="tabular-nums text-slate-900">{p.value}</b>
+          <li key={p.label} className="flex items-center gap-2 text-ink-600">
+            <span className="h-2.5 w-2.5 rounded-full" style={{ background: p.color }} />
+            {p.label} <b className="tabular-nums text-ink-900">{p.value}</b>
           </li>
         ))}
       </ul>

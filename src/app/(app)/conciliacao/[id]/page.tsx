@@ -3,7 +3,8 @@ import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, day, dt } from "@/lib/format";
-import { PageTitle, Stat, StatusBadge } from "@/components/ui";
+import { PageTitle, Stat, StatusBadge, TableCard, FilterBar } from "@/components/ui";
+import { Icon } from "@/components/Icon";
 import type { ReconcileOptions } from "@/lib/reconcile";
 
 const ruleLabel: Record<string, string> = { REFERENCIA: "Referência", REFERENCIA_DV: "Referência + DV", VALOR_DATA: "Valor e data" };
@@ -42,56 +43,58 @@ export default async function ConciliacaoDetalhe({
   return (
     <>
       <PageTitle
+        back={{ href: "/conciliacao", label: "Conciliações" }}
         title={r.name}
         subtitle={`${r.bankFileName} (${r.bankFormat}) × ${r.expectedFileName} · ${dt(r.createdAt)}`}
-        action={<a className="btn-ghost" href={`/api/conciliacao/${r.id}/csv`}>Exportar CSV</a>}
+        action={<a className="btn-ghost" href={`/api/conciliacao/${r.id}/csv`}><Icon name="download" size={16} />Exportar CSV</a>}
       />
-      <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="mb-6 grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 lg:grid-cols-4">
         <Stat label="Esperado" value={brl(r.totalExpected)} />
         <Stat label="Recebido" value={brl(r.totalReceived)} tone="green" />
         <Stat label="Diferença" value={brl(diff)} tone={diff === 0 ? "green" : "amber"} />
         <Stat label="Conciliados" value={`${r.matched} de ${r.matched + r.divergent + r.missing}`} tone="blue" />
       </div>
       {(Number(r.totalExcess) > 0 || rules) && (
-        <p className="mb-4 text-sm text-slate-600">
+        <p className="notice notice-info block">
           {Number(r.totalExcess) > 0 && <>Pago a maior (excedente): <strong>{brl(r.totalExcess)}</strong>. </>}
           {rules && <>Regras usadas: {rules}.</>}
         </p>
       )}
 
-      <div className="mb-3 flex flex-wrap gap-2">
+      <FilterBar label="Filtrar itens por status">
         {filters.map((f) => (
           <Link
             key={f.key}
             href={f.key ? `?status=${f.key}` : "?"}
-            className={`btn-ghost ${status === f.key || (!status && !f.key) ? "border-brand-600 text-brand-700" : ""}`}
+            aria-current={status === f.key || (!status && !f.key) ? "page" : undefined}
+            className="chip"
           >
             {f.label}
           </Link>
         ))}
-      </div>
+      </FilterBar>
 
-      <div className="card overflow-x-auto">
+      <TableCard title="Itens" meta={`${items.length} item(ns)`}>
         <table className="table">
           <thead>
-            <tr><th>Referência</th><th>Pagador</th><th>Esperado</th><th>Recebido</th><th>Pago em</th><th>Status</th><th>Regra</th><th>Observação</th></tr>
+            <tr><th>Referência</th><th>Pagador</th><th className="num">Esperado</th><th className="num">Recebido</th><th>Pago em</th><th>Status</th><th>Regra</th><th>Observação</th></tr>
           </thead>
           <tbody>
             {items.map((i) => (
               <tr key={i.id}>
-                <td className="font-mono">{i.reference}</td>
+                <td className="font-mono text-xs text-ink-700">{i.reference}</td>
                 <td>{i.payer ?? "—"}</td>
-                <td>{brl(i.expectedAmount)}</td>
-                <td>{brl(i.receivedAmount)}</td>
-                <td>{day(i.paidAt)}</td>
+                <td className="num">{brl(i.expectedAmount)}</td>
+                <td className="num font-medium">{brl(i.receivedAmount)}</td>
+                <td className="whitespace-nowrap">{day(i.paidAt)}</td>
                 <td><StatusBadge status={i.status} /></td>
-                <td className="text-slate-500">{i.rule ? ruleLabel[i.rule] ?? i.rule : "—"}</td>
-                <td className="text-slate-500">{i.note ?? ""}</td>
+                <td className="text-ink-500">{i.rule ? ruleLabel[i.rule] ?? i.rule : "—"}</td>
+                <td className="text-ink-500">{i.note ?? ""}</td>
               </tr>
             ))}
           </tbody>
         </table>
-      </div>
+      </TableCard>
     </>
   );
 }

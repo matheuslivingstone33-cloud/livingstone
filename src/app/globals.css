@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/*
+  FinOps AI · sistema visual "Livro-razão"
+  - Papel quente e tinta profunda: superfícies claras, legíveis, com fios finos (como um livro contábil).
+  - Verde-petróleo é a cor de ação e de "dinheiro em ordem"; o dourado é reservado a destaques raros
+    (marca, item ativo, fio de seção). Nunca usado para texto pequeno sobre fundo claro.
+  - Fraunces para títulos e números de destaque; Geist para interface; Geist Mono para códigos e referências.
+*/
 @theme inline {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
@@ -9,83 +16,218 @@
   --color-brand-50: #effaf7;
   --color-brand-100: #d3f3ea;
   --color-brand-200: #a8e5d4;
+  --color-brand-300: #6fceb6;
+  --color-brand-400: #34b59a;
   --color-brand-500: #14a08a;
   --color-brand-600: #0f766e;
   --color-brand-700: #0b5c56;
+  --color-brand-800: #0a4744;
   --color-brand-900: #0a2a30;
 
+  --color-ink-500: #4b6470;
+  --color-ink-600: #344d59;
+  --color-ink-700: #1f3d49;
   --color-ink-800: #11313b;
   --color-ink-900: #0a1f2c;
   --color-ink-950: #06141d;
 
+  --color-gold-50: #fbf6e6;
+  --color-gold-100: #f5e9c2;
   --color-gold-300: #ecd48a;
   --color-gold-400: #e0b84a;
+  --color-gold-500: #c99a2a;
   --color-gold-600: #a67c14;
+  --color-gold-700: #7d5c0c;
+
+  /* Papel e fios (superfícies neutras levemente quentes) */
+  --color-paper: #f6f6f1;
+  --color-paper-2: #efefe8;
+  --color-line: #e3e4dc;
+  --color-line-strong: #cfd1c6;
 
   /* Cores de gráficos (validadas: separação para daltonismo e contraste ≥ 3:1 no fundo claro) */
   --color-chart-1: #0d9488;
   --color-chart-2: #b45309;
   --color-chart-3: #4338ca;
   --color-chart-4: #be185d;
+
+  --shadow-card: 0 1px 0 rgba(10, 31, 44, 0.03), 0 1px 3px rgba(10, 31, 44, 0.05);
+  --shadow-lift: 0 1px 0 rgba(10, 31, 44, 0.03), 0 12px 32px -12px rgba(10, 31, 44, 0.18);
 }
 
 :root {
-  --surface: #fcfcfb;
-  --page: #f4f6f3;
+  --surface: #ffffff;
+  --page: var(--color-paper);
+}
+
+html {
+  scroll-padding-top: 5rem;
 }
 
 body {
   background: var(--page);
-  color: #0f172a;
+  color: var(--color-ink-900);
+  font-feature-settings: "ss01", "cv11";
 }
 
 ::selection {
   background: var(--color-brand-200);
+  color: var(--color-ink-950);
 }
 
 :focus-visible {
   outline: 2px solid var(--color-brand-600);
   outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Em fundos escuros o foco vira dourado para manter contraste */
+.on-ink :focus-visible {
+  outline-color: var(--color-gold-400);
 }
 
 @layer components {
+  /* ---------- Superfícies ---------- */
   .card {
-    @apply rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04)];
+    @apply rounded-2xl border border-line bg-white p-5 shadow-card md:p-6;
   }
+  .card-header {
+    @apply mb-4 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-line pb-3;
+  }
+  .card-title {
+    @apply text-[15px] font-semibold tracking-tight text-ink-900;
+  }
+  .surface-ink {
+    @apply relative overflow-hidden bg-ink-900 text-white;
+  }
+
+  /* Rótulo de seção: versalete pequeno, espaçado (assinatura do sistema) */
+  .eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-500;
+  }
+  /* Fio dourado curto antes de títulos de seção */
+  .rule-gold {
+    @apply block h-0.5 w-8 rounded-full bg-gold-400;
+  }
+
+  /* ---------- Botões ---------- */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-brand-700 disabled:opacity-50;
+    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_1px_2px_rgba(10,31,44,0.2)] transition-colors hover:bg-brand-700 active:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-60;
   }
   .btn-ghost {
-    @apply inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 transition hover:bg-slate-50;
+    @apply inline-flex min-h-9 items-center justify-center gap-2 rounded-xl border border-line-strong bg-white px-3.5 py-1.5 text-sm font-medium text-ink-700 transition-colors hover:border-ink-500/40 hover:bg-paper hover:text-ink-900 disabled:cursor-not-allowed disabled:opacity-60;
   }
+  .btn-danger {
+    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-red-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-800 disabled:opacity-60;
+  }
+  .btn-gold {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-gold-400 px-6 py-3 text-sm font-semibold text-ink-950 transition-colors hover:bg-gold-300;
+  }
+  .btn-outline-light {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-white/20 px-6 py-3 text-sm font-medium text-white transition-colors hover:border-white/40 hover:bg-white/10;
+  }
+  /* Ação textual dentro de tabelas */
+  .link-action {
+    @apply inline-flex items-center gap-1 rounded text-sm font-medium text-brand-700 underline-offset-4 hover:text-brand-800 hover:underline;
+  }
+
+  /* Filtros (segmentos) */
+  .chip {
+    @apply inline-flex min-h-9 items-center gap-2 rounded-full border border-line-strong bg-white px-3.5 py-1.5 text-sm font-medium text-ink-600 transition-colors hover:border-ink-500/40 hover:text-ink-900;
+  }
+  .chip[aria-current="page"],
+  .chip[aria-current="true"] {
+    @apply border-ink-900 bg-ink-900 text-white hover:text-white;
+  }
+
+  /* ---------- Formulários ---------- */
   .input {
-    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-100;
+    @apply w-full min-h-10 rounded-xl border border-line-strong bg-white px-3 py-2 text-sm text-ink-900 shadow-[inset_0_1px_1px_rgba(10,31,44,0.04)] transition-colors outline-none placeholder:text-ink-500/60 hover:border-ink-500/40 focus:border-brand-600 focus:ring-4 focus:ring-brand-100 disabled:bg-paper;
+  }
+  .input[type="file"] {
+    @apply cursor-pointer border-dashed bg-paper/60 py-1.5 text-ink-600 file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-ink-900 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:bg-white;
   }
   .label {
-    @apply mb-1 block text-sm font-medium text-slate-700;
+    @apply mb-1.5 block text-[13px] font-medium text-ink-700;
   }
+  .hint {
+    @apply mt-1.5 text-xs leading-relaxed text-ink-500;
+  }
+
+  /* ---------- Tabelas ---------- */
   .table {
-    @apply w-full text-left text-sm;
+    @apply w-full border-separate border-spacing-0 text-left text-sm;
   }
   .table th {
-    @apply border-b border-slate-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500;
+    @apply whitespace-nowrap border-b border-line bg-paper/70 px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500 first:rounded-tl-lg last:rounded-tr-lg;
   }
   .table td {
-    @apply border-b border-slate-100 px-3 py-2;
+    @apply border-b border-line/70 px-3 py-3 align-middle;
   }
+  .table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+  .table tbody tr {
+    @apply transition-colors hover:bg-paper/60;
+  }
+  .num {
+    @apply text-right tabular-nums;
+  }
+
+  /* ---------- Selos ---------- */
   .badge {
-    @apply inline-flex rounded-full px-2 py-0.5 text-xs font-medium;
+    @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ring-current/15;
   }
+
+  /* ---------- Avisos ---------- */
+  .notice {
+    @apply mb-4 flex items-start gap-3 rounded-xl border px-4 py-3 text-sm;
+  }
+  .notice-success {
+    @apply border-emerald-200 bg-emerald-50 text-emerald-900;
+  }
+  .notice-warning {
+    @apply border-amber-200 bg-amber-50 text-amber-900;
+  }
+  .notice-danger {
+    @apply border-red-200 bg-red-50 text-red-900;
+  }
+  .notice-info {
+    @apply border-brand-200 bg-brand-50 text-brand-900;
+  }
+
   .font-display {
     font-family: var(--font-display), Georgia, serif;
     font-optical-sizing: auto;
   }
-  /* Textura sutil de grade para fundos escuros (landing e login) */
+
+  /* Textura sutil de grade para fundos escuros (landing, login, painel) */
   .bg-grid {
     background-image:
-      linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+      linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
     background-size: 44px 44px;
+  }
+  /* Pauta de livro-razão para fundos claros */
+  .bg-ledger {
+    background-image: linear-gradient(var(--color-line) 1px, transparent 1px);
+    background-size: 100% 32px;
+  }
+
+  /* Detalhes/sumário com marcador próprio */
+  .disclosure > summary {
+    @apply flex cursor-pointer list-none items-center gap-2 rounded text-sm font-medium text-ink-700 hover:text-ink-900;
+  }
+  .disclosure > summary::-webkit-details-marker {
+    display: none;
+  }
+  .disclosure > summary::before {
+    content: "";
+    @apply inline-block size-2 border-r-[1.5px] border-b-[1.5px] border-current transition-transform;
+    transform: rotate(-45deg);
+  }
+  .disclosure[open] > summary::before {
+    transform: rotate(45deg);
   }
 }
 
@@ -112,6 +254,15 @@ body {
   @keyframes draw {
     to {
       stroke-dashoffset: 0;
+    }
+  }
+  .grow-x {
+    transform-origin: left;
+    animation: grow-x 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) 0.1s both;
+  }
+  @keyframes grow-x {
+    from {
+      transform: scaleX(0);
     }
   }
 }

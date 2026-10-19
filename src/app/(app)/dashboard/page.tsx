@@ -3,7 +3,7 @@ import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, dt } from "@/lib/format";
 import { debtStatus } from "@/lib/collection";
-import { PageTitle, Stat, Empty } from "@/components/ui";
+import { PageTitle, Stat, Empty, CardHeader, MoreLink } from "@/components/ui";
 import { AreaTrend, Bars, CHART, StackBar } from "@/components/charts";
 import { DueBadge, RiskBadge } from "../pld/badges";
 
@@ -52,38 +52,42 @@ export default async function Dashboard() {
   const problems = (recAgg._sum.divergent ?? 0) + (recAgg._sum.missing ?? 0);
   const decTotal = (dec.APROVAR ?? 0) + (dec.ANALISAR ?? 0) + (dec.RECUSAR ?? 0);
 
+  const today = new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+
   return (
     <>
-      <PageTitle title={`Olá, ${s.name.split(" ")[0]}`} subtitle="O que a operação recuperou, o que precisa de atenção e o que vence primeiro" />
+      <PageTitle eyebrow={today} title={`Olá, ${s.name.split(" ")[0]}`} subtitle="O que a operação recuperou, o que precisa de atenção e o que vence primeiro" />
 
-      <section className="rise relative overflow-hidden rounded-3xl bg-ink-900 p-6 text-white md:p-8">
-        <div className="bg-grid pointer-events-none absolute inset-0 opacity-60" aria-hidden="true" />
+      <section aria-labelledby="hero-recuperado" className="on-ink surface-ink rise rounded-3xl p-6 md:p-8">
+        <div className="bg-grid pointer-events-none absolute inset-0 opacity-70 [mask-image:linear-gradient(to_right,black,transparent_80%)]" aria-hidden="true" />
+        <div className="pointer-events-none absolute -left-32 -top-32 h-80 w-80 rounded-full bg-brand-600/30 blur-3xl" aria-hidden="true" />
         <div className="relative grid gap-8 lg:grid-cols-5">
-          <div className="lg:col-span-2">
-            <p className="text-xs font-medium uppercase tracking-widest text-gold-300">Recuperado em cobrança</p>
-            <p className="font-display mt-2 text-5xl font-semibold tracking-tight tabular-nums md:text-6xl">{brl(Math.round(recovered)).replace(/,00$/, "")}</p>
-            <p className="mt-3 max-w-sm text-sm text-brand-100/80">
+          <div className="flex flex-col lg:col-span-2">
+            <p id="hero-recuperado" className="eyebrow flex items-center gap-3 text-gold-300">
+              <span className="rule-gold" aria-hidden="true" />
+              Recuperado em cobrança
+            </p>
+            <p className="font-display mt-4 text-5xl font-semibold tracking-tight tabular-nums md:text-6xl">{brl(Math.round(recovered)).replace(/,00$/, "")}</p>
+            <p className="mt-3 max-w-sm text-sm leading-relaxed text-brand-100/80">
               {recovered > 0
                 ? `Pagamentos de acordos nas últimas ${WEEKS} semanas, via Pix e baixa manual.`
                 : "Importe a carteira e envie as propostas: cada acordo pago aparece aqui."}
             </p>
-            <dl className="mt-6 grid grid-cols-2 gap-4 border-t border-white/10 pt-5 text-sm">
+            <dl className="mt-auto grid grid-cols-2 gap-4 border-t border-white/10 pt-5 text-sm max-lg:mt-6">
               <div>
-                <dt className="text-brand-100/70">Carteira em aberto</dt>
-                <dd className="mt-0.5 text-lg font-semibold tabular-nums">{compact(openDebt)}</dd>
+                <dt className="text-xs text-brand-100/65">Carteira em aberto</dt>
+                <dd className="mt-1 text-lg font-semibold tabular-nums">{compact(openDebt)}</dd>
               </div>
               <div>
-                <dt className="text-brand-100/70">Quitado</dt>
-                <dd className="mt-0.5 text-lg font-semibold tabular-nums">{compact(settledDebt)}</dd>
+                <dt className="text-xs text-brand-100/65">Quitado</dt>
+                <dd className="mt-1 text-lg font-semibold tabular-nums text-brand-200">{compact(settledDebt)}</dd>
               </div>
             </dl>
           </div>
-          <div className="rounded-2xl bg-white p-4 text-slate-900 lg:col-span-3">
-            <div className="mb-1 flex items-baseline justify-between px-1">
-              <h2 className="text-sm font-semibold">Recuperação por semana</h2>
-              <Link href="/cobranca" className="text-xs text-brand-600 hover:underline">
-                Ver cobrança →
-              </Link>
+          <div className="rounded-2xl bg-white p-4 text-ink-900 shadow-lift md:p-5 lg:col-span-3">
+            <div className="mb-2 flex items-baseline justify-between gap-3 px-1">
+              <h2 className="card-title">Recuperação por semana</h2>
+              <MoreLink href="/cobranca">Ver cobrança</MoreLink>
             </div>
             {recovered > 0 ? (
               <AreaTrend data={series} format={compact} label="Valor recuperado por semana" />
@@ -94,7 +98,7 @@ export default async function Dashboard() {
         </div>
       </section>
 
-      <div className="rise mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4" style={{ animationDelay: "80ms" }}>
+      <div className="rise mt-6 grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 lg:grid-cols-4" style={{ animationDelay: "80ms" }}>
         <Stat label="Valor conciliado" value={compact(Number(recAgg._sum.totalReceived ?? 0))} href="/conciliacao" tone="green" hint={plural(recs, "conciliação feita", "conciliações feitas")} />
         <Stat
           label="Itens a resolver"
@@ -114,25 +118,24 @@ export default async function Dashboard() {
       </div>
 
       <div className="rise mt-6 grid gap-4 lg:grid-cols-2" style={{ animationDelay: "160ms" }}>
-        <div className="card">
-          <div className="mb-4 flex items-baseline justify-between">
-            <h2 className="font-semibold">Prazos de PLD mais próximos</h2>
-            <Link href="/pld" className="text-xs text-brand-600 hover:underline">
-              Ver todos →
-            </Link>
-          </div>
+        <section className="card">
+          <CardHeader title="Prazos de PLD mais próximos">
+            <MoreLink href="/pld">Ver todos</MoreLink>
+          </CardHeader>
           {pldOpen.length ? (
-            <ul className="divide-y divide-slate-100">
+            <ul className="-mx-2">
               {pldOpen.map((c) => (
-                <li key={c.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
-                  <Link href={`/pld/${c.id}`} className="min-w-0 truncate font-medium text-slate-800 hover:text-brand-600">
-                    {c.clientName}
-                    {c.mandatory && <span className="ml-2 badge bg-red-600 text-white">COE</span>}
+                <li key={c.id}>
+                  <Link href={`/pld/${c.id}`} className="flex items-center justify-between gap-3 rounded-xl px-2 py-2.5 text-sm transition-colors hover:bg-paper">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="truncate font-medium text-ink-900">{c.clientName}</span>
+                      {c.mandatory && <span className="badge bg-red-700 text-white">COE</span>}
+                    </span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      <RiskBadge risk={c.risk} score={c.score} />
+                      <DueBadge dueAt={c.dueAt} />
+                    </span>
                   </Link>
-                  <span className="flex shrink-0 items-center gap-2">
-                    <RiskBadge risk={c.risk} score={c.score} />
-                    <DueBadge dueAt={c.dueAt} />
-                  </span>
                 </li>
               ))}
             </ul>
@@ -140,7 +143,8 @@ export default async function Dashboard() {
             <Empty>Nenhum caso em análise. Importe um lote de transações em PLD / COAF.</Empty>
           )}
           {pldTotal > 0 && (
-            <div className="mt-4 border-t border-slate-100 pt-4">
+            <div className="mt-4 border-t border-line pt-4">
+              <h3 className="eyebrow mb-3">Casos em análise por risco</h3>
               <StackBar
                 parts={[
                   { label: "Alto", value: risk.ALTO ?? 0, color: CHART.c4 },
@@ -150,15 +154,12 @@ export default async function Dashboard() {
               />
             </div>
           )}
-        </div>
+        </section>
 
-        <div className="card">
-          <div className="mb-4 flex items-baseline justify-between">
-            <h2 className="font-semibold">Carteira de cobrança</h2>
-            <Link href="/cobranca" className="text-xs text-brand-600 hover:underline">
-              Abrir →
-            </Link>
-          </div>
+        <section className="card">
+          <CardHeader title="Carteira de cobrança">
+            <MoreLink href="/cobranca">Abrir</MoreLink>
+          </CardHeader>
           {debts.length ? (
             <Bars
               rows={["EM_ABERTO", "NEGOCIANDO", "ACORDO", "QUITADO"].map((k) => {
@@ -171,8 +172,8 @@ export default async function Dashboard() {
             <Empty>Nenhuma dívida importada.</Empty>
           )}
           {decTotal > 0 && (
-            <div className="mt-5 border-t border-slate-100 pt-4">
-              <h3 className="mb-3 text-sm font-semibold">Decisões sugeridas no crédito</h3>
+            <div className="mt-5 border-t border-line pt-4">
+              <h3 className="eyebrow mb-3">Decisões sugeridas no crédito</h3>
               <StackBar
                 parts={[
                   { label: "Aprovar", value: dec.APROVAR ?? 0, color: CHART.c1 },
@@ -182,27 +183,28 @@ export default async function Dashboard() {
               />
             </div>
           )}
-        </div>
+        </section>
       </div>
 
-      <div className="card rise mt-6" style={{ animationDelay: "240ms" }}>
-        <h2 className="mb-3 font-semibold">Atividade recente</h2>
+      <section className="card rise mt-6" style={{ animationDelay: "240ms" }}>
+        <CardHeader title="Atividade recente" />
         {recent.length ? (
-          <ul className="space-y-2 text-sm">
+          <ol className="relative space-y-4 text-sm before:absolute before:bottom-2 before:left-[5px] before:top-2 before:w-px before:bg-line">
             {recent.map((a) => (
-              <li key={a.id} className="flex justify-between gap-3">
-                <span className="min-w-0">
-                  <b>{a.user?.name ?? "Sistema"}</b> · {a.action}
-                  {a.detail && <span className="text-slate-500"> — {a.detail}</span>}
+              <li key={a.id} className="relative flex flex-wrap justify-between gap-x-4 gap-y-0.5 pl-6">
+                <span className="absolute left-0 top-1.5 h-[11px] w-[11px] rounded-full border-2 border-white bg-brand-500 ring-1 ring-line" aria-hidden="true" />
+                <span className="min-w-0 text-ink-700">
+                  <b className="font-semibold text-ink-900">{a.user?.name ?? "Sistema"}</b> · {a.action}
+                  {a.detail && <span className="text-ink-500"> — {a.detail}</span>}
                 </span>
-                <span className="shrink-0 text-xs text-slate-400">{dt(a.createdAt)}</span>
+                <span className="shrink-0 text-xs tabular-nums text-ink-500">{dt(a.createdAt)}</span>
               </li>
             ))}
-          </ul>
+          </ol>
         ) : (
           <Empty>Sem atividade.</Empty>
         )}
-      </div>
+      </section>
     </>
   );
 }

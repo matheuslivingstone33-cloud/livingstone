@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { brl, day, dt } from "@/lib/format";
 import { TYPE_LABEL, type Alert } from "@/lib/pld";
 import { generateDossier } from "../../../actions-pld";
-import { PageTitle, Stat } from "@/components/ui";
+import { PageTitle, Stat, CardHeader } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 import { CopyButton } from "@/components/CopyButton";
 import { PLD_STATUS, RiskBadge, DueBadge } from "../badges";
@@ -23,17 +23,18 @@ export default async function PldCasePage({ params }: { params: Promise<{ id: st
   return (
     <>
       <PageTitle
+        back={{ href: "/pld", label: "Casos de PLD" }}
         title={c.clientName}
         subtitle={`${c.clientDoc} · período ${day(c.batch.periodStart)} a ${day(c.batch.periodEnd)} · aberto em ${dt(c.createdAt)}`}
         action={
           <div className="flex flex-wrap items-center gap-2">
-            {c.pep && <span className="badge bg-violet-100 text-violet-800">PEP</span>}
-            {c.mandatory && <span className="badge bg-red-100 text-red-800">Comunicação obrigatória</span>}
+            {c.pep && <span className="badge bg-violet-50 text-violet-800">PEP</span>}
+            {c.mandatory && <span className="badge bg-red-700 text-white">Comunicação obrigatória</span>}
             <span className={`badge ${PLD_STATUS[c.status][1]}`}>{PLD_STATUS[c.status][0]}</span>
           </div>
         }
       />
-      <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-5">
+      <div className="mb-6 grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 lg:grid-cols-5">
         <Stat label="Risco" value={<RiskBadge risk={c.risk} score={c.score} />} />
         <Stat label="Renda declarada" value={brl(c.declaredIncome)} />
         <Stat label="Créditos no período" value={brl(c.totalIn)} tone="green" />
@@ -43,80 +44,88 @@ export default async function PldCasePage({ params }: { params: Promise<{ id: st
 
       <div className="grid gap-4 lg:grid-cols-5">
         <div className="space-y-4 lg:col-span-3">
-          <div className="card">
-            <h2 className="mb-3 font-semibold">Alertas ({alerts.length})</h2>
-            <div className="space-y-3">
+          <section className="card">
+            <CardHeader title={`Alertas (${alerts.length})`} />
+            <ol className="space-y-3">
               {alerts.map((a) => (
-                <div key={a.rule} className="rounded-lg border border-slate-200 p-3">
+                <li key={a.rule} className="relative rounded-xl border border-line bg-white p-4 pl-5">
+                  <span className="absolute inset-y-3 left-0 w-1 rounded-r-full bg-amber-400" aria-hidden="true" />
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <b className="text-sm">{a.title}</b>
-                    <span className="badge bg-slate-100 text-slate-600">+{a.weight} pts</span>
+                    <b className="text-sm font-semibold text-ink-900">{a.title}</b>
+                    <span className="badge bg-paper-2 tabular-nums text-ink-700">+{a.weight} pts</span>
                   </div>
-                  <p className="mt-1 text-sm text-slate-700">{a.description}</p>
-                  <p className="mt-1 text-xs text-slate-400">{a.reference}</p>
-                </div>
+                  <p className="mt-1.5 text-sm leading-relaxed text-ink-700">{a.description}</p>
+                  <p className="mt-1.5 text-xs text-ink-500">{a.reference}</p>
+                </li>
               ))}
-            </div>
-          </div>
+            </ol>
+          </section>
 
-          <div className="card overflow-x-auto">
-            <h2 className="mb-3 font-semibold">Transações do cliente ({txs.length})</h2>
-            <p className="mb-2 text-xs text-slate-500">Destacadas: operações citadas nos alertas.</p>
+          <section className="card p-0 md:p-0">
+            <div className="px-5 pt-5 md:px-6">
+              <CardHeader title={`Transações do cliente (${txs.length})`}>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-sm bg-amber-200 ring-1 ring-amber-300" aria-hidden="true" />
+                  Destacadas: operações citadas nos alertas.
+                </span>
+              </CardHeader>
+            </div>
+            <div className="overflow-x-auto px-2 pb-3 md:px-3">
             <table className="table">
-              <thead><tr><th>Data</th><th>Tipo</th><th>Valor</th><th>Contraparte</th></tr></thead>
+              <thead><tr><th>Data</th><th>Tipo</th><th className="num">Valor</th><th>Contraparte</th></tr></thead>
               <tbody>
                 {txs.map((t) => {
                   const hit = evidenceKeys.has(`${t.date.toISOString().slice(0, 10)}|${Number(t.amount)}|${t.type}`);
                   return (
-                    <tr key={t.id} className={hit ? "bg-amber-50" : ""}>
+                    <tr key={t.id} className={hit ? "bg-amber-50 hover:bg-amber-100/70" : ""}>
                       <td className="whitespace-nowrap">{dt(t.date)}</td>
                       <td>{TYPE_LABEL[t.type] ?? t.type}</td>
-                      <td className={`tabular-nums ${t.direction === "C" ? "text-emerald-700" : "text-red-700"}`}>
+                      <td className={`num whitespace-nowrap font-medium ${t.direction === "C" ? "text-emerald-700" : "text-red-700"}`}>
                         {t.direction === "C" ? "+" : "−"} {brl(t.amount)}
                       </td>
-                      <td className="text-slate-600">
+                      <td className="text-ink-600">
                         {t.counterparty ?? "—"}
-                        {t.counterDoc && <span className="text-xs text-slate-400"> · {t.counterDoc}</span>}
+                        {t.counterDoc && <span className="text-xs text-ink-500"> · {t.counterDoc}</span>}
                       </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
-          </div>
+            </div>
+          </section>
         </div>
 
         <div className="space-y-4 lg:col-span-2">
           {c.status !== "EM_ANALISE" ? (
-            <div className="card space-y-2 text-sm">
-              <h2 className="font-semibold">Decisão registrada</h2>
-              <p><b>{PLD_STATUS[c.status][0]}</b> por {c.decidedBy} em {dt(c.decidedAt)}</p>
-              {c.protocol && <p>Protocolo SISCOAF: <span className="font-mono">{c.protocol}</span></p>}
-              <p className="whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-slate-700">{c.decision}</p>
-            </div>
+            <section className="card space-y-3 text-sm">
+              <CardHeader title="Decisão registrada" />
+              <p className="text-ink-700"><b className="text-ink-900">{PLD_STATUS[c.status][0]}</b> por {c.decidedBy} em {dt(c.decidedAt)}</p>
+              {c.protocol && <p className="text-ink-700">Protocolo SISCOAF: <span className="rounded bg-paper-2 px-1.5 py-0.5 font-mono text-ink-900">{c.protocol}</span></p>}
+              <p className="whitespace-pre-wrap rounded-xl border border-line bg-paper p-3 leading-relaxed text-ink-700">{c.decision}</p>
+            </section>
           ) : (
             canEdit && <DecisionForm caseId={c.id} mandatory={c.mandatory} pepNeedsAdmin={c.pep && s.role !== "ADMIN"} />
           )}
 
-          <div className="card space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="font-semibold">Dossiê</h2>
-              {c.dossier && <span className="text-xs text-slate-500">{c.dossierAi === "claude" ? "redigido pelo Claude" : "modelo padrão"}</span>}
-            </div>
+          <section className="card space-y-3">
+            <CardHeader title="Dossiê">
+              {c.dossier ? (c.dossierAi === "claude" ? "redigido pelo Claude" : "modelo padrão") : undefined}
+            </CardHeader>
             {c.dossier ? (
               <>
-                <pre className="max-h-[480px] overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 font-sans text-xs leading-relaxed text-slate-700">{c.dossier}</pre>
+                <pre tabIndex={0} aria-label="Texto do dossiê" className="max-h-[480px] overflow-auto whitespace-pre-wrap rounded-xl border border-line bg-paper p-4 font-sans text-xs leading-relaxed text-ink-800">{c.dossier}</pre>
                 <CopyButton text={c.dossier} label="Copiar dossiê" />
               </>
             ) : (
-              <p className="text-sm text-slate-500">Gere o dossiê com os fatos, as evidências e o enquadramento normativo para fundamentar a decisão.</p>
+              <p className="text-sm leading-relaxed text-ink-500">Gere o dossiê com os fatos, as evidências e o enquadramento normativo para fundamentar a decisão.</p>
             )}
             {canEdit && (
               <form action={generateDossier.bind(null, c.id)}>
                 <SubmitButton pending="Gerando dossiê...">{c.dossier ? "Gerar novamente" : "Gerar dossiê"}</SubmitButton>
               </form>
             )}
-          </div>
+          </section>
         </div>
       </div>
     </>

@@ -2,7 +2,7 @@ import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { dt } from "@/lib/format";
 import { changeUserRole, createUser, revokeUserSessions, setUserActive } from "../../actions";
-import { PageTitle } from "@/components/ui";
+import { PageTitle, CardHeader, TableCard } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 
 const roleLabel: Record<string, string> = { ADMIN: "Administrador", ANALISTA: "Analista", AUDITOR: "Auditor" };
@@ -14,8 +14,11 @@ export default async function UsuariosPage() {
 
   return (
     <>
-      <PageTitle title="Usuários" subtitle="Analistas operam os módulos; auditores apenas consultam e veem a trilha de auditoria" />
-      <form action={createUser} className="card mb-6 grid gap-4 md:grid-cols-5">
+      <PageTitle eyebrow="Acesso" title="Usuários" subtitle="Analistas operam os módulos; auditores apenas consultam e veem a trilha de auditoria" />
+      <form action={createUser} className="card mb-8 grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1.3fr_auto_auto]">
+        <div className="sm:col-span-2 lg:col-span-5">
+          <CardHeader title="Adicionar usuário" />
+        </div>
         <input className="input" name="name" placeholder="Nome" required aria-label="Nome" />
         <input className="input" name="email" type="email" placeholder="E-mail" required aria-label="E-mail" />
         <input className="input" name="password" type="password" placeholder="Senha (mín. 12, letras e números)" minLength={12} required autoComplete="new-password" aria-label="Senha" />
@@ -26,7 +29,7 @@ export default async function UsuariosPage() {
         </select>
         <SubmitButton pending="Salvando...">Adicionar</SubmitButton>
       </form>
-      <div className="card overflow-x-auto">
+      <TableCard title="Equipe" meta={`${users.length} usuário(s)`}>
         <table className="table">
           <thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Situação</th><th>Último acesso</th><th>Ações</th></tr></thead>
           <tbody>
@@ -35,36 +38,36 @@ export default async function UsuariosPage() {
               const locked = u.lockedUntil && u.lockedUntil > now;
               return (
                 <tr key={u.id} className={u.active ? "" : "opacity-60"}>
-                  <td>{u.name}{self && <span className="ml-2 text-xs text-slate-400">(você)</span>}</td>
-                  <td>{u.email}</td>
+                  <td className="whitespace-nowrap font-medium text-ink-900">{u.name}{self && <span className="badge ml-2 bg-gold-50 text-gold-700">você</span>}</td>
+                  <td className="text-ink-600">{u.email}</td>
                   <td>
                     {self ? (
                       roleLabel[u.role]
                     ) : (
                       <form action={changeUserRole.bind(null, u.id)} className="flex items-center gap-2">
-                        <select className="input py-1" name="role" defaultValue={u.role} aria-label={`Perfil de ${u.name}`}>
+                        <select className="input min-h-9 w-auto py-1" name="role" defaultValue={u.role} aria-label={`Perfil de ${u.name}`}>
                           <option value="ANALISTA">Analista</option>
                           <option value="AUDITOR">Auditor</option>
                           <option value="ADMIN">Administrador</option>
                         </select>
-                        <button className="text-sm text-brand-600 hover:underline">Alterar</button>
+                        <button className="link-action">Alterar</button>
                       </form>
                     )}
                   </td>
                   <td>
                     {!u.active ? <span className="badge bg-slate-100 text-slate-600">Desativado</span>
-                      : locked ? <span className="badge bg-red-100 text-red-800">Bloqueado até {dt(u.lockedUntil)}</span>
-                      : <span className="badge bg-emerald-100 text-emerald-800">Ativo</span>}
+                      : locked ? <span className="badge bg-red-50 text-red-800">Bloqueado até {dt(u.lockedUntil)}</span>
+                      : <span className="badge bg-emerald-50 text-emerald-800"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />Ativo</span>}
                   </td>
-                  <td className="text-slate-500">{dt(u.lastLoginAt)}</td>
+                  <td className="whitespace-nowrap text-ink-500">{dt(u.lastLoginAt)}</td>
                   <td>
                     {!self && (
-                      <div className="flex flex-wrap gap-3 text-sm">
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
                         <form action={setUserActive.bind(null, u.id, !u.active)}>
-                          <button className="text-brand-600 hover:underline">{u.active ? "Desativar" : "Reativar"}</button>
+                          <button className={u.active ? "link-action text-red-700 hover:text-red-800" : "link-action"}>{u.active ? "Desativar" : "Reativar"}</button>
                         </form>
                         <form action={revokeUserSessions.bind(null, u.id)}>
-                          <button className="text-brand-600 hover:underline">{locked ? "Desbloquear" : "Encerrar sessões"}</button>
+                          <button className="link-action whitespace-nowrap">{locked ? "Desbloquear" : "Encerrar sessões"}</button>
                         </form>
                       </div>
                     )}
@@ -74,8 +77,8 @@ export default async function UsuariosPage() {
             })}
           </tbody>
         </table>
-      </div>
-      <p className="mt-3 text-xs text-slate-500">Desativar, mudar o perfil ou encerrar sessões derruba os acessos abertos do usuário imediatamente.</p>
+      </TableCard>
+      <p className="hint mt-3">Desativar, mudar o perfil ou encerrar sessões derruba os acessos abertos do usuário imediatamente.</p>
     </>
   );
 }

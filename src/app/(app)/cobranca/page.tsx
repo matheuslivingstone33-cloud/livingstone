@@ -5,7 +5,7 @@ import { brl, day } from "@/lib/format";
 import { bandOf, debtStatus, updateDebt } from "@/lib/collection";
 import { getSettings } from "@/lib/settings";
 import { importDebts, generateAllProposals, generateProposal } from "../../actions-cobranca";
-import { PageTitle, Stat, Empty, DemoFiles } from "@/components/ui";
+import { PageTitle, Stat, Empty, DemoFiles, Notice, CardHeader, TableCard, FilterBar } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 
 export default async function CobrancaPage({
@@ -40,6 +40,7 @@ export default async function CobrancaPage({
   return (
     <>
       <PageTitle
+        eyebrow="Cobrança"
         title="Cobrança e renegociação"
         subtitle="Dívida atualizada (multa 2% + juros de 1% a.m.), propostas por faixa de atraso e acordo com pagamento via Pix"
         action={
@@ -51,77 +52,75 @@ export default async function CobrancaPage({
         }
       />
       {(importados || propostas) && (
-        <p className="mb-4 rounded-lg bg-emerald-50 px-4 py-2 text-sm text-emerald-800">
-          {importados ? `${importados} contrato(s) importado(s).` : `${propostas} proposta(s) gerada(s).`}
-        </p>
+        <Notice>{importados ? `${importados} contrato(s) importado(s).` : `${propostas} proposta(s) gerada(s).`}</Notice>
       )}
 
-      <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="mb-6 grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 lg:grid-cols-4">
         <Stat label="Carteira em atraso (atualizada)" value={brl(carteira)} tone="red" />
         <Stat label="Contratos" value={rows.length} />
         <Stat label="Taxa de acordo" value={enviados ? `${Math.round((acordos / enviados) * 100)}%` : "—"} tone="blue" />
         <Stat label="Recuperado" value={brl(recovered._sum.paidAmount ?? 0)} tone="green" />
       </div>
 
-      <div className="mb-6 grid gap-4 lg:grid-cols-3">
-        <div className="card lg:col-span-2">
-          <h2 className="mb-3 font-semibold">Carteira por faixa de atraso</h2>
-          <div className="space-y-2">
+      <div className="mb-8 grid gap-4 lg:grid-cols-3">
+        <section className="card lg:col-span-2">
+          <CardHeader title="Carteira por faixa de atraso">Valor atualizado (contratos)</CardHeader>
+          <ul className="space-y-3">
             {byBand.map((b) => (
-              <div key={b.label} className="grid grid-cols-[110px_1fr_auto] items-center gap-3 text-sm">
-                <span className="text-slate-600">{b.label}</span>
-                <div className="h-5 rounded bg-slate-100">
-                  <div className="h-5 rounded bg-brand-600" style={{ width: `${(b.total / maxBand) * 100}%` }} />
+              <li key={b.label} className="grid grid-cols-[minmax(84px,110px)_1fr] items-center gap-x-3 gap-y-1 text-sm sm:grid-cols-[110px_1fr_auto]">
+                <span className="text-ink-600">{b.label}</span>
+                <div className="h-2.5 overflow-hidden rounded-full bg-paper-2 max-sm:order-last max-sm:col-span-2">
+                  <div className="grow-x h-full rounded-full bg-brand-600" style={{ width: `${(b.total / maxBand) * 100}%` }} />
                 </div>
-                <span className="w-40 text-right tabular-nums">
-                  {brl(b.total)} <span className="text-slate-400">({b.count})</span>
+                <span className="text-right font-medium tabular-nums text-ink-900 sm:w-40">
+                  {brl(b.total)} <span className="font-normal text-ink-500">({b.count})</span>
                 </span>
-              </div>
+              </li>
             ))}
-          </div>
-          <p className="mt-3 text-xs text-slate-500">
+          </ul>
+          <p className="mt-5 border-t border-line pt-3 text-xs leading-relaxed text-ink-500">
             Política: à vista {BANDS.map((b) => `${b.label.split(" ")[0]} −${Math.round(b.cash * 100)}%`).join(" · ")}. O acordo nunca fica abaixo de {Math.round(cfg.floorPct * 100)}% do valor original. Ajuste em Configurações.
           </p>
-        </div>
+        </section>
         {canEdit && (
           <form action={importDebts} className="card space-y-3">
-            <h2 className="font-semibold">Importar carteira</h2>
+            <CardHeader title="Importar carteira" />
             <input className="input" name="file" type="file" accept=".csv,.txt" required />
-            <p className="text-xs text-slate-500">CSV com: contrato; devedor; cpf_cnpj; telefone; email; produto; valor; vencimento</p>
+            <p className="hint mt-0">CSV com: contrato; devedor; cpf_cnpj; telefone; email; produto; valor; vencimento</p>
             <DemoFiles files={[{ href: "/demo/carteira_inadimplentes.csv", label: "carteira de exemplo" }]} />
             <SubmitButton pending="Importando...">Importar</SubmitButton>
           </form>
         )}
       </div>
 
-      <div className="mb-3 flex flex-wrap gap-2">
+      <FilterBar label="Filtrar contratos por situação">
         {[["", "Todos"], ...Object.entries(debtStatus).map(([k, v]) => [k, v[0]])].map(([k, label]) => (
-          <Link key={k} href={k ? `?status=${k}` : "?"} className={`btn-ghost ${(status ?? "") === k ? "border-brand-600 text-brand-700" : ""}`}>
+          <Link key={k} href={k ? `?status=${k}` : "?"} aria-current={(status ?? "") === k ? "page" : undefined} className="chip">
             {label}
           </Link>
         ))}
-      </div>
-      <div className="card overflow-x-auto">
+      </FilterBar>
+      <TableCard title="Contratos" meta={`${list.length} contrato(s)`}>
         {list.length ? (
           <table className="table">
             <thead>
-              <tr><th>Contrato</th><th>Devedor</th><th>Produto</th><th>Original</th><th>Vencimento</th><th>Atraso</th><th>Atualizado</th><th>Situação</th><th></th></tr>
+              <tr><th>Contrato</th><th>Devedor</th><th>Produto</th><th className="num">Original</th><th>Vencimento</th><th className="num">Atraso</th><th className="num">Atualizado</th><th>Situação</th><th><span className="sr-only">Ações</span></th></tr>
             </thead>
             <tbody>
               {list.map((d) => (
                 <tr key={d.id}>
-                  <td className="font-mono"><Link className="text-brand-600 hover:underline" href={`/cobranca/${d.id}`}>{d.contract}</Link></td>
-                  <td>{d.debtor}</td>
-                  <td className="text-slate-500">{d.product ?? "—"}</td>
-                  <td>{brl(d.principal)}</td>
-                  <td>{day(d.dueDate)}</td>
-                  <td>{d.upd.days} dias</td>
-                  <td className="font-medium">{brl(d.upd.total)}</td>
+                  <td><Link className="link-action font-mono text-xs" href={`/cobranca/${d.id}`}>{d.contract}</Link></td>
+                  <td className="font-medium text-ink-900">{d.debtor}</td>
+                  <td className="text-ink-500">{d.product ?? "—"}</td>
+                  <td className="num">{brl(d.principal)}</td>
+                  <td className="whitespace-nowrap">{day(d.dueDate)}</td>
+                  <td className="num whitespace-nowrap">{d.upd.days} dias</td>
+                  <td className="num font-semibold text-ink-900">{brl(d.upd.total)}</td>
                   <td><span className={`badge ${debtStatus[d.status][1]}`}>{debtStatus[d.status][0]}</span></td>
                   <td>
                     {canEdit && d.status === "EM_ABERTO" && (
                       <form action={generateProposal.bind(null, d.id)}>
-                        <button className="text-sm text-brand-600 hover:underline">Gerar proposta</button>
+                        <button className="link-action whitespace-nowrap">Gerar proposta</button>
                       </form>
                     )}
                   </td>
@@ -132,7 +131,7 @@ export default async function CobrancaPage({
         ) : (
           <Empty>Nenhum contrato. Importe a carteira de exemplo para testar.</Empty>
         )}
-      </div>
+      </TableCard>
     </>
   );
 }
