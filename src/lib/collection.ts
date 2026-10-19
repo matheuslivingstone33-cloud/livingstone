@@ -1,6 +1,6 @@
 // Cobrança: atualização da dívida, política de acordos, mensagem e Pix.
 import { aiProvider, claudeJson } from "./ai";
-import { DEFAULTS, type Band, type Settings } from "./settings";
+import { DEFAULTS, type Band, type Settings } from "./settings-defaults";
 
 export type CollectionCfg = Settings["collection"];
 export type PixCfg = Settings["pix"];

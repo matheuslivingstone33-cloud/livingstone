@@ -265,4 +265,44 @@ body {
       transform: scaleX(0);
     }
   }
+
+  /* Conciliação viva do hero: roda uma vez; o estado inicial fica só no "from" */
+  .live-row {
+    animation: live-row 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  @keyframes live-row {
+    from {
+      opacity: 0;
+      transform: translateX(-10px);
+    }
+  }
+  .live-badge {
+    animation: live-badge 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  @keyframes live-badge {
+    from {
+      opacity: 0;
+      transform: scale(0.9);
+    }
+  }
+  .live-pulse {
+    animation: live-pulse 1.2s ease-out both;
+  }
+  @keyframes live-pulse {
+    0% {
+      opacity: 0;
+    }
+    30% {
+      opacity: 1;
+      box-shadow: 0 0 0 0 rgb(224 184 74 / 0.35);
+    }
+    100% {
+      opacity: 1;
+      box-shadow: 0 0 0 8px rgb(224 184 74 / 0);
+    }
+  }
+  .live-bar {
+    transform-origin: left;
+    animation: grow-x 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
 }

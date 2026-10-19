@@ -11,6 +11,8 @@ import { analyzeCredit } from "../src/lib/credit";
 import { analyzeLegacy } from "../src/lib/legacy";
 import { DEFAULTS, validateSettings } from "../src/lib/settings";
 import { auditHash, passwordProblem } from "../src/lib/auth";
+import { buildTourData } from "../src/lib/tour";
+import { isPublic } from "../src/lib/public-routes";
 
 const demo = (f: string) => readFileSync(new URL(`../public/demo/${f}`, import.meta.url));
 
@@ -195,4 +197,35 @@ test("Cobrança: saldo do acordo, excedente do Pix e tolerância de centavos", (
   assert.equal(decidePayment(100, 90, 10.01, "strict").kind, "apply");
   assert.deepEqual(decidePayment(100, 100, 50, "accept_excess"), { kind: "apply", paid: 150, settled: true, overpaid: 50 });
   assert.deepEqual(decidePayment(0.3, 0.1, 0.2, "strict"), { kind: "apply", paid: 0.3, settled: true, overpaid: 0 });
+});
+
+test("Tour público: dados determinísticos e coerentes com os arquivos de exemplo", () => {
+  const a = buildTourData();
+  assert.deepEqual(a, buildTourData());
+  const c = a.conciliacao;
+  assert.equal(c.format, "CNAB400");
+  const s = c.summary;
+  // Mesmos 13 itens do teste CNAB 400; as opções do tour só podem mover itens para "conciliado"
+  assert.equal(s.matched + s.divergent + s.missing + s.unexpected, 13);
+  assert.ok(s.matched >= 7);
+  assert.equal(c.items.length, 13);
+  assert.equal(a.cobranca.debts.length, 12);
+  assert.ok(a.cobranca.debts.every((d) => d.options.length > 0 && d.multa <= d.principal * 0.02 + 0.01));
+  assert.ok(a.pld.alertCount >= 1);
+  assert.ok(a.pld.clients.some((x) => x.alerts.length > 0));
+});
+
+test("Tour público: sem banco, sessão nem server actions", () => {
+  for (const f of ["../src/lib/tour.ts", "../src/app/tour/page.tsx"]) {
+    const src = readFileSync(new URL(f, import.meta.url), "utf8");
+    for (const bad of ["@/lib/db", "requireSession", "cookies(", "use server"]) assert.ok(!src.includes(bad), `${f} contém ${bad}`);
+  }
+});
+
+test("Rotas públicas: /tour liberado, demais rotas protegidas", () => {
+  assert.ok(isPublic("/tour"));
+  assert.ok(isPublic("/tour/x"));
+  assert.ok(!isPublic("/tourx"));
+  assert.ok(!isPublic("/dashboard"));
+  assert.ok(!isPublic("/api/x"));
 });

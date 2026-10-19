@@ -3,4 +3,6 @@ export const BRAND = {
   name: "Livingstone",
   tagline: "Operações bancárias com inteligência artificial",
   taglineEn: "AI-powered banking operations",
+  // TODO: e-mail provisório, trocar quando o domínio existir
+  contact: "contato@livingstone.com.br",
 } as const;

@@ -24,7 +24,7 @@ export default async function AuditoriaPage() {
         </span>
         <div className="min-w-0 flex-1 leading-relaxed">
         {chain.ok ? (
-          <>Integridade verificada: os {chain.checked} registros encadeados estão intactos. Nenhum foi alterado ou apagado.</>
+          <>Integridade verificada: corrente íntegra, {chain.checked} registros conferidos sem quebra.</>
         ) : (
           <>
             <b>Alerta de integridade:</b> a corrente de auditoria está quebrada no registro de {dt(chain.brokenAt.createdAt)} ({chain.brokenAt.action}).

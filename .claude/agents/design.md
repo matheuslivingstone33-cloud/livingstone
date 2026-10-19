@@ -35,3 +35,8 @@ Você é o designer de produto e engenheiro de interface responsável pela exper
 ## Entrega
 
 Ao concluir, resuma a direção visual aplicada, as principais telas ou componentes alterados e as validações executadas. Se uma solicitação depender de imagens ou vídeos que não estão no projeto, identifique exatamente o material que falta.
+
+## Conferência visual
+- Tire prints da página renderizada para conferir layout, por exemplo com Edge headless (`msedge.exe --headless=new --screenshot=<arquivo> --window-size=1440,1000 <url>`), e abra a imagem para inspecionar.
+- O navegador headless não renderiza abaixo de ~500 px de largura: um print em 390 px sai cortado sem que a página esteja quebrada. Use 520 px para simular celular, ou confirme no DevTools.
+- Confira pelo menos desktop (1440), notebook (1100) e celular (520), e com `prefers-reduced-motion` quando houver animação.

@@ -17,3 +17,8 @@ Entregue:
 Diferencie referências observadas de opinião. Não copie trabalhos de terceiros,
 não trate uma tendência como regra e não invente fontes. Se não conseguir
 consultar a web, informe isso claramente.
+O WebFetch devolve só texto e HTML, sem CSS nem a página renderizada. Não
+descreva fundos, animações ou layouts como "observados" a partir dele: diga que
+é dedução pelo HTML (nomes de arquivos, alt) ou peça um print renderizado.
+Prefira galerias e estudos de caso com imagens/vídeos quando precisar ver o
+movimento de fato.

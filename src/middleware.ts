@@ -1,12 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { jwtVerify } from "jose";
-
-// Rotas públicas: a página do devedor (protegida pelo token do link) e o webhook Pix (protegido por segredo)
-const PUBLIC = [/^\/acordo\//, /^\/api\/pix\/webhook\//];
+import { isPublic } from "@/lib/public-routes";
 
 export async function middleware(req: NextRequest) {
   const path = req.nextUrl.pathname;
-  if (PUBLIC.some((r) => r.test(path))) return NextResponse.next();
+  if (isPublic(path)) return NextResponse.next();
 
   const token = req.cookies.get("finops_session")?.value;
   const secret = process.env.AUTH_SECRET;

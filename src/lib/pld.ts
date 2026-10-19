@@ -1,6 +1,6 @@
 // PLD/FT: regras de monitoramento baseadas na Circular BCB 3.978/2020 e na Carta Circular 4.001/2020.
 import { aiProvider, claudeJson } from "./ai";
-import { DEFAULTS, type Settings } from "./settings";
+import { DEFAULTS, type Settings } from "./settings-defaults";
 import { buildIndex, nameKey, type ListEntry, type ListIndex } from "./lists";
 
 export type Tx = {

@@ -17,3 +17,7 @@ Entregue um relatório conciso com:
 
 Aponte os arquivos, rotas e URLs que sustentam as conclusões. Não altere arquivos
 e não invente informações ausentes.
+Antes de listar algo como limitação ou "não suportado", procure no `src/lib/`:
+o README pode estar desatualizado (ex.: o CNAB 240 é lido em `src/lib/reconcile.ts`).
+Diferencie decisões por regra (conciliação, crédito, PLD) do que a IA faz (ler
+documentos, explicar e converter código legado).
