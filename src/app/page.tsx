@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Logo, LogoMark } from "@/components/Logo";
 import { Icon } from "@/components/Icon";
 import { ChainIllustration, FlowIllustration } from "@/components/Illustrations";
+import { HeroVideo } from "@/components/HeroVideo";
 import { BRAND } from "@/lib/brand";
 
 type Lang = "pt" | "en";
@@ -176,16 +177,10 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ l
 
       <section className="bg-ink-950 px-6 pb-16 md:pb-24">
         <div className="mx-auto max-w-6xl overflow-hidden rounded-[1.75rem] border border-white/10 shadow-2xl">
-          <video
-            className="block aspect-video w-full"
+          <HeroVideo
             src="/video/livingstone-hero.mp4"
             poster="/video/livingstone-hero-poster.png"
-            autoPlay
-            muted
-            loop
-            playsInline
-            preload="metadata"
-            aria-label="Animação: lançamentos do banco sendo conciliados automaticamente, seguidos dos módulos de cobrança, crédito e PLD"
+            label="Animação: lançamentos do banco sendo conciliados automaticamente, seguidos dos módulos de cobrança, crédito e PLD"
           />
         </div>
       </section>

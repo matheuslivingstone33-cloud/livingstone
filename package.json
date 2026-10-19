@@ -15,7 +15,7 @@
     "setup": "prisma migrate dev --name init && npm run db:seed && npm run demo:files",
     "db:demo": "tsx prisma/seed-demo.ts",
     "video:studio": "remotion studio video/index.ts",
-    "video:render": "remotion render video/index.ts LivingstoneHero out/livingstone-hero.mp4 --codec=h264 --image-format=png --crf=12 --pixel-format=yuv420p"
+    "video:render": "remotion render video/index.ts LivingstoneHero out/livingstone-hero.mp4 --codec=h264 --image-format=png --crf=12 --pixel-format=yuv420p && remotion still video/index.ts LivingstoneHero public/video/livingstone-hero-poster.png --frame=560 --image-format=png && node scripts/publicar-video.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
