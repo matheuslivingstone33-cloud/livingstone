@@ -174,6 +174,22 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ l
         </div>
       </section>
 
+      <section className="bg-ink-950 px-6 pb-16 md:pb-24">
+        <div className="mx-auto max-w-6xl overflow-hidden rounded-[1.75rem] border border-white/10 shadow-2xl">
+          <video
+            className="block aspect-video w-full"
+            src="/video/livingstone-hero.mp4"
+            poster="/video/livingstone-hero-poster.png"
+            autoPlay
+            muted
+            loop
+            playsInline
+            preload="metadata"
+            aria-label="Animação: lançamentos do banco sendo conciliados automaticamente, seguidos dos módulos de cobrança, crédito e PLD"
+          />
+        </div>
+      </section>
+
       <section id="modulos" className="mx-auto max-w-6xl px-6 py-24 md:py-32">
         <p className="eyebrow flex items-center gap-3">
           <span className="rule-gold" aria-hidden="true" />
