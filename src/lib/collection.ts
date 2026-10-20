@@ -30,7 +30,19 @@ export const BANDS = DEFAULTS.collection.bands;
 
 export const bandOf = (days: number, bands: Band[] = BANDS) => bands.find((b) => days <= b.maxDays) ?? bands[bands.length - 1];
 
-export type Option = { label: string; installments: number; discountPct: number; total: number; installment: number };
+export type Option = { label: string; installments: number; discountPct: number; total: number; installment: number; lastInstallment: number };
+
+// Última parcela = total menos as anteriores, para a soma fechar exatamente no total do acordo
+export const lastInstallmentOf = (total: number, installments: number, installment: number) => r2(total - (installments - 1) * installment);
+
+// Parcela devida agora, a partir do que já foi pago. A última cobra o saldo (centavos de arredondamento incluídos).
+export function nextInstallment(total: number, installments: number, installment: number, paid: number) {
+  const remaining = r2(total - paid);
+  if (remaining <= 0.01) return null;
+  const nth = Math.min(installments, Math.floor((paid + 0.01) / installment) + 1);
+  const amount = nth === installments ? remaining : r2(Math.min(installment, remaining));
+  return { nth, amount, remaining };
+}
 
 export function buildOptions(updated: number, principal: number, days: number, cfg: CollectionCfg = DEFAULTS.collection): Option[] {
   const band = bandOf(days, cfg.bands);
@@ -39,7 +51,8 @@ export function buildOptions(updated: number, principal: number, days: number, c
   const floor = principal * cfg.floorPct;
   const make = (installments: number, pct: number, label: string): Option => {
     const total = r2(Math.max(updated * (1 - pct), floor));
-    return { label, installments, discountPct: r2((1 - total / updated) * 100), total, installment: r2(total / installments) };
+    const installment = r2(total / installments);
+    return { label, installments, discountPct: r2((1 - total / updated) * 100), total, installment, lastInstallment: lastInstallmentOf(total, installments, installment) };
   };
   const opts = [make(1, band.cash, "À vista")];
   const steps = [3, 6, 12, 18, 24].filter((n) => n <= band.maxInstallments);

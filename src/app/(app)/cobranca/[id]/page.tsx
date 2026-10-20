@@ -3,7 +3,7 @@ import { headers } from "next/headers";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, day, dt } from "@/lib/format";
-import { debtStatus, updateDebt, type Option } from "@/lib/collection";
+import { debtStatus, nextInstallment, updateDebt, type Option } from "@/lib/collection";
 import { getSettings } from "@/lib/settings";
 import { generateProposal, registerPayment } from "../../../actions-cobranca";
 import { PageTitle, Stat } from "@/components/ui";
@@ -113,7 +113,7 @@ export default async function DebtDetail({ params }: { params: Promise<{ id: str
                     <form action={registerPayment.bind(null, a.id)} className="mt-4 flex flex-wrap items-end gap-2">
                       <div className="min-w-40 flex-1">
                         <label className="label" htmlFor={`amount-${a.id}`}>Valor recebido</label>
-                        <input className="input" id={`amount-${a.id}`} name="amount" defaultValue={Number(a.installments === 1 ? a.total : a.installment).toFixed(2).replace(".", ",")} />
+                        <input className="input" id={`amount-${a.id}`} name="amount" defaultValue={(nextInstallment(Number(a.total), a.installments, Number(a.installment), Number(a.paidAmount ?? 0))?.amount ?? 0).toFixed(2).replace(".", ",")} />
                       </div>
                       <SubmitButton pending="Salvando...">Registrar pagamento</SubmitButton>
                     </form>

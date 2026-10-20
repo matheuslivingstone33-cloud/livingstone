@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { validCnpj, validCpf } from "../src/lib/validators";
 import { DEFAULT_CNAB400, parseBankFile, parseExpectedCsv, reconcile, reconcileWith, summarize } from "../src/lib/reconcile";
-import { buildOptions, crc16, decidePayment, parseDebtsCsv, parseTxid, pixPayload, pixTxid, updateDebt } from "../src/lib/collection";
+import { buildOptions, crc16, decidePayment, nextInstallment, parseDebtsCsv, parseTxid, pixPayload, pixTxid, updateDebt } from "../src/lib/collection";
 import { analyzeClient, groupByClient, parseTransactionsCsv, scoreOf } from "../src/lib/pld";
 import { buildIndex, nameKey, parseList } from "../src/lib/lists";
 import { analyzeCredit } from "../src/lib/credit";
@@ -15,6 +15,11 @@ import { DEFAULTS, validateSettings } from "../src/lib/settings";
 import { auditHash, passwordProblem } from "../src/lib/auth";
 import { buildTourData } from "../src/lib/tour";
 import { isPublic } from "../src/lib/public-routes";
+import { decideIdempotency, generateKey, hasScope, hashKey, idempotencyFingerprint, parseBearer, safeEqualHex } from "../src/lib/api-keys";
+import { validateReconciliationBody } from "../src/lib/api-payload";
+import { readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const demo = (f: string) => readFileSync(new URL(`../public/demo/${f}`, import.meta.url));
 
@@ -256,4 +261,162 @@ test("Malha: pontos na grade de 44px, sorteio determinístico e pouco dourado", 
   assert.equal(intensidade(100, 100), 0);
   assert.ok(intensidade(50, 100) <= 1);
   assert.ok(!/^import /m.test(readFileSync("src/lib/malha.ts", "utf8")));
+});
+
+test("API: geração de chave, hash, parseBearer e comparação segura", () => {
+  const a = generateKey();
+  const b = generateKey();
+  assert.match(a.secret, /^fo_live_[a-z0-9]{8}_[A-Za-z0-9_-]{43}$/);
+  assert.equal(a.secret.split("_")[2], a.prefix);
+  assert.equal(a.hash, hashKey(a.secret));
+  assert.match(a.hash, /^[0-9a-f]{64}$/);
+  assert.notEqual(a.secret, b.secret);
+  assert.notEqual(a.hash, b.hash);
+  assert.deepEqual(parseBearer(`Bearer ${a.secret}`), { secret: a.secret, prefix: a.prefix });
+  assert.deepEqual(parseBearer(`bearer   ${a.secret}  `), { secret: a.secret, prefix: a.prefix });
+  for (const bad of [null, undefined, "", "Bearer", "Bearer ", `Basic ${a.secret}`, a.secret, `Bearer ${a.secret}x`, `Bearer ${a.secret} extra`, "Bearer fo_live_ABCDEFGH_" + "a".repeat(43), "Bearer fo_test_abcdefgh_" + "a".repeat(43), "Bearer " + "x".repeat(500)])
+    assert.equal(parseBearer(bad as string), null, String(bad));
+  assert.ok(safeEqualHex(a.hash, a.hash));
+  assert.ok(!safeEqualHex(a.hash, b.hash));
+  assert.ok(!safeEqualHex(a.hash, a.hash.slice(2)));
+  assert.ok(!safeEqualHex("zz", "zz"));
+  assert.ok(!safeEqualHex("", "ab"));
+  assert.ok(hasScope(["conciliacao:read"], "conciliacao:read"));
+  assert.ok(!hasScope(["conciliacao:read"], "conciliacao:write"));
+  assert.ok(!hasScope([], "pld:read"));
+});
+
+const isoDay = (d?: Date) => d!.toISOString().slice(0, 10);
+const demoBody = () => {
+  const expected = parseExpectedCsv(demo("titulos_esperados.csv").toString());
+  return {
+    nome: "Teste API",
+    esperados: expected.map((e) => ({ referencia: e.reference, pagador: e.payer, valor: e.amount, vencimento: isoDay(e.dueAt) })),
+    banco: { arquivo: { nome: "retorno_cnab400.ret", conteudoBase64: demo("retorno_cnab400.ret").toString("base64") } },
+    opcoes: { toleranciaCentavos: 2, valorEData: true, toleranciaDias: 3 },
+  };
+};
+
+test("API: corpo JSON dos dados de exemplo dá o mesmo resultado que o caminho CSV + CNAB", () => {
+  const opts = { toleranciaCentavos: 2, casarPorValorData: true, toleranciaDias: 3 };
+  const csv = parseExpectedCsv(demo("titulos_esperados.csv").toString());
+  const bank = parseBankFile("r.ret", demo("retorno_cnab400.ret").toString(), DEFAULT_CNAB400);
+  const expectedSummary = summarize(reconcileWith(csv, bank.entries, opts));
+
+  const v = validateReconciliationBody(demoBody(), DEFAULT_CNAB400);
+  assert.ok(v.ok, JSON.stringify(!v.ok && v.errors));
+  assert.equal(v.value.bankFormat, "CNAB400");
+  assert.deepEqual(v.value.options, opts);
+  assert.deepEqual(summarize(reconcileWith(v.value.expected, v.value.entries, v.value.options)), expectedSummary);
+
+  // Mesmos créditos enviados como lançamentos JSON
+  const body = { ...demoBody(), banco: { lancamentos: bank.entries.map((e) => ({ referencia: e.reference, valor: e.amount, data: isoDay(e.paidAt) })) } };
+  const j = validateReconciliationBody(body);
+  assert.ok(j.ok);
+  assert.equal(j.value.bankFormat, "JSON");
+  assert.deepEqual(summarize(reconcileWith(j.value.expected, j.value.entries, j.value.options)), expectedSummary);
+});
+
+test("API: rejeições do corpo de conciliação", () => {
+  const bad = (mut: (b: ReturnType<typeof demoBody> & Record<string, unknown>) => unknown, campo: RegExp) => {
+    const b = demoBody() as ReturnType<typeof demoBody> & Record<string, unknown>;
+    const r = validateReconciliationBody(mut(b) ?? b);
+    assert.ok(!r.ok, `deveria rejeitar ${campo}`);
+    assert.ok(r.errors.some((e) => campo.test(e.campo)), JSON.stringify(r.errors));
+  };
+  assert.ok(!validateReconciliationBody(null).ok);
+  assert.ok(!validateReconciliationBody({}).ok);
+  bad((b) => ({ ...b, esperados: [] }), /^esperados$/);
+  bad((b) => ({ ...b, esperados: Array.from({ length: 20_001 }, () => b.esperados[0]) }), /^esperados$/);
+  bad((b) => void (b.esperados[0].valor = -10), /esperados\[0\]\.valor/);
+  bad((b) => void (b.esperados[1].valor = NaN), /esperados\[1\]\.valor/);
+  bad((b) => void (b.esperados[0].valor = 10.001), /esperados\[0\]\.valor/);
+  bad((b) => void (b.esperados[0].vencimento = "2026-02-30"), /esperados\[0\]\.vencimento/);
+  bad((b) => void (b.esperados[0].vencimento = "05/10/2026"), /esperados\[0\]\.vencimento/);
+  bad((b) => void (b.opcoes.toleranciaCentavos = 101), /opcoes\.toleranciaCentavos/);
+  bad((b) => void (b.opcoes.toleranciaDias = -1), /opcoes\.toleranciaDias/);
+  bad((b) => ({ ...b, banco: { ...b.banco, lancamentos: [{ valor: 1, data: "2026-10-05" }] } }), /^banco$/);
+  bad((b) => ({ ...b, banco: {} }), /^banco$/);
+  bad((b) => ({ ...b, banco: { lancamentos: [{ valor: 0, data: "2026-10-05" }] } }), /lancamentos\[0\]\.valor/);
+});
+
+test("API: fingerprint ignora a ordem das chaves e idempotência decide pelo registro", () => {
+  assert.equal(idempotencyFingerprint({ a: 1, b: { c: [1, { x: 1, y: 2 }], d: "z" } }), idempotencyFingerprint({ b: { d: "z", c: [1, { y: 2, x: 1 }] }, a: 1 }));
+  assert.notEqual(idempotencyFingerprint({ a: [1, 2] }), idempotencyFingerprint({ a: [2, 1] }));
+  const now = new Date("2026-10-20T12:00:00Z");
+  const fp = idempotencyFingerprint({ a: 1 });
+  const at = (h: number) => new Date(now.getTime() - h * 3_600_000);
+  assert.equal(decideIdempotency(null, fp, now), "novo");
+  assert.equal(decideIdempotency({ fingerprint: fp, responseJson: { id: "x" }, createdAt: at(1) }, fp, now), "replay");
+  assert.equal(decideIdempotency({ fingerprint: "outro", responseJson: { id: "x" }, createdAt: at(1) }, fp, now), "mismatch");
+  assert.equal(decideIdempotency({ fingerprint: fp, responseJson: null, createdAt: at(0) }, fp, now), "em_andamento");
+  assert.equal(decideIdempotency({ fingerprint: fp, responseJson: { id: "x" }, createdAt: at(25) }, fp, now), "expirado");
+});
+
+test("Rotas públicas: API v1 por módulo e documentação", () => {
+  for (const p of ["/api/v1/conciliacoes", "/api/v1/conciliacoes/abc", "/docs/api"]) assert.ok(isPublic(p), p);
+  for (const p of ["/api/v1", "/api/v1/", "/api/v1/outra", "/api/v1/conciliacoesX", "/docs/api/x", "/docs", "/api/conciliacao/1/csv"]) assert.ok(!isPublic(p), p);
+});
+
+test("API: toda rota em src/app/api/v1 passa por withApiKey", () => {
+  const root = fileURLToPath(new URL("../src/app/api/v1", import.meta.url));
+  const walk = (d: string): string[] => readdirSync(d).flatMap((f) => (statSync(join(d, f)).isDirectory() ? walk(join(d, f)) : f === "route.ts" ? [join(d, f)] : []));
+  const files = walk(root);
+  assert.ok(files.length >= 2);
+  for (const f of files) {
+    const src = readFileSync(f, "utf8");
+    const handlers = src.match(/export (async )?function (GET|POST|PUT|PATCH|DELETE)\b/g) ?? [];
+    assert.ok(handlers.length > 0, f);
+    assert.equal((src.match(/withApiKey\(req,/g) ?? []).length, handlers.length, `${f}: cada handler deve usar withApiKey`);
+  }
+});
+
+test("Conciliação: letras contam na referência (B1)", () => {
+  const st = (e: string, b: string) => reconcileWith([{ reference: e, amount: 10 }], [{ reference: b, amount: 10 }]).map((i) => i.status);
+  assert.ok(!st("ABC-1", "XYZ-1").includes("CONCILIADO"));
+  assert.deepEqual(st("abc 1", "ABC-1"), ["CONCILIADO"]);
+  assert.deepEqual(st("00012345", "12345"), ["CONCILIADO"]);
+});
+
+test("Conciliação: casamento exato vem antes do dígito verificador (B2)", () => {
+  const banco = [{ reference: "123456", amount: 20 }];
+  for (const esperados of [
+    [{ reference: "12345", amount: 10 }, { reference: "123456", amount: 20 }],
+    [{ reference: "123456", amount: 20 }, { reference: "12345", amount: 10 }],
+  ]) {
+    const r = Object.fromEntries(reconcileWith(esperados, banco).filter((i) => i.reference).map((i) => [i.reference, i.status]));
+    assert.equal(r["123456"], "CONCILIADO");
+    assert.equal(r["12345"], "PENDENTE");
+  }
+});
+
+test("Cobrança: parcelas somam exatamente o total e a última nunca é recusada (B3)", () => {
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  for (const o of buildOptions(10000, 10000, 400)) assert.equal(r2(o.installment * (o.installments - 1) + o.lastInstallment), o.total);
+  assert.deepEqual(nextInstallment(6500, 6, 1083.33, 5416.65), { nth: 6, amount: 1083.35, remaining: 1083.35 });
+  assert.deepEqual(nextInstallment(8950, 24, 372.92, 8577.16), { nth: 24, amount: 372.84, remaining: 372.84 });
+  assert.equal(nextInstallment(8950, 24, 372.92, 0)?.amount, 372.92);
+  assert.equal(nextInstallment(100, 3, 33.33, 100), null);
+  for (const [total, n, parcela] of [[6500, 6, 1083.33], [8950, 24, 372.92], [6500.01, 3, 2166.67]] as const) {
+    let paid = 0;
+    let last;
+    for (let k = 0; k < n; k++) {
+      const due = nextInstallment(total, n, parcela, paid)!;
+      last = decidePayment(total, paid, due.amount, "strict");
+      assert.equal(last.kind, "apply");
+      if (last.kind === "apply") paid = last.paid;
+    }
+    assert.ok(last && last.kind === "apply" && last.settled);
+    assert.equal(nextInstallment(total, n, parcela, paid), null);
+  }
+});
+
+test("PLD: cada débito justifica a saída uma única vez (B7)", () => {
+  const tx = (h: number, direction: "C" | "D", amount: number) => ({
+    date: new Date(Date.UTC(2026, 9, 1, h)), clientDoc: "1", clientName: "Teste", pep: false, type: "PIX", direction, amount,
+  });
+  const regra = (txs: ReturnType<typeof tx>[]) => analyzeClient(txs).find((a) => a.rule === "PASSAGEM_RAPIDA");
+  assert.equal(regra([tx(9, "C", 10_000), tx(10, "C", 10_000), tx(12, "D", 9_000)]), undefined);
+  const a = regra([tx(9, "C", 10_000), tx(10, "C", 10_000), tx(12, "D", 9_000), tx(13, "D", 9_000)]);
+  assert.ok(a && a.description.includes("2 crédito(s)") && /R\$\s18\.000,00/.test(a.description));
 });

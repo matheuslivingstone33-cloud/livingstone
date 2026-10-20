@@ -164,14 +164,27 @@ export function analyzeClient(txs: Tx[], cfg: PldCfg = DEFAULTS.pld, lists: List
   // 4. Passagem rápida: créditos relevantes que saem quase integralmente em até 48 horas
   const passthrough: Tx[] = [];
   let passAmount = 0;
+  let passMoved = 0;
+  const debits = sorted.filter((t) => t.direction === "D").map((t) => ({ t, left: t.amount }));
   for (const c of credits.filter((t) => t.amount >= cfg.passthroughMinCredit)) {
-    const out = sorted.filter(
-      (t) => t.direction === "D" && t.date >= c.date && t.date.getTime() - c.date.getTime() <= cfg.passthroughHours * 3_600_000,
+    const win = debits.filter(
+      (d) => d.left > 0 && d.t.date >= c.date && d.t.date.getTime() - c.date.getTime() <= cfg.passthroughHours * 3_600_000,
     );
-    const outSum = out.reduce((a, t) => a + t.amount, 0);
-    if (outSum >= c.amount * cfg.passthroughPct) {
-      passthrough.push(c, ...out.filter((o) => !passthrough.includes(o)));
+    let need = c.amount;
+    const take: [(typeof debits)[number], number][] = [];
+    for (const d of win) {
+      if (need <= 0) break;
+      const x = Math.min(d.left, need);
+      take.push([d, x]);
+      need -= x;
+    }
+    const moved = c.amount - need;
+    // Só consome os débitos se justificarem a saída do crédito; senão ficam livres para o próximo
+    if (moved >= c.amount * cfg.passthroughPct) {
+      for (const [d, x] of take) d.left -= x;
+      passthrough.push(c, ...take.map(([d]) => d.t).filter((o) => !passthrough.includes(o)));
       passAmount += c.amount;
+      passMoved += moved;
     }
   }
   const passCredits = passthrough.filter((t) => t.direction === "C").length;
@@ -180,7 +193,7 @@ export function analyzeClient(txs: Tx[], cfg: PldCfg = DEFAULTS.pld, lists: List
       rule: "PASSAGEM_RAPIDA",
       title: "Conta de passagem (entrada e saída rápida)",
       weight: 25,
-      description: `${passCredits} crédito(s) somando ${fmt(passAmount)} foram transferidos em até ${cfg.passthroughHours} horas (≥ ${Math.round(cfg.passthroughPct * 100)}% do valor), sem permanência na conta.`,
+      description: `${passCredits} crédito(s) somando ${fmt(passAmount)}, dos quais ${fmt(passMoved)} foram transferidos em até ${cfg.passthroughHours} horas (≥ ${Math.round(cfg.passthroughPct * 100)}% do valor), sem permanência na conta.`,
       reference: "Carta Circular BCB 4.001/2020, art. 1º, II, d",
       evidence: passthrough.slice(0, 12).map(ev),
     });

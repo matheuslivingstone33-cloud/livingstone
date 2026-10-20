@@ -14,7 +14,12 @@ export type ResultItem = {
   note?: string;
 };
 
-const normRef = (s: string) => s.replace(/\D/g, "").replace(/^0+/, "") || s.trim().toUpperCase();
+// Ignora caixa e separadores (espaço, hífen, ponto, barra). Letras contam: "ABC-1" ≠ "XYZ-1".
+// Só referências puramente numéricas perdem os zeros à esquerda ("00012345" = "12345").
+export const normRef = (s: string) => {
+  const t = s.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return /^\d+$/.test(t) ? t.replace(/^0+/, "") || "0" : t;
+};
 
 function parseMoney(raw: string): number {
   const s = raw.trim().replace(/[R$\s]/g, "");
@@ -202,18 +207,21 @@ export function reconcileWith(expected: ExpectedEntry[], received: BankEntry[], 
   const pool = received.map((r) => ({ r, key: normRef(r.reference), used: false }));
   const hits: ({ r: BankEntry; rule: MatchRule } | undefined)[] = [];
 
-  // 1ª passada: referência exata; depois, nosso número com 1–2 dígitos verificadores anexados pelo banco
-  for (const e of expected) {
-    const k = normRef(e.reference);
-    let rule: MatchRule = "REFERENCIA";
-    let c = pool.find((p) => !p.used && p.key === k);
-    if (!c && /^\d{5,}$/.test(k)) {
-      c = pool.find((p) => !p.used && p.key.startsWith(k) && p.key.length - k.length <= 2);
-      rule = "REFERENCIA_DV";
-    }
+  // 1ª passada (a): referência exata, para todos os títulos antes de olhar dígito verificador
+  const keys = expected.map((e) => normRef(e.reference));
+  keys.forEach((k, i) => {
+    const c = pool.find((p) => !p.used && p.key === k);
     if (c) c.used = true;
-    hits.push(c && { r: c.r, rule });
-  }
+    hits[i] = c && { r: c.r, rule: "REFERENCIA" };
+  });
+  // 1ª passada (b): nosso número com 1–2 dígitos verificadores anexados pelo banco, só nos créditos que sobraram
+  const dvMatch = (k: string, key: string) => /^\d{5,}$/.test(k) && key.startsWith(k) && key.length - k.length >= 1 && key.length - k.length <= 2;
+  keys.forEach((k, i) => {
+    if (hits[i]) return;
+    const c = pool.find((p) => !p.used && dvMatch(k, p.key));
+    if (c) c.used = true;
+    hits[i] = c && { r: c.r, rule: "REFERENCIA_DV" };
+  });
 
   // 2ª passada: valor exato e data próxima. Só casa quando o par é único dos dois lados (evita falso positivo)
   const ambiguous = new Set<number>();

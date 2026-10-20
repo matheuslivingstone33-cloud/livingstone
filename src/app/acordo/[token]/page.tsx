@@ -1,7 +1,7 @@
 import QRCode from "qrcode";
 import { db } from "@/lib/db";
 import { brl, day } from "@/lib/format";
-import { pixPayload, pixTxid, type Option } from "@/lib/collection";
+import { nextInstallment, pixPayload, pixTxid, type Option } from "@/lib/collection";
 import { getSettings } from "@/lib/settings";
 import { acceptAgreement } from "../../actions-cobranca";
 import { CopyButton } from "@/components/CopyButton";
@@ -121,8 +121,9 @@ export default async function AcordoPage({ params }: { params: Promise<{ token: 
 
   // ACEITO: mostra o Pix da próxima parcela (ou do valor à vista)
   const paid = Number(a.paidAmount ?? 0);
-  const nth = Math.min(a.installments, Math.floor((paid + 0.01) / Number(a.installment)) + 1);
-  const amount = Math.round(Math.min(Number(a.installment), Number(a.total) - paid) * 100) / 100;
+  const due = nextInstallment(Number(a.total), a.installments, Number(a.installment), paid);
+  const nth = due?.nth ?? a.installments;
+  const amount = due?.amount ?? 0;
   const pix = pixPayload(amount, pixTxid(a.token, nth), `Acordo ${d.contract}`, (await getSettings(d.orgId)).pix);
   const qr = pix ? await QRCode.toDataURL(pix, { margin: 1, width: 240 }) : null;
 
