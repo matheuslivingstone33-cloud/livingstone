@@ -4,6 +4,8 @@ import { getSettings } from "@/lib/settings";
 import { appUrl } from "@/lib/payments";
 import { saveSettings, rotateWebhookSecret } from "../../actions-config";
 import { importRestrictedList } from "../../actions-pld";
+import { revokeApiKey } from "../../actions-api";
+import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { PageTitle, Notice } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 import { CopyButton } from "@/components/CopyButton";
@@ -41,6 +43,11 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
   const q = await searchParams;
   const c = await getSettings(s.orgId);
   const lists = await db.restrictedEntry.groupBy({ by: ["source"], where: { orgId: s.orgId }, _count: true, _max: { importedAt: true } });
+  const apiKeys = await db.apiKey.findMany({
+    where: { orgId: s.orgId },
+    orderBy: [{ revokedAt: { sort: "desc", nulls: "first" } }, { createdAt: "desc" }],
+    select: { id: true, name: true, prefix: true, scopes: true, createdAt: true, lastUsedAt: true, revokedAt: true, createdBy: { select: { name: true, active: true } } },
+  });
   const webhookUrl = c.pix.webhookSecret ? `${appUrl()}/api/pix/webhook/${s.orgId}?secret=${c.pix.webhookSecret}` : "";
 
   return (
@@ -50,7 +57,7 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
       {q.lista && <Notice>Lista {q.lista} importada: {q.n} registros.</Notice>}
 
       <nav aria-label="Seções das configurações" className="mb-6 flex flex-wrap gap-2">
-        {[["#pix", "Pix"], ["#cnab", "CNAB 400"], ["#credito", "Crédito"], ["#cobranca", "Cobrança"], ["#pld", "PLD"], ["#webhook", "Webhook"], ["#listas", "Listas"]].map(([h, l]) => (
+        {[["#pix", "Pix"], ["#cnab", "CNAB 400"], ["#credito", "Crédito"], ["#cobranca", "Cobrança"], ["#pld", "PLD"], ["#webhook", "Webhook"], ["#listas", "Listas"], ["#api", "API"]].map(([h, l]) => (
           <a key={h} href={h} className="chip">{l}</a>
         ))}
       </nav>
@@ -209,6 +216,45 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
           <SubmitButton pending="Importando...">Importar (substitui a lista)</SubmitButton>
         </form>
         <p className="hint">Atualize as listas de sanções ao menos semanalmente: a Lei 13.810/2019 exige cumprimento imediato das resoluções do CSNU.</p>
+      </section>
+
+      <section className="card mt-6 space-y-5" id="api">
+        <SectionHead n="08" title="Chaves da API">
+          Para o ERP ou outro sistema da instituição enviar conciliações sem passar pela tela. A chave é da instituição: desativar quem a criou não a revoga. Veja a <a href="/docs/api" className="font-medium text-brand-700 underline">documentação da API</a>.
+        </SectionHead>
+        <ApiKeyForm />
+        <div className="overflow-x-auto rounded-xl border border-line">
+          <table className="table">
+            <thead><tr><th>Nome</th><th>Prefixo</th><th>Escopos</th><th>Criada por</th><th>Última utilização</th><th>Situação</th><th><span className="sr-only">Ações</span></th></tr></thead>
+            <tbody>
+              {apiKeys.length === 0 && (
+                <tr><td colSpan={7} className="text-center text-ink-500">Nenhuma chave criada.</td></tr>
+              )}
+              {apiKeys.map((k) => (
+                <tr key={k.id}>
+                  <td className="font-medium">{k.name}</td>
+                  <td><code className="font-mono text-xs">fo_live_{k.prefix}_…</code></td>
+                  <td className="text-xs text-ink-600">{k.scopes.join(", ")}</td>
+                  <td className="whitespace-nowrap text-ink-600">{k.createdBy.name}{!k.createdBy.active && <span className="text-xs text-ink-500"> (desativado)</span>}<div className="text-xs text-ink-500">{dt(k.createdAt)}</div></td>
+                  <td className="whitespace-nowrap text-ink-500">{k.lastUsedAt ? dt(k.lastUsedAt) : "nunca"}</td>
+                  <td>
+                    {k.revokedAt
+                      ? <span className="badge bg-slate-100 text-slate-700">Revogada em {dt(k.revokedAt)}</span>
+                      : <span className="badge bg-emerald-50 text-emerald-700">Ativa</span>}
+                  </td>
+                  <td className="text-right">
+                    {!k.revokedAt && (
+                      <form action={revokeApiKey}>
+                        <input type="hidden" name="id" value={k.id} />
+                        <button type="submit" className="btn-danger">Revogar</button>
+                      </form>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
     </>
   );

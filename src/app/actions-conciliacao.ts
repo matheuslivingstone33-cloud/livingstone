@@ -2,12 +2,12 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
 import { audit, requireSession } from "@/lib/auth";
-import { BankFileError, parseBankFile, parseExpectedCsv, reconcileWith, summarize, type ReconcileOptions } from "@/lib/reconcile";
+import { BankFileError, parseBankFile, parseExpectedCsv, type ReconcileOptions } from "@/lib/reconcile";
 import { getSettings } from "@/lib/settings";
 import { decodeText, readUpload } from "@/lib/upload";
 import { fail } from "@/lib/errors";
+import { persistReconciliation } from "@/lib/servicos/conciliacao";
 
 // Inteiro dentro da faixa; campo vazio vale 0
 function intIn(form: FormData, name: string, max: number, label: string, back: string) {
@@ -40,25 +40,16 @@ export async function createReconciliation(form: FormData) {
   const { format, entries } = parsed;
   const expected = parseExpectedCsv(decodeText(exp.data));
   if (!expected.length) fail(back, "Nenhum título válido na lista de esperados. Confira as colunas referencia e valor.");
-  const items = reconcileWith(expected, entries, options);
-  const { excess, ...counts } = summarize(items);
-
-  const rec = await db.reconciliation.create({
-    data: {
-      orgId: s.orgId,
-      name: String(form.get("name") || `Conciliação ${new Date().toLocaleDateString("pt-BR")}`).slice(0, 120),
-      bankFileName: bank.name,
-      bankFormat: format,
-      expectedFileName: exp.name,
-      totalExpected: expected.reduce((a, e) => a + e.amount, 0),
-      totalReceived: entries.reduce((a, e) => a + e.amount, 0),
-      totalExcess: excess,
-      options,
-      ...counts,
-      items: { create: items },
-    },
+  const { rec, itemCount } = await persistReconciliation(s.orgId, {
+    name: String(form.get("name") || `Conciliação ${new Date().toLocaleDateString("pt-BR")}`),
+    bankFileName: bank.name,
+    bankFormat: format,
+    expectedFileName: exp.name,
+    expected,
+    entries,
+    options,
   });
-  await audit(s, "conciliacao.criar", `${rec.name} (${format}, ${items.length} itens, regras ${JSON.stringify(options)})`);
+  await audit(s, "conciliacao.criar", `${rec.name} (${format}, ${itemCount} itens, regras ${JSON.stringify(options)})`);
   revalidatePath("/conciliacao");
   redirect(`/conciliacao/${rec.id}`);
 }

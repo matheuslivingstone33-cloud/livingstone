@@ -28,6 +28,8 @@ model Organization {
   debts     Debt[]
   pldBatches PldBatch[]
   pldCases   PldCase[]
+  apiKeys    ApiKey[]
+  apiRequests ApiRequest[]
 }
 
 model User {
@@ -47,6 +49,7 @@ model User {
   lastLoginAt  DateTime?
   createdAt    DateTime     @default(now())
   audits       AuditLog[]
+  apiKeys      ApiKey[]
 }
 
 // Listas restritivas e de PEP importadas pela instituição (CSNU, OFAC, CGU/PEP, listas internas)
@@ -267,4 +270,44 @@ model Payment {
   txid        String?
   createdBy   String?
   createdAt   DateTime  @default(now())
+}
+
+// Chaves da API pública. Pertencem à instituição: desativar quem criou não revoga a chave.
+model ApiKey {
+  id          String       @id @default(cuid())
+  orgId       String
+  org         Organization @relation(fields: [orgId], references: [id])
+  name        String
+  prefix      String       @unique
+  hash        String       @unique // sha256 do segredo; o segredo em si nunca é guardado
+  scopes      String[]
+  createdById String
+  createdBy   User         @relation(fields: [createdById], references: [id])
+  createdAt   DateTime     @default(now())
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  requests    ApiRequest[]
+
+  @@index([orgId])
+}
+
+// Registro das chamadas da API: base do limite de requisições e da idempotência
+model ApiRequest {
+  id             String       @id @default(cuid())
+  orgId          String
+  org            Organization @relation(fields: [orgId], references: [id])
+  apiKeyId       String
+  apiKey         ApiKey       @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+  method         String
+  path           String
+  status         Int
+  idempotencyKey String?
+  fingerprint    String?
+  resourceType   String?
+  resourceId     String?
+  responseJson   Json?
+  createdAt      DateTime     @default(now())
+
+  @@unique([apiKeyId, idempotencyKey])
+  @@index([apiKeyId, createdAt])
 }
