@@ -9,6 +9,8 @@ import { analyzeClient, groupByClient, parseTransactionsCsv, scoreOf } from "../
 import { buildIndex, nameKey, parseList } from "../src/lib/lists";
 import { analyzeCredit } from "../src/lib/credit";
 import { analyzeLegacy } from "../src/lib/legacy";
+import { LOGO } from "../src/lib/logo-geometria";
+import { criarSorteio, intensidade, pontosDaGrade, proximoPulso } from "../src/lib/malha";
 import { DEFAULTS, validateSettings } from "../src/lib/settings";
 import { auditHash, passwordProblem } from "../src/lib/auth";
 import { buildTourData } from "../src/lib/tour";
@@ -228,4 +230,30 @@ test("Rotas públicas: /tour liberado, demais rotas protegidas", () => {
   assert.ok(!isPublic("/tourx"));
   assert.ok(!isPublic("/dashboard"));
   assert.ok(!isPublic("/api/x"));
+});
+
+test("Logo: geometria única, sem imports, igual no icon.svg", () => {
+  const src = readFileSync("src/lib/logo-geometria.ts", "utf8");
+  assert.ok(!/^import /m.test(src));
+  assert.equal(LOGO.pecaOuro.cor, "#e0b84a");
+  assert.equal(LOGO.pecaVerde.cor, "#34b59a");
+  assert.equal(LOGO.fundo.cor, "#0f766e");
+  const icon = readFileSync("src/app/icon.svg", "utf8");
+  assert.ok(icon.includes(LOGO.pecaOuro.d) && icon.includes(LOGO.pecaVerde.d));
+});
+
+test("Malha: pontos na grade de 44px, sorteio determinístico e pouco dourado", () => {
+  const pts = pontosDaGrade(100, 100);
+  assert.deepEqual([...new Set(pts.map((p) => p.x))], [0.5, 44.5, 88.5]);
+  const a = criarSorteio(44);
+  const b = criarSorteio(44);
+  for (let i = 0; i < 20; i++) assert.equal(a(), b());
+  const rng = criarSorteio(1);
+  let ouro = 0;
+  for (let i = 0; i < 1000; i++) if (proximoPulso(rng, pts)?.cor === "ouro") ouro++;
+  assert.ok(ouro > 30 && ouro < 150, `dourado: ${ouro}`);
+  assert.equal(intensidade(0, 100), 0);
+  assert.equal(intensidade(100, 100), 0);
+  assert.ok(intensidade(50, 100) <= 1);
+  assert.ok(!/^import /m.test(readFileSync("src/lib/malha.ts", "utf8")));
 });

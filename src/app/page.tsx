@@ -5,6 +5,7 @@ import { ChainIllustration } from "@/components/Illustrations";
 import { ReconcileLive, type LiveRow } from "@/components/ReconcileLive";
 import { CollectionLive, type CollectionLiveData } from "@/components/CollectionLive";
 import { bandOf, buildOptions, updateDebt } from "@/lib/collection";
+import { MalhaTransacoes } from "@/components/MalhaTransacoes";
 import { HeroVideo } from "@/components/HeroVideo";
 import { BRAND } from "@/lib/brand";
 
@@ -255,6 +256,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ l
 
       <section className="on-ink surface-ink bg-ink-950 pb-16 pt-32 md:pb-20 md:pt-40">
         <div className="bg-grid pointer-events-none absolute inset-0 [mask-image:radial-gradient(ellipse_at_70%_40%,black,transparent_75%)]" aria-hidden="true" />
+        <MalhaTransacoes className="[mask-image:radial-gradient(ellipse_at_70%_40%,black,transparent_75%)]" />
         <div className="pointer-events-none absolute -right-40 -top-40 h-[36rem] w-[36rem] rounded-full bg-brand-600/25 blur-3xl" aria-hidden="true" />
         <div className="relative mx-auto grid max-w-6xl items-center gap-14 px-6 lg:grid-cols-[1.05fr_1fr]">
           <div className="rise">
