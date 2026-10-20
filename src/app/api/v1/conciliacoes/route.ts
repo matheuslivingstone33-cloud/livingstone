@@ -7,6 +7,7 @@ import { persistReconciliation } from "@/lib/servicos/conciliacao";
 import { reconciliationJson } from "@/lib/servicos/conciliacao-api";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 // Cria uma conciliação a partir de títulos esperados + lançamentos (ou arquivo) do banco
 export function POST(req: Request) {

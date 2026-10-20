@@ -14,6 +14,7 @@ import {
   type ApiScope,
 } from "./api-keys";
 
+// ATENÇÃO (Vercel): 5 MB está acima do corpo máximo de função (~4,5 MB). Pendência de decisão; ver docs/DEPLOY.md.
 export const API_MAX_BODY_BYTES = 5 * 1024 * 1024;
 export const API_RATE_PER_MINUTE = 60;
 

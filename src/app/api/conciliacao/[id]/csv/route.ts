@@ -2,6 +2,9 @@ import { audit, getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { cell, num } from "@/lib/csv";
 
+// Tempo máximo da função na Vercel (actions e exportações longas)
+export const maxDuration = 60;
+
 export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
   const s = await getSession();
   if (!s) return new Response("Não autorizado", { status: 401 });

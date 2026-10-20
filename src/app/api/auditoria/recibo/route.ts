@@ -1,6 +1,9 @@
 import { audit, getSession, verifyAuditChain } from "@/lib/auth";
 import { deriveReceiptSecret, signReceipt } from "@/lib/audit-chain";
 
+// Tempo máximo da função na Vercel (actions e exportações longas)
+export const maxDuration = 60;
+
 // Recibo de integridade: assina (HMAC) o último seq/hash da corrente conferida
 export async function GET() {
   const s = await getSession();

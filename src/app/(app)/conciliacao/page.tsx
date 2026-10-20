@@ -6,6 +6,9 @@ import { createReconciliation } from "../../actions-conciliacao";
 import { PageTitle, Empty, DemoFiles, CardHeader } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 
+// Tempo máximo da função na Vercel (actions e exportações longas)
+export const maxDuration = 60;
+
 export default async function ConciliacaoPage() {
   const s = await requireSession();
   const list = await db.reconciliation.findMany({ where: { orgId: s.orgId }, orderBy: { createdAt: "desc" } });

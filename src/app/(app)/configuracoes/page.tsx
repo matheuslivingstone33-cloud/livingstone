@@ -11,6 +11,9 @@ import { SubmitButton } from "@/components/SubmitButton";
 import { CopyButton } from "@/components/CopyButton";
 import { dt } from "@/lib/format";
 
+// Tempo máximo da função na Vercel (actions e exportações longas)
+export const maxDuration = 60;
+
 function Field({ label, name, value, hint, suffix }: { label: string; name: string; value: string | number; hint?: string; suffix?: string }) {
   return (
     <div>
@@ -48,7 +51,7 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
     orderBy: [{ revokedAt: { sort: "desc", nulls: "first" } }, { createdAt: "desc" }],
     select: { id: true, name: true, prefix: true, scopes: true, createdAt: true, lastUsedAt: true, revokedAt: true, createdBy: { select: { name: true, active: true } } },
   });
-  const webhookUrl = c.pix.webhookSecret ? `${appUrl()}/api/pix/webhook/${s.orgId}?secret=${c.pix.webhookSecret}` : "";
+  const webhookUrl = c.pix.webhookSecret ? `${appUrl()}/api/pix/webhook/${s.orgId}` : "";
 
   return (
     <>
@@ -159,12 +162,14 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
 
       <section className="card mt-6 space-y-4" id="webhook">
         <SectionHead n="06" title="Baixa automática do Pix (webhook)">
-          Cadastre esta URL no seu banco/PSP como webhook da chave Pix. Cada Pix recebido de um acordo é baixado automaticamente, sem digitação. O mesmo Pix nunca é baixado duas vezes.
+          Cadastre esta URL no seu banco/PSP como webhook da chave Pix e configure o segredo no header x-webhook-secret. Cada Pix recebido de um acordo é baixado automaticamente, sem digitação. O mesmo Pix nunca é baixado duas vezes.
         </SectionHead>
         {webhookUrl ? (
           <div className="flex flex-wrap items-center gap-2">
-            <code className="min-w-0 flex-1 break-all rounded-xl border border-line bg-paper px-3 py-2 font-mono text-xs text-ink-700">{webhookUrl.replace(c.pix.webhookSecret, "••••••••")}</code>
-            <CopyButton text={webhookUrl} label="Copiar URL completa" />
+            <code className="min-w-0 flex-1 break-all rounded-xl border border-line bg-paper px-3 py-2 font-mono text-xs text-ink-700">{webhookUrl}</code>
+            <CopyButton text={webhookUrl} label="Copiar URL" />
+            <CopyButton text={c.pix.webhookSecret} label="Copiar segredo (header x-webhook-secret)" />
+            <p className="w-full text-xs text-ink-500">Exceção: se o PSP não permitir header customizado, é possível enviar <code>?secret=</code> na URL, mas só com <code>PIX_WEBHOOK_ALLOW_QUERY_SECRET=1</code> no servidor (o segredo passa a aparecer em logs).</p>
           </div>
         ) : (
           <p className="notice notice-warning mb-0">Nenhum segredo gerado ainda: o webhook está desligado.</p>

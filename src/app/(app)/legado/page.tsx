@@ -6,6 +6,9 @@ import { createLegacyAnalysis } from "../../actions";
 import { PageTitle, Empty, DemoFiles, CardHeader, TableCard } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 
+// Tempo máximo da função na Vercel (actions e exportações longas)
+export const maxDuration = 60;
+
 export default async function LegadoPage() {
   const s = await requireSession();
   const list = await db.legacyAnalysis.findMany({ where: { orgId: s.orgId }, orderBy: { createdAt: "desc" } });

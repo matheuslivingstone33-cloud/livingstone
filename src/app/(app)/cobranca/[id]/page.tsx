@@ -12,6 +12,9 @@ import { SubmitButton } from "@/components/SubmitButton";
 import { CopyButton } from "@/components/CopyButton";
 import { AiVersion } from "@/components/AiVersion";
 
+// Tempo máximo da função na Vercel (actions e exportações longas)
+export const maxDuration = 60;
+
 const agStatus: Record<string, string> = {
   PROPOSTO: "bg-amber-50 text-amber-800",
   ACEITO: "bg-brand-50 text-brand-800",

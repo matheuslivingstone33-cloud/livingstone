@@ -1,5 +1,7 @@
 // Webhook Pix (padrão da API Pix do Banco Central): o PSP avisa cada Pix recebido e o acordo é baixado automaticamente.
-// URL a cadastrar no PSP: {APP_URL}/api/pix/webhook/{orgId}?secret={segredo}  (o PSP costuma acrescentar "/pix" ao final).
+// URL a cadastrar no PSP: {APP_URL}/api/pix/webhook/{orgId}  (o PSP costuma acrescentar "/pix" ao final),
+// com o segredo no header x-webhook-secret. ?secret= na URL só é aceito com PIX_WEBHOOK_ALLOW_QUERY_SECRET=1
+// (exceção para PSP que não envia header customizado: a URL com segredo aparece em logs).
 // Em produção, prefira também mTLS no PSP/proxy; o segredo aqui é uma segunda camada.
 import { timingSafeEqual } from "node:crypto";
 import { db } from "@/lib/db";
@@ -7,6 +9,10 @@ import { auditRaw } from "@/lib/auth";
 import { parseTxid } from "@/lib/collection";
 import { getSettings } from "@/lib/settings";
 import { applyPayment } from "@/lib/payments";
+import { pickWebhookSecret } from "@/lib/pix-webhook";
+
+// Lote de até 500 eventos: na Vercel a função tem até 60 s
+export const maxDuration = 60;
 
 type PixEvent = { endToEndId?: string; txid?: string; valor?: string; horario?: string };
 
@@ -20,7 +26,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
   const { orgId } = await params;
   const org = await db.organization.findUnique({ where: { id: orgId }, select: { id: true } });
   const secret = org ? (await getSettings(orgId)).pix.webhookSecret : "";
-  const given = req.headers.get("x-webhook-secret") ?? new URL(req.url).searchParams.get("secret") ?? "";
+  const given = pickWebhookSecret(req.headers, req.url, process.env.PIX_WEBHOOK_ALLOW_QUERY_SECRET === "1");
   // Mesma resposta para organização inexistente ou segredo errado: não revela quais IDs existem
   if (!org || !secret || secret.length < 24 || !safeEqual(given, secret)) return new Response("Não autorizado", { status: 401 });
 

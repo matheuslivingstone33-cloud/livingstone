@@ -1,6 +1,7 @@
 // Validação de uploads pelo conteúdo real (assinatura do arquivo), não pela extensão ou pelo tipo informado pelo navegador.
 import type { AiFile } from "./ai";
 
+// ATENÇÃO (Vercel): 10 MB está acima do corpo máximo de função (~4,5 MB). Pendência de decisão; ver docs/DEPLOY.md.
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 export type UploadKind = "text" | "pdf" | "image";
 

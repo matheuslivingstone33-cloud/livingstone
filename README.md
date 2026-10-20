@@ -40,6 +40,8 @@ npx tsx scripts/testar-cobranca.mts
 npx tsx scripts/testar-pld.mts
 ```
 
+Deploy na Vercel: veja [docs/DEPLOY.md](docs/DEPLOY.md).
+
 ## Estrutura
 
 ```

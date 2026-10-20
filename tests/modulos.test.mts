@@ -762,3 +762,46 @@ test("PLD lote: blocos respeitam o limite de parâmetros do Postgres", () => {
   assert.deepEqual(chunk(Array(2001).fill(0), 2000).map((b) => b.length), [2000, 1]);
   assert.throws(() => chunk([1], 0));
 });
+
+import { pickWebhookSecret } from "../src/lib/pix-webhook";
+import { cutoffApiRequests } from "../src/lib/retencao";
+import { requiredEnv } from "../src/lib/env";
+
+test("Webhook Pix: segredo pelo header; ?secret= só com a flag", () => {
+  const url = "https://x.test/api/pix/webhook/org?secret=daquery";
+  const h = (v?: string) => new Headers(v ? { "x-webhook-secret": v } : {});
+  assert.equal(pickWebhookSecret(h("doheader"), "https://x.test/api/pix/webhook/org", false), "doheader");
+  assert.equal(pickWebhookSecret(h(), url, false), "");
+  assert.equal(pickWebhookSecret(h(), url, true), "daquery");
+  assert.equal(pickWebhookSecret(h("doheader"), url, true), "doheader");
+  assert.equal(pickWebhookSecret(h(), "https://x.test/api/pix/webhook/org", true), "");
+});
+
+test("Retenção: corte de ApiRequest exatamente 24 h antes", () => {
+  const now = new Date("2026-10-20T04:00:00.000Z");
+  assert.equal(cutoffApiRequests(now).toISOString(), "2026-10-19T04:00:00.000Z");
+  assert.equal(cutoffApiRequests(now, 1).toISOString(), "2026-10-20T03:00:00.000Z");
+  assert.throws(() => cutoffApiRequests(now, 0));
+});
+
+test("Env: requiredEnv falha fechado", () => {
+  assert.throws(() => requiredEnv("X", {}, {}), /X ausente/);
+  assert.throws(() => requiredEnv("X", {}, { X: "" }), /X ausente/);
+  assert.throws(() => requiredEnv("X", {}, { X: "   " }), /X ausente/);
+  assert.throws(() => requiredEnv("X", { minLength: 32 }, { X: "curto" }), /mínimo 32/);
+  assert.equal(requiredEnv("X", { minLength: 3 }, { X: "abc" }), "abc");
+  // A mensagem nunca inclui o valor
+  try { requiredEnv("X", { minLength: 32 }, { X: "valor-secreto" }); } catch (e) { assert.ok(!String(e).includes("valor-secreto")); }
+});
+
+test("Rotas públicas: cron de limpeza liberado só no caminho exato", () => {
+  assert.ok(isPublic("/api/cron/limpeza"));
+  for (const p of ["/api/cron/limpezaX", "/api/cron", "/api/cron/", "/api/cron/limpeza/x"]) assert.ok(!isPublic(p), p);
+});
+
+test("Tour: determinístico com demoDir explícito", () => {
+  const dir = fileURLToPath(new URL("../public/demo", import.meta.url));
+  const a = buildTourData(dir);
+  assert.deepEqual(a, buildTourData(dir));
+  assert.deepEqual(a, buildTourData());
+});

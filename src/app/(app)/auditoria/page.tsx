@@ -7,6 +7,9 @@ import { Icon } from "@/components/Icon";
 import { ChainIllustration } from "@/components/Illustrations";
 import { ConferirRecibo } from "@/components/ConferirRecibo";
 
+// Tempo máximo da função na Vercel (actions e exportações longas)
+export const maxDuration = 60;
+
 const PROBLEMA: Record<string, string> = {
   quebra: "um registro foi alterado (o hash não confere)",
   lacuna: "falta um registro na sequência (apagado)",

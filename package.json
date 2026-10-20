@@ -10,6 +10,7 @@
     "lint": "eslint",
     "test": "tsx --test tests/modulos.test.mts",
     "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "demo:files": "node scripts/gerar-demo.mjs",
     "setup": "prisma migrate dev --name init && npm run db:seed && npm run demo:files",

@@ -3,6 +3,9 @@ import { db } from "@/lib/db";
 import { auditWhere, filtersSummary, parseAuditFilters } from "@/lib/audit-chain";
 import { cell, csvDocument } from "@/lib/csv";
 
+// Tempo máximo da função na Vercel (actions e exportações longas)
+export const maxDuration = 60;
+
 const MAX_ROWS = 50_000;
 
 // Exporta a trilha com os mesmos filtros da tela; sempre restrita à organização da sessão

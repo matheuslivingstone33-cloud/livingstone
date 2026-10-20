@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { itemJson, reconciliationJson } from "@/lib/servicos/conciliacao-api";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 // Detalhe com os itens. Outra instituição ou id inexistente: o mesmo 404.
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {

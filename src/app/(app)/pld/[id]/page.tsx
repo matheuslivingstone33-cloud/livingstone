@@ -12,6 +12,9 @@ import { AiVersion } from "@/components/AiVersion";
 import { PLD_STATUS, RiskBadge, DueBadge } from "../badges";
 import { DecisionForm } from "./DecisionForm";
 
+// Tempo máximo da função na Vercel (actions e exportações longas)
+export const maxDuration = 60;
+
 export default async function PldCasePage({ params }: { params: Promise<{ id: string }> }) {
   const s = await requireSession();
   const { id } = await params;
