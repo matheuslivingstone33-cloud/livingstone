@@ -14,7 +14,9 @@ import { analyzeLegacy } from "../src/lib/legacy";
 import { LOGO } from "../src/lib/logo-geometria";
 import { criarSorteio, intensidade, pontosDaGrade, proximoPulso } from "../src/lib/malha";
 import { DEFAULTS, validateSettings } from "../src/lib/settings";
-import { auditHash, passwordProblem } from "../src/lib/auth";
+import { passwordProblem } from "../src/lib/auth";
+import { auditHash, auditHashV2, compareReceipt, deriveReceiptSecret, initialChainState, parseAuditFilters, signReceipt, verifyBatch, verifyReceipt, type AuditRow } from "../src/lib/audit-chain";
+import { cell, csvDocument, num } from "../src/lib/csv";
 import { buildTourData } from "../src/lib/tour";
 import { isPublic } from "../src/lib/public-routes";
 import { decideIdempotency, generateKey, hasScope, hashKey, idempotencyFingerprint, parseBearer, safeEqualHex } from "../src/lib/api-keys";
@@ -570,4 +572,129 @@ test("IA: tryClaudeJson nunca lança (500, corpo não JSON, timeout, forma, sem 
     globalThis.fetch = realFetch;
     delete process.env.ANTHROPIC_API_KEY;
   }
+});
+
+// ---------- Integridade da auditoria ----------
+const baseRow = { orgId: "org1", userId: "u1", action: "login", detail: null, ip: null };
+function buildChain(nV1: number, nV2: number, nLegacy = 0): AuditRow[] {
+  const rows: AuditRow[] = [];
+  let prev = "GENESIS";
+  let t = Date.UTC(2026, 0, 1);
+  for (let i = 0; i < nLegacy; i++) rows.push({ ...baseRow, id: `l${i}`, seq: null, prevHash: null, hash: null, createdAt: new Date(t++) });
+  for (let i = 0; i < nV1; i++) {
+    const r = { ...baseRow, id: `a${i}`, seq: null, prevHash: prev, createdAt: new Date(t++), detail: `v1 ${i}` };
+    const hash = auditHash(r);
+    rows.push({ ...r, hash });
+    prev = hash;
+  }
+  for (let i = 1; i <= nV2; i++) {
+    const r = { ...baseRow, id: `b${i}`, seq: i, prevHash: prev, createdAt: new Date(t++), detail: `v2 ${i}` };
+    const hash = auditHashV2(r);
+    rows.push({ ...r, hash });
+    prev = hash;
+  }
+  return rows;
+}
+function verifyIn(rows: AuditRow[], size: number) {
+  let st = initialChainState();
+  for (let i = 0; i < rows.length; i += size) {
+    const r = verifyBatch(st, rows.slice(i, i + size));
+    if (r.problema) return r;
+    st = r.state;
+  }
+  return { state: st, problema: undefined };
+}
+
+test("Auditoria: hash v2 determinístico, sensível a seq e campos, diferente da v1", () => {
+  const r = { prevHash: "GENESIS", ...baseRow, createdAt: new Date(0), seq: 1 };
+  assert.equal(auditHashV2(r), auditHashV2({ ...r }));
+  assert.notEqual(auditHashV2(r), auditHashV2({ ...r, seq: 2 }));
+  assert.notEqual(auditHashV2(r), auditHashV2({ ...r, action: "logout" }));
+  assert.notEqual(auditHashV2(r), auditHash(r));
+});
+
+test("Auditoria: corrente v1→v2 valida igual em lotes de 1, 2 e N", () => {
+  const rows = buildChain(3, 5, 2);
+  for (const n of [1, 2, rows.length]) {
+    const r = verifyIn(rows, n);
+    assert.equal(r.problema, undefined, `lote ${n}`);
+    assert.equal(r.state.legacy, 2);
+    assert.equal(r.state.checked, 8);
+    assert.equal(r.state.nextSeq - 1, 5);
+    assert.equal(r.state.prev, rows.at(-1)!.hash);
+  }
+});
+
+test("Auditoria: adulteração, lacuna, duplicado e sem hash", () => {
+  const rows = buildChain(2, 5);
+  const alt = rows.map((r) => (r.seq === 3 ? { ...r, detail: "alterado" } : r));
+  assert.deepEqual(verifyIn(alt, 2).problema, { tipo: "quebra", id: "b3", seq: 3 });
+  const altV1 = rows.map((r) => (r.id === "a1" ? { ...r, action: "x" } : r));
+  assert.equal(verifyIn(altV1, 1).problema?.tipo, "quebra");
+  const pulado = rows.filter((r) => r.seq !== 3);
+  assert.deepEqual(verifyIn(pulado, 3).problema, { tipo: "lacuna", id: "b4", seq: 4 });
+  const repetido = [...rows.slice(0, 5), { ...rows[4], id: "dup" }, ...rows.slice(5)];
+  assert.equal(verifyIn(repetido, 1).problema?.tipo, "duplicado");
+  const semHash = [...rows.slice(0, 4), { ...rows[4], hash: null }, ...rows.slice(5)];
+  assert.equal(verifyIn(semHash, 10).problema?.tipo, "sem_hash");
+  // nulo sem seq mas criado depois do início da v2 também não é legado
+  const tarde: AuditRow = { ...baseRow, id: "z", seq: null, prevHash: null, hash: null, createdAt: new Date(rows[3].createdAt.getTime() + 1) };
+  assert.equal(verifyBatch(initialChainState(rows[2].createdAt), [tarde]).problema?.tipo, "sem_hash");
+  // nulo antes: legado, corrente ok
+  const r = verifyIn(buildChain(0, 3, 4), 2);
+  assert.equal(r.problema, undefined);
+  assert.equal(r.state.legacy, 4);
+});
+
+test("Auditoria: recibo assinado, adulteração e comparação", () => {
+  const secret = deriveReceiptSecret({ AUDIT_RECEIPT_SECRET: "x".repeat(32) });
+  const rec = signReceipt(secret, { orgId: "org1", seq: 5, hash: "ab".repeat(32), emitidoEm: "2026-10-20T12:00:00.000Z" });
+  assert.deepEqual(verifyReceipt(secret, JSON.parse(JSON.stringify(rec))), rec);
+  assert.equal(verifyReceipt(secret, { ...rec, seq: 6 }), null);
+  assert.equal(verifyReceipt(secret, { ...rec, hash: "cd".repeat(32) }), null);
+  assert.equal(verifyReceipt(secret, { ...rec, orgId: "org2" }), null);
+  assert.equal(verifyReceipt(secret, { ...rec, v: 2 }), null);
+  assert.equal(verifyReceipt(deriveReceiptSecret({ AUDIT_RECEIPT_SECRET: "y".repeat(32) }), rec), null);
+  assert.equal(compareReceipt(rec, { lastSeq: 9, hashAtSeq: rec.hash }), "integro");
+  assert.equal(compareReceipt(rec, { lastSeq: 4, hashAtSeq: null }), "truncado");
+  assert.equal(compareReceipt(rec, { lastSeq: 9, hashAtSeq: "00" }), "divergente");
+  assert.equal(compareReceipt(rec, { lastSeq: 9, hashAtSeq: null }), "divergente");
+});
+
+test("Auditoria: segredo do recibo", () => {
+  const own = deriveReceiptSecret({ AUDIT_RECEIPT_SECRET: "s".repeat(40), AUTH_SECRET: "a".repeat(40) });
+  assert.equal(own.toString(), "s".repeat(40));
+  const derived = deriveReceiptSecret({ AUTH_SECRET: "a".repeat(40) });
+  assert.equal(derived.length, 32);
+  assert.notEqual(derived.toString("hex"), Buffer.from("a".repeat(40)).toString("hex"));
+  assert.deepEqual(deriveReceiptSecret({ AUDIT_RECEIPT_SECRET: "curto", AUTH_SECRET: "a".repeat(40) }), derived);
+  assert.throws(() => deriveReceiptSecret({}));
+  assert.throws(() => deriveReceiptSecret({ AUTH_SECRET: "curto" }));
+});
+
+test("CSV: injeção de fórmula, aspas e documento", () => {
+  assert.equal(cell("=1+1"), `"'=1+1"`);
+  assert.equal(cell("+55"), `"'+55"`);
+  assert.equal(cell("-2"), `"'-2"`);
+  assert.equal(cell("@SUM(A1)"), `"'@SUM(A1)"`);
+  assert.equal(cell("\tx"), `"'\tx"`);
+  assert.equal(cell("\rx"), `"'\rx"`);
+  assert.equal(cell('diz "oi"'), `"diz ""oi"""`);
+  assert.equal(cell(null), `""`);
+  assert.equal(num(1.5), "1,50");
+  assert.equal(csvDocument(["a", "b"], [["1", "2"]]), "﻿a;b\r\n1;2");
+});
+
+test("Auditoria: filtros da tela", () => {
+  const f = parseAuditFilters(new URLSearchParams("de=2026-10-01&ate=2026-10-02&pagina=99999&acao=login"));
+  assert.equal(f.desde?.toISOString(), "2026-10-01T03:00:00.000Z");
+  assert.equal(f.antesDe?.toISOString(), "2026-10-03T03:00:00.000Z"); // até inclusivo
+  assert.equal(f.pagina, 1000);
+  assert.equal(f.action, "login");
+  const g = parseAuditFilters({ de: "2026-02-31", ate: "ontem", pagina: "-3" });
+  assert.equal(g.desde, null);
+  assert.equal(g.antesDe, null);
+  assert.equal(g.de, "");
+  assert.equal(g.pagina, 1);
+  assert.equal(parseAuditFilters({}).pagina, 1);
 });

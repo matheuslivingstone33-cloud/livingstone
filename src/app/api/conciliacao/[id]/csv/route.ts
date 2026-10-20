@@ -1,13 +1,6 @@
 import { audit, getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
-
-// Neutraliza injeção de fórmula: no Excel, células iniciadas por = + - @ tab ou CR viram fórmulas executáveis
-const cell = (v: unknown) => {
-  let s = String(v ?? "");
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
-  return `"${s.replace(/"/g, '""')}"`;
-};
-const num = (v: unknown) => (v === null || v === undefined ? "" : Number(v).toFixed(2).replace(".", ","));
+import { cell, num } from "@/lib/csv";
 
 export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
   const s = await getSession();

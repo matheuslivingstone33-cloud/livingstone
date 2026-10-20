@@ -80,9 +80,13 @@ model AuditLog {
   // Encadeamento: cada registro guarda o hash do anterior, então alterar ou apagar um quebra a corrente
   prevHash  String?
   hash      String?
+  // Sequência por organização (registros v2); nula no legado anterior a ela
+  seq       Int?
   createdAt DateTime     @default(now())
 
+  @@unique([orgId, seq])
   @@index([orgId, createdAt])
+  @@index([orgId, action, createdAt])
 }
 
 model Reconciliation {
