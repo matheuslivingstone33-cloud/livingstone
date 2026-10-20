@@ -42,3 +42,6 @@ yarn-error.log*
 next-env.d.ts
 .demo-online.txt
 .vercel
+
+# log do servidor de dev
+.next-dev.log

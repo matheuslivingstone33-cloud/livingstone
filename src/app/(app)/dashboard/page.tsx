@@ -36,8 +36,8 @@ export default async function Dashboard() {
     db.creditAnalysis.groupBy({ by: ["decision"], where, _count: true }),
     db.payment.findMany({ where: { agreement: { debt: where } }, select: { amount: true, paidAt: true } }),
     db.debt.groupBy({ by: ["status"], where, _count: true, _sum: { principal: true } }),
-    db.pldCase.findMany({ where: { ...where, status: "EM_ANALISE" }, orderBy: { dueAt: "asc" }, take: 4 }),
-    db.pldCase.groupBy({ by: ["risk"], where: { ...where, status: "EM_ANALISE" }, _count: true }),
+    db.pldCase.findMany({ where: { ...where, batch: { status: "CONCLUIDO" }, status: "EM_ANALISE" }, orderBy: { dueAt: "asc" }, take: 4 }),
+    db.pldCase.groupBy({ by: ["risk"], where: { ...where, batch: { status: "CONCLUIDO" }, status: "EM_ANALISE" }, _count: true }),
     db.auditLog.findMany({ where, orderBy: { createdAt: "desc" }, take: 7, include: { user: true } }),
   ]);
 
@@ -48,7 +48,7 @@ export default async function Dashboard() {
   const openDebt = debts.filter((d) => d.status !== "QUITADO").reduce((a, d) => a + Number(d._sum.principal ?? 0), 0);
   const settledDebt = Number(debts.find((d) => d.status === "QUITADO")?._sum.principal ?? 0);
   const pldTotal = pldByRisk.reduce((a, r) => a + r._count, 0);
-  const mandatory = await db.pldCase.count({ where: { ...where, status: "EM_ANALISE", mandatory: true } });
+  const mandatory = await db.pldCase.count({ where: { ...where, batch: { status: "CONCLUIDO" }, status: "EM_ANALISE", mandatory: true } });
   const problems = (recAgg._sum.divergent ?? 0) + (recAgg._sum.missing ?? 0);
   const decTotal = (dec.APROVAR ?? 0) + (dec.ANALISAR ?? 0) + (dec.RECUSAR ?? 0);
 

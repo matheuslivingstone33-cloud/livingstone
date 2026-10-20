@@ -5,13 +5,13 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { audit, requireSession, type Session } from "@/lib/auth";
 import { aiProvider } from "@/lib/ai";
-import { DOSSIER_AI_WINDOW_MS, analyzeClient, buildDossier, groupByClient, parseTransactionsCsv, scoreOf, type Alert } from "@/lib/pld";
+import { DOSSIER_AI_WINDOW_MS, buildDossier, parseTransactionsCsv, type Alert } from "@/lib/pld";
+import { PLD_MAX_TRANSACOES } from "@/lib/pld-lote";
+import { persistirLotePld } from "@/lib/servicos/pld";
 import { buildIndex, parseList } from "@/lib/lists";
 import { getSettings } from "@/lib/settings";
 import { decodeText, readUpload } from "@/lib/upload";
 import { fail } from "@/lib/errors";
-
-const MANDATORY_RULES = ["ESPECIE_50K", "CLIENTE_LISTA_RESTRITIVA"];
 
 export async function importPld(form: FormData) {
   const s = await requireSession(["ADMIN", "ANALISTA"]);
@@ -19,69 +19,25 @@ export async function importPld(form: FormData) {
   if (!f) fail("/pld", "Envie o arquivo de transações (CSV).");
   const txs = parseTransactionsCsv(decodeText(f.data));
   if (!txs.length) fail("/pld", "Nenhuma transação válida. Confira as colunas: data; cliente; cpf_cnpj; tipo; valor.");
-  if (txs.length > 500_000) fail("/pld", "Arquivo grande demais: divida em lotes de até 500 mil transações.");
+  if (txs.length > PLD_MAX_TRANSACOES)
+    fail("/pld", `O arquivo tem ${txs.length.toLocaleString("pt-BR")} transações. O limite por envio é de ${PLD_MAX_TRANSACOES.toLocaleString("pt-BR")}: divida o arquivo em partes menores.`);
 
   const cfg = (await getSettings(s.orgId)).pld;
-  const lists = buildIndex(
+  const listas = buildIndex(
     (await db.restrictedEntry.findMany({ where: { orgId: s.orgId } })).map((e) => ({ ...e, document: e.document ?? undefined, reason: e.reason ?? undefined })),
   );
-  const ANALYSIS_DAYS = cfg.analysisDays; // prazo de análise a partir da seleção (Circular 3.978, art. 43)
-  const times = txs.map((t) => t.date.getTime());
-  const clients = groupByClient(txs);
-  const results = [...clients.values()].map((list) => {
-    const alerts = analyzeClient(list, cfg, lists);
-    return { list, alerts, ...scoreOf(alerts), mandatory: alerts.some((a) => MANDATORY_RULES.includes(a.rule)) };
-  });
-  const flagged = results.filter((r) => r.score >= cfg.caseMinScore || r.mandatory);
-
-  const batch = await db.pldBatch.create({
-    data: {
-      orgId: s.orgId,
-      fileName: f.name,
-      transactions: txs.length,
-      clients: clients.size,
-      alerts: flagged.reduce((a, r) => a + r.alerts.length, 0),
-      periodStart: new Date(Math.min(...times)),
-      periodEnd: new Date(Math.max(...times)),
-    },
-  });
-  await db.pldTransaction.createMany({
-    data: txs.map((t) => ({
-      batchId: batch.id,
-      date: t.date,
-      clientDoc: t.clientDoc,
-      clientName: t.clientName,
-      type: t.type,
-      direction: t.direction,
-      amount: t.amount,
-      counterparty: t.counterparty,
-      counterDoc: t.counterDoc,
-    })),
-  });
-  const sum = (l: typeof txs, dir: "C" | "D") => l.filter((t) => t.direction === dir).reduce((a, t) => a + t.amount, 0);
-  for (const r of flagged) {
-    const first = r.list[0];
-    await db.pldCase.create({
-      data: {
-        orgId: s.orgId,
-        batchId: batch.id,
-        clientDoc: first.clientDoc,
-        clientName: first.clientName,
-        declaredIncome: first.income,
-        pep: first.pep || r.alerts.some((a) => a.rule === "PEP"),
-        score: r.score,
-        risk: r.risk,
-        alerts: r.alerts,
-        totalIn: sum(r.list, "C"),
-        totalOut: sum(r.list, "D"),
-        mandatory: r.mandatory,
-        dueAt: new Date(Date.now() + ANALYSIS_DAYS * 86_400_000),
-      },
-    });
+  let r: Awaited<ReturnType<typeof persistirLotePld>>;
+  try {
+    r = await persistirLotePld(s.orgId, { fileName: f.name, txs, cfg, listas, agora: new Date() });
+  } catch (e) {
+    const motivo = (e instanceof Error ? e.message : String(e)).slice(0, 300);
+    await audit(s, "pld.importar_falhou", `${f.name}: ${motivo}`.slice(0, 500));
+    revalidatePath("/pld");
+    fail("/pld", "Não foi possível concluir a análise do arquivo. Nada foi gravado; tente novamente ou divida o arquivo em partes menores.");
   }
-  await audit(s, "pld.importar", `${f.name}: ${txs.length} transações, ${clients.size} clientes, ${flagged.length} casos abertos`);
+  await audit(s, "pld.importar", `${f.name}: ${r.transacoes} transações, ${r.clientes} clientes, ${r.casos} casos abertos`);
   revalidatePath("/pld");
-  redirect(`/pld?lote=${batch.id}`);
+  redirect(`/pld?lote=${r.batchId}`);
 }
 
 const SOURCES = ["CSNU", "OFAC", "PEP", "INTERNA"];

@@ -698,3 +698,67 @@ test("Auditoria: filtros da tela", () => {
   assert.equal(g.pagina, 1);
   assert.equal(parseAuditFilters({}).pagina, 1);
 });
+
+// ---- Lote de PLD (importação atômica em blocos) ----
+import { chunk, MANDATORY_RULES as PLD_MANDATORY, periodo, prepararLote, tamanhoChunk } from "../src/lib/pld-lote";
+
+test("PLD lote: prepararLote equivale ao cálculo antigo da action", () => {
+  const txs = parseTransactionsCsv(demo("transacoes_pld.csv").toString());
+  const lists = buildIndex([{ source: "INTERNA", name: "Construtora Horizonte Azul", nameKey: nameKey("Construtora Horizonte Azul"), document: "99888777000166" }]);
+  const cfg = DEFAULTS.pld;
+  const agora = new Date(Date.UTC(2026, 9, 15, 12));
+  // Cálculo antigo (actions-pld.ts antes da etapa 3)
+  const times = txs.map((t) => t.date.getTime());
+  const clients = groupByClient(txs);
+  const results = [...clients.values()].map((list) => {
+    const alerts = analyzeClient(list, cfg, lists);
+    return { list, alerts, ...scoreOf(alerts), mandatory: alerts.some((a) => PLD_MANDATORY.includes(a.rule)) };
+  });
+  const flagged = results.filter((r) => r.score >= cfg.caseMinScore || r.mandatory);
+  const sum = (l: typeof txs, dir: "C" | "D") => l.filter((t) => t.direction === dir).reduce((a, t) => a + t.amount, 0);
+  const antigo = flagged.map((r) => ({
+    clientDoc: r.list[0].clientDoc,
+    clientName: r.list[0].clientName,
+    declaredIncome: r.list[0].income,
+    pep: r.list[0].pep || r.alerts.some((a) => a.rule === "PEP"),
+    score: r.score,
+    risk: r.risk,
+    alerts: r.alerts,
+    totalIn: sum(r.list, "C"),
+    totalOut: sum(r.list, "D"),
+    mandatory: r.mandatory,
+    dueAt: new Date(agora.getTime() + cfg.analysisDays * 86_400_000),
+  }));
+  const novo = prepararLote(txs, cfg, lists, agora);
+  assert.ok(antigo.length > 0);
+  assert.deepEqual(novo.casos, antigo);
+  assert.equal(novo.transacoes, txs.length);
+  assert.equal(novo.clientes, clients.size);
+  assert.equal(novo.alertas, flagged.reduce((a, r) => a + r.alerts.length, 0));
+  assert.deepEqual(novo.periodStart, new Date(Math.min(...times)));
+  assert.deepEqual(novo.periodEnd, new Date(Math.max(...times)));
+  assert.deepEqual(novo.casos[0].dueAt, new Date(agora.getTime() + cfg.analysisDays * 86_400_000));
+});
+
+test("PLD lote: período com 300 mil datas não estoura a pilha e lista vazia lança", () => {
+  const base = Date.UTC(2026, 0, 1);
+  const txs = Array.from({ length: 300_000 }, (_, i) => ({ date: new Date(base + (i % 1000) * 60_000) }));
+  const p = periodo(txs);
+  assert.equal(p.periodStart.getTime(), base);
+  assert.equal(p.periodEnd.getTime(), base + 999 * 60_000);
+  assert.throws(() => periodo([]));
+  assert.throws(() => prepararLote([], DEFAULTS.pld, buildIndex([]), new Date(0)));
+});
+
+test("PLD lote: blocos respeitam o limite de parâmetros do Postgres", () => {
+  for (const c of [10, 16]) {
+    const n = tamanhoChunk(c);
+    assert.ok(n <= 2000 && n >= 1);
+    assert.ok(c * n < 65_535);
+  }
+  assert.deepEqual(chunk([], 3), []);
+  assert.deepEqual(chunk([1], 3), [[1]]);
+  assert.deepEqual(chunk([1, 2, 3], 3), [[1, 2, 3]]);
+  assert.deepEqual(chunk(Array(2001).fill(0), 2000).map((b) => b.length), [2000, 1]);
+  assert.throws(() => chunk([1], 0));
+});

@@ -127,6 +127,9 @@ const statusTone: Record<string, string> = {
   IA_USADA: "bg-emerald-50 text-emerald-800",
   IA_REJEITADA: "bg-amber-50 text-amber-800",
   IA_FALHOU: "bg-amber-50 text-amber-800",
+  LOTE_PROCESSANDO: "bg-sky-50 text-sky-800",
+  LOTE_CONCLUIDO: "bg-emerald-50 text-emerald-800",
+  LOTE_FALHOU: "bg-red-50 text-red-800",
 };
 const statusDot: Record<string, string> = {
   CONCILIADO: "bg-emerald-500",
@@ -139,6 +142,9 @@ const statusDot: Record<string, string> = {
   IA_USADA: "bg-emerald-500",
   IA_REJEITADA: "bg-amber-500",
   IA_FALHOU: "bg-amber-500",
+  LOTE_PROCESSANDO: "bg-sky-500",
+  LOTE_CONCLUIDO: "bg-emerald-500",
+  LOTE_FALHOU: "bg-red-500",
 };
 const statusLabel: Record<string, string> = {
   CONCILIADO: "Conciliado",
@@ -151,6 +157,9 @@ const statusLabel: Record<string, string> = {
   IA_USADA: "Versão exibida: IA (conferida)",
   IA_REJEITADA: "Versão padrão (IA rejeitada)",
   IA_FALHOU: "Versão padrão (IA falhou)",
+  LOTE_PROCESSANDO: "Processando",
+  LOTE_CONCLUIDO: "Concluído",
+  LOTE_FALHOU: "Falhou / interrompido",
 };
 
 export function StatusBadge({ status }: { status: string }) {

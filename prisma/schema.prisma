@@ -217,9 +217,13 @@ model PldBatch {
   alerts       Int
   periodStart  DateTime
   periodEnd    DateTime
+  status       String           @default("CONCLUIDO") // PROCESSANDO | CONCLUIDO | FALHOU
+  error        String?
   createdAt    DateTime         @default(now())
   txs          PldTransaction[]
   cases        PldCase[]
+
+  @@index([orgId, status])
 }
 
 model PldTransaction {

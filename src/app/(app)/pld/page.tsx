@@ -3,33 +3,48 @@ import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, day, dt } from "@/lib/format";
 import { importPld } from "../../actions-pld";
-import { PageTitle, Stat, Empty, DemoFiles, Notice, CardHeader, TableCard, FilterBar } from "@/components/ui";
+import { PageTitle, Stat, Empty, DemoFiles, Notice, StatusBadge, CardHeader, TableCard, FilterBar } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 import { PLD_STATUS, RiskBadge, DueBadge } from "./badges";
+
+// Importação grande roda dentro da server action desta página (vale em todos os planos da Vercel)
+export const maxDuration = 60;
+
+const INTERROMPIDO_MS = 15 * 60_000;
+/** Lote em PROCESSANDO há mais de 15 minutos é tratado como interrompido. */
+function statusLote(b: { status: string; createdAt: Date }, agora: number) {
+  return b.status === "PROCESSANDO" && agora - b.createdAt.getTime() > INTERROMPIDO_MS ? "FALHOU" : b.status;
+}
 
 export default async function PldPage({ searchParams }: { searchParams: Promise<{ status?: string; lote?: string }> }) {
   const s = await requireSession();
   const { status = "EM_ANALISE", lote } = await searchParams;
   const where = { orgId: s.orgId };
+  const ok = { ...where, batch: { status: "CONCLUIDO" } }; // casos só de lotes concluídos
   const [cases, counts, batches, overdue] = await Promise.all([
     db.pldCase.findMany({
-      where: { ...where, ...(status !== "TODOS" ? { status } : {}) },
+      where: { ...ok, ...(status !== "TODOS" ? { status } : {}) },
       orderBy: [{ mandatory: "desc" }, { score: "desc" }, { dueAt: "asc" }],
     }),
-    db.pldCase.groupBy({ by: ["status"], where, _count: true }),
+    db.pldCase.groupBy({ by: ["status"], where: ok, _count: true }),
     db.pldBatch.findMany({ where, orderBy: { createdAt: "desc" }, take: 5 }),
-    db.pldCase.count({ where: { ...where, status: "EM_ANALISE", dueAt: { lt: new Date(Date.now() + 7 * 86_400_000) } } }),
+    db.pldCase.count({ where: { ...ok, status: "EM_ANALISE", dueAt: { lt: new Date(Date.now() + 7 * 86_400_000) } } }),
   ]);
   const n = Object.fromEntries(counts.map((c) => [c.status, c._count]));
   const lastBatch = lote ? batches.find((b) => b.id === lote) : undefined;
+  const agora = Date.now();
 
   return (
     <>
       <PageTitle eyebrow="PLD / COAF" title="Prevenção à lavagem de dinheiro" subtitle="Monitoramento de transações, análise de casos e comunicação ao COAF (Circular BCB 3.978/2020)" />
-      {lastBatch && (
+      {lastBatch && statusLote(lastBatch, agora) === "CONCLUIDO" && (
         <Notice>
           {lastBatch.fileName}: {lastBatch.transactions} transações de {lastBatch.clients} clientes analisadas, {lastBatch.alerts} alerta(s) gerado(s).
         </Notice>
+      )}
+      {lastBatch && statusLote(lastBatch, agora) === "PROCESSANDO" && <Notice tone="info">{lastBatch.fileName}: análise em andamento. Atualize a página em instantes.</Notice>}
+      {lastBatch && statusLote(lastBatch, agora) === "FALHOU" && (
+        <Notice tone="danger">{lastBatch.fileName}: a análise falhou ou foi interrompida e nada foi gravado. Envie o arquivo novamente.</Notice>
       )}
 
       <div className="mb-6 grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 lg:grid-cols-4">
@@ -70,7 +85,8 @@ export default async function PldPage({ searchParams }: { searchParams: Promise<
           </ol>
           {batches.length > 0 && (
             <p className="mt-5 border-t border-line pt-3 text-xs text-ink-500">
-              Último lote: {batches[0].fileName} · período {day(batches[0].periodStart)} a {day(batches[0].periodEnd)} · {dt(batches[0].createdAt)}
+              Último lote: {batches[0].fileName} · período {day(batches[0].periodStart)} a {day(batches[0].periodEnd)} · {dt(batches[0].createdAt)}{" "}
+              <StatusBadge status={`LOTE_${statusLote(batches[0], agora)}`} />
             </p>
           )}
         </section>
