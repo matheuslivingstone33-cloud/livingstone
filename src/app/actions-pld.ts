@@ -3,8 +3,9 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { audit, requireSession } from "@/lib/auth";
-import { analyzeClient, buildDossier, groupByClient, parseTransactionsCsv, scoreOf, type Alert } from "@/lib/pld";
+import { audit, requireSession, type Session } from "@/lib/auth";
+import { aiProvider } from "@/lib/ai";
+import { DOSSIER_AI_WINDOW_MS, analyzeClient, buildDossier, groupByClient, parseTransactionsCsv, scoreOf, type Alert } from "@/lib/pld";
 import { buildIndex, parseList } from "@/lib/lists";
 import { getSettings } from "@/lib/settings";
 import { decodeText, readUpload } from "@/lib/upload";
@@ -111,24 +112,52 @@ async function loadCase(orgId: string, id: string) {
   return c;
 }
 
+
+async function runDossier(s: Session, caseId: string, force: boolean) {
+  const c = await loadCase(s.orgId, caseId);
+  const recent = !!c.dossierAiAt && Date.now() - c.dossierAiAt.getTime() < DOSSIER_AI_WINDOW_MS;
+  const useAi = aiProvider() === "claude" && (force || !recent);
+  const d = await buildDossier(
+    {
+      clientName: c.clientName,
+      clientDoc: c.clientDoc,
+      declaredIncome: c.declaredIncome ? Number(c.declaredIncome) : null,
+      pep: c.pep,
+      periodStart: c.batch.periodStart,
+      periodEnd: c.batch.periodEnd,
+      totalIn: Number(c.totalIn),
+      totalOut: Number(c.totalOut),
+      alerts: c.alerts as unknown as Alert[],
+      score: c.score,
+    },
+    { useAi },
+  );
+  // Fora da janela sem IA: mantém a última versão aprovada da IA, se ela ainda confere com a base atual
+  const keepAi = !useAi && c.dossierAiText && c.dossierBase === d.base ? c.dossierAiText : undefined;
+  const shown = d.aiText ?? keepAi ?? d.base;
+  await db.pldCase.update({
+    where: { id: c.id },
+    data: {
+      dossier: shown,
+      dossierBase: d.base,
+      // claude = IA conferida na tela; ia-rejeitada/ia-falhou = padrão exibido após tentativa; demo = sem IA
+      dossierAi: d.aiText || keepAi ? "claude" : useAi && d.provider === "claude" ? `ia-${d.aiStatus}` : recent && c.dossierAi?.startsWith("ia-") ? c.dossierAi : "demo",
+      ...(useAi ? { dossierAiAt: new Date(), dossierAiText: d.aiText ?? null } : {}),
+    },
+  });
+  const status = useAi ? d.aiStatus : recent && aiProvider() === "claude" ? "janela_24h" : "desligada";
+  await audit(s, "pld.dossie", `${c.clientName} (${c.clientDoc}) · IA: ${status}${force ? " (regeneração forçada)" : ""}${d.aiDetail ? ` · ${d.aiDetail}` : ""}`.slice(0, 500));
+  revalidatePath(`/pld/${c.id}`);
+}
+
 export async function generateDossier(caseId: string) {
   const s = await requireSession(["ADMIN", "ANALISTA"]);
-  const c = await loadCase(s.orgId, caseId);
-  const d = await buildDossier({
-    clientName: c.clientName,
-    clientDoc: c.clientDoc,
-    declaredIncome: c.declaredIncome ? Number(c.declaredIncome) : null,
-    pep: c.pep,
-    periodStart: c.batch.periodStart,
-    periodEnd: c.batch.periodEnd,
-    totalIn: Number(c.totalIn),
-    totalOut: Number(c.totalOut),
-    alerts: c.alerts as unknown as Alert[],
-    score: c.score,
-  });
-  await db.pldCase.update({ where: { id: c.id }, data: { dossier: d.text, dossierAi: d.provider } });
-  await audit(s, "pld.dossie", `${c.clientName} (${c.clientDoc})`);
-  revalidatePath(`/pld/${c.id}`);
+  await runDossier(s, caseId, false);
+}
+
+export async function regenerateDossierAi(caseId: string) {
+  const s = await requireSession(["ADMIN"]);
+  await runDossier(s, caseId, true);
 }
 
 export type DecideState = { error?: string };

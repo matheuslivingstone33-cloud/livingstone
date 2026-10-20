@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { brl, dt } from "@/lib/format";
 import type { CreditResult, Flag } from "@/lib/credit";
 import { PageTitle, Stat, StatusBadge, CardHeader } from "@/components/ui";
+import { AiVersion } from "@/components/AiVersion";
 
 const flagTone = { alto: "border-red-200 bg-red-50 text-red-900", medio: "border-amber-200 bg-amber-50 text-amber-900", baixo: "border-line bg-paper text-ink-700" };
 const flagDot = { alto: "bg-red-500", medio: "bg-amber-500", baixo: "bg-slate-400" };
@@ -34,7 +35,7 @@ export default async function CreditoDetalhe({ params }: { params: Promise<{ id:
       <PageTitle
         back={{ href: "/credito", label: "Análises de crédito" }}
         title={c.applicant}
-        subtitle={`${c.document} · ${dt(c.createdAt)} · IA: ${c.aiProvider === "claude" ? "Claude" : "modo demonstração"}`}
+        subtitle={`${c.document} · ${dt(c.createdAt)} · IA: ${c.aiProvider === "claude" ? "Claude" : c.aiProvider === "demo-fallback" ? "leitura local (IA indisponível)" : "modo demonstração"}`}
         action={<StatusBadge status={c.decision} />}
       />
       <div className="mb-6 grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 lg:grid-cols-4">
@@ -79,6 +80,7 @@ export default async function CreditoDetalhe({ params }: { params: Promise<{ id:
             <span className="absolute inset-y-0 left-0 w-1 bg-gold-400" aria-hidden="true" />
             <CardHeader title="Parecer" />
             <p className="font-display text-[17px] leading-relaxed text-ink-800">{c.opinion}</p>
+            <AiVersion status={c.aiStatus} base={c.opinionBase} label="Ver parecer padrão (sem IA)" />
           </section>
           <section className="card">
             <CardHeader title="Pontos de atenção">{flags.length ? `${flags.length}` : undefined}</CardHeader>

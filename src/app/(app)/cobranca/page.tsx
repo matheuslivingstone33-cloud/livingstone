@@ -11,10 +11,11 @@ import { SubmitButton } from "@/components/SubmitButton";
 export default async function CobrancaPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; importados?: string; propostas?: string }>;
+  searchParams: Promise<{ status?: string; importados?: string; propostas?: string; falhas?: string }>;
 }) {
   const s = await requireSession();
-  const { status, importados, propostas } = await searchParams;
+  const { status, importados, propostas, falhas } = await searchParams;
+  const nFalhas = Math.max(0, Math.floor(Number(falhas) || 0));
   const all = await db.debt.findMany({
     where: { orgId: s.orgId },
     orderBy: { dueDate: "asc" },
@@ -54,6 +55,12 @@ export default async function CobrancaPage({
       {(importados || propostas) && (
         <Notice>{importados ? `${importados} contrato(s) importado(s).` : `${propostas} proposta(s) gerada(s).`}</Notice>
       )}
+      {propostas && nFalhas > 0 && (
+        <Notice tone="warning">
+          {nFalhas} contrato(s) com falha da IA ou erro no lote: as propostas geradas usaram a mensagem padrão. Os contratos com erro continuam em aberto; detalhes na auditoria.
+        </Notice>
+      )}
+
 
       <div className="mb-6 grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 lg:grid-cols-4">
         <Stat label="Carteira em atraso (atualizada)" value={brl(carteira)} tone="red" />

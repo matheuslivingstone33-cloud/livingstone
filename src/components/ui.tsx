@@ -124,6 +124,9 @@ const statusTone: Record<string, string> = {
   PENDENTE: "bg-red-50 text-red-800",
   RECUSAR: "bg-red-50 text-red-800",
   NAO_ESPERADO: "bg-violet-50 text-violet-800",
+  IA_USADA: "bg-emerald-50 text-emerald-800",
+  IA_REJEITADA: "bg-amber-50 text-amber-800",
+  IA_FALHOU: "bg-amber-50 text-amber-800",
 };
 const statusDot: Record<string, string> = {
   CONCILIADO: "bg-emerald-500",
@@ -133,6 +136,9 @@ const statusDot: Record<string, string> = {
   PENDENTE: "bg-red-500",
   RECUSAR: "bg-red-500",
   NAO_ESPERADO: "bg-violet-500",
+  IA_USADA: "bg-emerald-500",
+  IA_REJEITADA: "bg-amber-500",
+  IA_FALHOU: "bg-amber-500",
 };
 const statusLabel: Record<string, string> = {
   CONCILIADO: "Conciliado",
@@ -142,6 +148,9 @@ const statusLabel: Record<string, string> = {
   APROVAR: "Aprovar",
   ANALISAR: "Análise humana",
   RECUSAR: "Recusar",
+  IA_USADA: "Versão exibida: IA (conferida)",
+  IA_REJEITADA: "Versão padrão (IA rejeitada)",
+  IA_FALHOU: "Versão padrão (IA falhou)",
 };
 
 export function StatusBadge({ status }: { status: string }) {

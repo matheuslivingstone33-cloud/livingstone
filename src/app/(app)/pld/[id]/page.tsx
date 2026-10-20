@@ -2,11 +2,13 @@ import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, day, dt } from "@/lib/format";
-import { TYPE_LABEL, type Alert } from "@/lib/pld";
-import { generateDossier } from "../../../actions-pld";
-import { PageTitle, Stat, CardHeader } from "@/components/ui";
+import { TYPE_LABEL, dossierAiAvailableAt, type Alert } from "@/lib/pld";
+import { aiProvider } from "@/lib/ai";
+import { generateDossier, regenerateDossierAi } from "../../../actions-pld";
+import { PageTitle, Stat, CardHeader, Notice } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 import { CopyButton } from "@/components/CopyButton";
+import { AiVersion } from "@/components/AiVersion";
 import { PLD_STATUS, RiskBadge, DueBadge } from "../badges";
 import { DecisionForm } from "./DecisionForm";
 
@@ -19,6 +21,9 @@ export default async function PldCasePage({ params }: { params: Promise<{ id: st
   const txs = await db.pldTransaction.findMany({ where: { batchId: c.batchId, clientDoc: c.clientDoc }, orderBy: { date: "asc" } });
   const evidenceKeys = new Set(alerts.flatMap((a) => a.evidence.map((e) => `${e.date}|${e.amount}|${e.type}`)));
   const canEdit = s.role !== "AUDITOR";
+  const aiOn = aiProvider() === "claude";
+  const aiNextAt = dossierAiAvailableAt(c.dossierAiAt);
+  const dossierStatus = c.dossierAi === "claude" && c.dossierAiText && c.dossier === c.dossierAiText ? "usada" : c.dossierAi === "ia-rejeitada" ? "rejeitada" : c.dossierAi === "ia-falhou" ? "falhou" : null;
 
   return (
     <>
@@ -110,20 +115,33 @@ export default async function PldCasePage({ params }: { params: Promise<{ id: st
 
           <section className="card space-y-3">
             <CardHeader title="Dossiê">
-              {c.dossier ? (c.dossierAi === "claude" ? "redigido pelo Claude" : "modelo padrão") : undefined}
+              {c.dossier ? (c.dossierAi === "claude" ? "redigido pelo Claude e conferido" : "modelo padrão") : undefined}
             </CardHeader>
             {c.dossier ? (
               <>
                 <pre tabIndex={0} aria-label="Texto do dossiê" className="max-h-[480px] overflow-auto whitespace-pre-wrap rounded-xl border border-line bg-paper p-4 font-sans text-xs leading-relaxed text-ink-800">{c.dossier}</pre>
+                <AiVersion status={dossierStatus} base={c.dossierBase} label="Ver dossiê padrão (sem IA)" />
                 <CopyButton text={c.dossier} label="Copiar dossiê" />
               </>
             ) : (
               <p className="text-sm leading-relaxed text-ink-500">Gere o dossiê com os fatos, as evidências e o enquadramento normativo para fundamentar a decisão.</p>
             )}
+            {aiOn && aiNextAt && aiNextAt > new Date() && (
+              <Notice tone="info">
+                A IA já foi usada neste caso nas últimas 24h. Gerar novamente agora usa a versão salva; nova versão por IA disponível a partir de {dt(aiNextAt)}.
+              </Notice>
+            )}
             {canEdit && (
-              <form action={generateDossier.bind(null, c.id)}>
-                <SubmitButton pending="Gerando dossiê...">{c.dossier ? "Gerar novamente" : "Gerar dossiê"}</SubmitButton>
-              </form>
+              <div className="flex flex-wrap gap-2">
+                <form action={generateDossier.bind(null, c.id)}>
+                  <SubmitButton pending="Gerando dossiê...">{c.dossier ? "Gerar novamente" : "Gerar dossiê"}</SubmitButton>
+                </form>
+                {aiOn && s.role === "ADMIN" && c.dossier && (
+                  <form action={regenerateDossierAi.bind(null, c.id)}>
+                    <SubmitButton pending="Regenerando com IA...">Regenerar com IA</SubmitButton>
+                  </form>
+                )}
+              </div>
             )}
           </section>
         </div>

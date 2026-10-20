@@ -1,4 +1,5 @@
-import { aiProvider, claudeJson } from "./ai";
+import { pickAi, type AiCall } from "./ai";
+import { isLegacyShape, type AiStatus } from "./ai-guard";
 
 export type Rule = { onde: string; regra: string };
 export type LegacyResult = {
@@ -8,6 +9,8 @@ export type LegacyResult = {
   rules: Rule[];
   modernCode: string;
   provider: string;
+  aiStatus: AiStatus;
+  aiDetail?: string;
 };
 
 export function detectLanguage(name: string, code: string): string {
@@ -115,20 +118,29 @@ function cobolToTs(code: string): { rules: Rule[]; ts: string; fields: string[];
   return { rules, ts, fields, paragraphs };
 }
 
-export async function analyzeLegacy(fileName: string, code: string, target: string): Promise<LegacyResult> {
+export async function analyzeLegacy(fileName: string, code: string, target: string, opts: { call?: AiCall } = {}): Promise<LegacyResult> {
   const language = detectLanguage(fileName, code);
   const linesOfCode = code.split(/\r?\n/).filter((l) => l.trim() && !/^\s*(\*|\/\/|'|\{)/.test(l)).length;
 
-  if (aiProvider() === "claude") {
-    const r = await claudeJson<{ summary: string; rules: Rule[]; modernCode: string }>(
+  const call = pickAi(opts.call);
+  let fallback: { aiStatus: AiStatus; aiDetail?: string; provider: string } = { aiStatus: "desligada", provider: "demo" };
+  if (call) {
+    const r = await call<{ summary: string; rules: Rule[]; modernCode: string }>(
       "Você é especialista em modernização de sistemas bancários legados. Explique o código de forma clara para analistas de negócio, extraia as regras de negócio e gere uma versão moderna equivalente, idiomática e comentada.",
       `Linguagem de origem: ${language}. Linguagem de destino: ${target}.
 Retorne JSON: {"summary": string (explicação em português), "rules": [{"onde": nome da rotina, "regra": regra de negócio em português}], "modernCode": string}
 
 Código (${fileName}):
 ${code}`,
+      [],
+      { validate: isLegacyShape },
     );
-    return { language, linesOfCode, ...r, provider: "claude" };
+    if (r.ok) {
+      const { summary, rules, modernCode } = r.data;
+      return { language, linesOfCode, summary, rules: rules.map(({ onde, regra }) => ({ onde, regra })), modernCode, provider: "claude", aiStatus: "usada" };
+    }
+    // Forma inválida é rejeição; rede/HTTP/JSON é falha. Nos dois casos segue o fluxo determinístico.
+    fallback = { aiStatus: r.reason === "forma" ? "rejeitada" : "falhou", aiDetail: `${r.reason}: ${r.detail}`.slice(0, 300), provider: "demo-fallback" };
   }
 
   if (language === "COBOL") {
@@ -140,7 +152,7 @@ ${code}`,
       summary: `Programa ${programId} em COBOL com ${linesOfCode} linhas úteis, ${fields.length} campo(s) de dados e ${paragraphs.length} rotina(s) (${paragraphs.join(", ") || "nenhuma"}). Foram identificadas ${rules.length} regra(s) de negócio (condições e cálculos). Modo demonstração: tradução estrutural automática para TypeScript; com a IA ativa, o resumo e a conversão ficam completos e idiomáticos.`,
       rules,
       modernCode: target === "TypeScript" ? ts : `// Modo demonstração converte apenas para TypeScript.\n\n${ts}`,
-      provider: "demo",
+      ...fallback,
     };
   }
 
@@ -150,6 +162,6 @@ ${code}`,
     summary: `Arquivo em ${language} com ${linesOfCode} linhas úteis. No modo demonstração, a conversão automática cobre apenas COBOL. Configure a chave da IA para analisar ${language}.`,
     rules: [],
     modernCode: "",
-    provider: "demo",
+    ...fallback,
   };
 }

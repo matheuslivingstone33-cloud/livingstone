@@ -15,6 +15,7 @@ import {
   getSession,
   passwordProblem,
   requireSession,
+  type Session,
 } from "@/lib/auth";
 import { fail } from "@/lib/errors";
 import { analyzeCredit } from "@/lib/credit";
@@ -62,7 +63,13 @@ export async function logout() {
   redirect("/login");
 }
 
-export async function createCreditAnalysis(form: FormData) {
+// Registra quando a IA falhou ou foi rejeitada (sem o texto devolvido, só o motivo)
+async function auditAi(s: Session, modulo: string, ref: string, status: string, detail?: string) {
+  if (status === "rejeitada" || status === "falhou") await audit(s, `ia.${status}`, `${modulo}, ${ref}: ${detail ?? ""}`.slice(0, 500));
+}
+
+export async function createCreditAnalysis(
+form: FormData) {
   const s = await requireSession(["ADMIN", "ANALISTA"]);
   const back = "/credito";
   const entries = form.getAll("docs").slice(0, 10);
@@ -93,11 +100,14 @@ export async function createCreditAnalysis(form: FormData) {
       extracted: r.extracted,
       flags: r.flags,
       opinion: r.opinion,
+      opinionBase: r.opinionBase,
+      aiStatus: r.aiStatus,
       aiProvider: r.provider,
       fileNames: files.map((f) => f.name),
     },
   });
   await audit(s, "credito.analisar", `${input.applicant}: ${r.decision} (score ${r.score})`);
+  await auditAi(s, "Crédito", input.applicant, r.aiStatus, r.aiDetail);
   revalidatePath("/credito");
   redirect(`/credito/${rec.id}`);
 }
@@ -119,10 +129,12 @@ export async function createLegacyAnalysis(form: FormData) {
       summary: r.summary,
       rules: r.rules,
       modernCode: r.modernCode,
+      aiStatus: r.aiStatus,
       aiProvider: r.provider,
     },
   });
   await audit(s, "legado.analisar", `${f.name} (${r.language} → ${target})`);
+  await auditAi(s, "Legado", f.name, r.aiStatus, r.aiDetail);
   revalidatePath("/legado");
   redirect(`/legado/${rec.id}`);
 }

@@ -10,6 +10,7 @@ import { PageTitle, Stat } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { SubmitButton } from "@/components/SubmitButton";
 import { CopyButton } from "@/components/CopyButton";
+import { AiVersion } from "@/components/AiVersion";
 
 const agStatus: Record<string, string> = {
   PROPOSTO: "bg-amber-50 text-amber-800",
@@ -123,6 +124,7 @@ export default async function DebtDetail({ params }: { params: Promise<{ id: str
                   <div className="min-w-0 space-y-3">
                     <div className="eyebrow">Mensagem para o devedor</div>
                     <pre className="whitespace-pre-wrap rounded-2xl rounded-tl-sm border border-line bg-paper p-4 font-sans text-sm leading-relaxed text-ink-800">{a.message}</pre>
+                    <AiVersion status={a.aiStatus} base={a.messageBase} label="Ver mensagem padrão (sem IA)" />
                     <div className="flex flex-wrap gap-2">
                       <CopyButton text={a.message} label="Copiar mensagem" />
                       <CopyButton text={link} label="Copiar link" />

@@ -4,8 +4,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { validCnpj, validCpf } from "../src/lib/validators";
 import { DEFAULT_CNAB400, parseBankFile, parseExpectedCsv, reconcile, reconcileWith, summarize } from "../src/lib/reconcile";
-import { buildOptions, crc16, decidePayment, nextInstallment, parseDebtsCsv, parseTxid, pixPayload, pixTxid, updateDebt } from "../src/lib/collection";
-import { analyzeClient, groupByClient, parseTransactionsCsv, scoreOf } from "../src/lib/pld";
+import { buildOptions, crc16, decidePayment, fmt, nextInstallment, parseDebtsCsv, parseTxid, pixPayload, pixTxid, proposal, updateDebt } from "../src/lib/collection";
+import { analyzeClient, buildDossier, groupByClient, parseTransactionsCsv, scoreOf } from "../src/lib/pld";
+import { checkCollectionMessage, checkDossier, isLegacyShape } from "../src/lib/ai-guard";
+import { tryClaudeJson, type AiCall } from "../src/lib/ai";
 import { buildIndex, nameKey, parseList } from "../src/lib/lists";
 import { analyzeCredit } from "../src/lib/credit";
 import { analyzeLegacy } from "../src/lib/legacy";
@@ -22,6 +24,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const demo = (f: string) => readFileSync(new URL(`../public/demo/${f}`, import.meta.url));
+
+// Nenhum teste chama a IA real: sem chave, pickAi() não devolve a função de rede; onde a IA entra, ela é falsa (injetada)
+delete process.env.ANTHROPIC_API_KEY;
 
 test("CPF e CNPJ: dígitos verificadores", () => {
   assert.ok(validCpf("123.456.789-09"));
@@ -419,4 +424,150 @@ test("PLD: cada débito justifica a saída uma única vez (B7)", () => {
   assert.equal(regra([tx(9, "C", 10_000), tx(10, "C", 10_000), tx(12, "D", 9_000)]), undefined);
   const a = regra([tx(9, "C", 10_000), tx(10, "C", 10_000), tx(12, "D", 9_000), tx(13, "D", 9_000)]);
   assert.ok(a && a.description.includes("2 crédito(s)") && /R\$\s18\.000,00/.test(a.description));
+});
+
+// ---- Proteção do uso de IA (Etapa 1) ----
+
+const fakeAi = (data: unknown): AiCall => (async () => ({ ok: true, data })) as AiCall;
+const failingAi: AiCall = (async () => ({ ok: false, reason: "http", detail: "HTTP 500: erro simulado" })) as AiCall;
+const NOW = new Date(Date.UTC(2026, 9, 20, 12));
+const DEBT = { debtor: "Carlos Mendes", contract: "CT-2024-0042", product: "Cartão", principal: 5000, dueDate: new Date(Date.UTC(2026, 6, 1)) };
+const LINK = "https://app.exemplo.com.br/acordo/tok123456789abcdef";
+
+test("IA cobrança: conferência aprova a base, aceita NBSP e reprova faltas, URL extra e vazio", async () => {
+  const p = await proposal(DEBT, LINK, DEFAULTS.collection, "Banco Teste", { now: NOW });
+  assert.equal(p.aiStatus, "desligada");
+  assert.equal(p.message, p.messageBase);
+  const best = p.options[0];
+  const parc = p.options[p.options.length - 1];
+  const ref = { values: { cashTotal: best.total, discountPct: best.discountPct, installments: parc.installments, installment: parc.installment }, contract: DEBT.contract, link: LINK };
+  assert.deepEqual(checkCollectionMessage(p.messageBase, ref), { ok: true, missing: [] });
+  assert.ok(checkCollectionMessage(p.messageBase.replace(/ /g, " "), ref).ok);
+  const semValor = checkCollectionMessage(p.messageBase.split(fmt(best.total)).join("um valor"), ref);
+  assert.ok(!semValor.ok && semValor.missing.includes(fmt(best.total)));
+  assert.deepEqual(checkCollectionMessage(p.messageBase.replace(DEBT.contract, "seu contrato"), ref).missing, [DEBT.contract]);
+  assert.deepEqual(checkCollectionMessage(p.messageBase.replace(LINK, "o nosso site"), ref).missing, [LINK]);
+  const evil = checkCollectionMessage(`${p.messageBase}\nOu acesse https://evil.example/pagar`, ref);
+  assert.ok(!evil.ok && evil.missing.some((m) => m.includes("evil.example")));
+  assert.ok(!checkCollectionMessage("   ", ref).ok);
+  assert.ok(!checkCollectionMessage("x".repeat(1001), ref).ok);
+  // Desconto zero não exige percentual; uma opção só não exige parcela
+  assert.ok(checkCollectionMessage(`Contrato ${DEBT.contract}: ${fmt(100)} em ${LINK}`, { values: { cashTotal: 100, discountPct: 0 }, contract: DEBT.contract, link: LINK }).ok);
+});
+
+test("IA cobrança: proposal com IA falsa — usada, rejeitada (sem link) e falha sem lançar", async () => {
+  const base = (await proposal(DEBT, LINK, DEFAULTS.collection, "Banco Teste", { now: NOW })).messageBase;
+  const boa = `Oi, Carlos! ${base}`;
+  const ok = await proposal(DEBT, LINK, DEFAULTS.collection, "Banco Teste", { now: NOW, call: fakeAi({ message: boa }) });
+  assert.equal(ok.aiStatus, "usada");
+  assert.equal(ok.message, boa);
+  assert.equal(ok.messageBase, base);
+  const rej = await proposal(DEBT, LINK, DEFAULTS.collection, "Banco Teste", { now: NOW, call: fakeAi({ message: base.replace(LINK, "") }) });
+  assert.equal(rej.aiStatus, "rejeitada");
+  assert.equal(rej.message, rej.messageBase);
+  assert.ok(rej.missing.includes(LINK));
+  const f = await proposal(DEBT, LINK, DEFAULTS.collection, "Banco Teste", { now: NOW, call: failingAi });
+  assert.equal(f.aiStatus, "falhou");
+  assert.equal(f.message, f.messageBase);
+  assert.ok(f.aiDetail?.startsWith("http"));
+});
+
+function dossierCase() {
+  const txs = parseTransactionsCsv(demo("transacoes_pld.csv").toString());
+  const list = [...groupByClient(txs).values()].find((l) => l[0].clientName.startsWith("Comercial"))!;
+  const alerts = analyzeClient(list, DEFAULTS.pld);
+  const times = list.map((t) => t.date.getTime());
+  const sum = (dir: "C" | "D") => list.filter((t) => t.direction === dir).reduce((a, t) => a + t.amount, 0);
+  return {
+    clientName: list[0].clientName,
+    clientDoc: list[0].clientDoc,
+    declaredIncome: list[0].income,
+    pep: list[0].pep,
+    periodStart: new Date(Math.min(...times)),
+    periodEnd: new Date(Math.max(...times)),
+    totalIn: sum("C"),
+    totalOut: sum("D"),
+    alerts,
+    score: scoreOf(alerts).score,
+  };
+}
+
+test("IA PLD: dossiê confere contra si mesmo e reprova sem valor, data ou norma", async () => {
+  const c = dossierCase();
+  const d = await buildDossier(c, { useAi: false });
+  assert.equal(d.aiStatus, "desligada");
+  assert.equal(d.text, d.base);
+  assert.deepEqual(checkDossier(d.base, d.base), { ok: true, missing: [] });
+  const valor = d.base.match(/R\$\s?[\d.]+,\d{2}/)![0];
+  assert.ok(checkDossier(d.base.split(valor).join("[valor]"), d.base).missing.includes(valor.replace(/\s/, "")));
+  const data = d.base.match(/\d{2}\/\d{2}\/\d{4}/)![0];
+  assert.ok(checkDossier(d.base.split(data).join("[data]"), d.base).missing.includes(data));
+  assert.ok(checkDossier(d.base.split("Lei 9.613/1998").join("lei de lavagem"), d.base).missing.includes("Lei 9.613/1998"));
+  assert.ok(checkDossier(d.base.split(`${c.score}/100`).join("alta"), d.base).missing.includes(`${c.score}/100`));
+});
+
+test("IA PLD e crédito: IA falhando não lança e cai no texto determinístico", async () => {
+  const d = await buildDossier(dossierCase(), { call: failingAi });
+  assert.equal(d.aiStatus, "falhou");
+  assert.equal(d.text, d.base);
+  assert.equal(d.aiText, undefined);
+  const rej = await buildDossier(dossierCase(), { call: fakeAi({ text: "Dossiê resumido sem fatos." }) });
+  assert.equal(rej.aiStatus, "rejeitada");
+  assert.equal(rej.text, rej.base);
+
+  const doc = (n: string) => ({ name: n, mime: "text/plain", data: demo(n) });
+  const input = { applicant: "Maria Aparecida Souza", document: "123.456.789-09", requested: 15000, months: 24, monthlyRate: 0.025 };
+  const files = [doc("holerite_maria.txt"), doc("extrato_maria.csv")];
+  const local = await analyzeCredit(input, files);
+  const r = await analyzeCredit(input, files, undefined, { call: failingAi });
+  assert.equal(r.aiStatus, "falhou");
+  assert.equal(r.provider, "demo-fallback");
+  assert.equal(r.decision, local.decision);
+  assert.equal(r.opinion, r.opinionBase);
+  const longo = await analyzeCredit(input, files, undefined, { call: fakeAi({ rendaMensal: 6181.27, flags: [], parecer: "x".repeat(2001) }) });
+  assert.equal(longo.aiStatus, "rejeitada");
+  assert.equal(longo.opinion, longo.opinionBase);
+});
+
+test("IA legado: forma da resposta conferida e forma inválida cai no determinístico", async () => {
+  assert.ok(isLegacyShape({ summary: "Resumo", modernCode: "", rules: [{ onde: "A", regra: "B" }] }));
+  assert.ok(!isLegacyShape({ summary: "", modernCode: "", rules: [] }));
+  assert.ok(!isLegacyShape({ summary: "ok", modernCode: 1, rules: [] }));
+  assert.ok(!isLegacyShape({ summary: "ok", modernCode: "", rules: [{ onde: "A" }] }));
+  assert.ok(!isLegacyShape({ summary: "ok", modernCode: "", rules: Array.from({ length: 501 }, () => ({ onde: "a", regra: "b" })) }));
+  // Imita o tryClaudeJson real: validate reprova a forma e devolve reason "forma"
+  const shapeAi = (async (_s: string, _p: string, _f?: unknown, o?: { validate?: (x: unknown) => boolean }) =>
+    o?.validate?.({ summary: 42 }) === false ? { ok: false, reason: "forma", detail: "forma" } : { ok: true, data: {} }) as unknown as AiCall;
+  const r = await analyzeLegacy("CALCJUROS.cbl", demo("CALCJUROS.cbl").toString(), "TypeScript", { call: shapeAi });
+  assert.equal(r.aiStatus, "rejeitada");
+  assert.equal(r.rules.length, 7);
+  assert.match(r.modernCode, /export function calcEncargos\(d: Dados\)/);
+});
+
+test("IA: tryClaudeJson nunca lança (500, corpo não JSON, timeout, forma, sem chave)", async () => {
+  const realFetch = globalThis.fetch;
+  try {
+    const semChave = await tryClaudeJson("s", "p");
+    assert.ok(!semChave.ok && semChave.reason === "sem_chave"); // nem chega na rede
+    process.env.ANTHROPIC_API_KEY = "sk-ant-teste-falso";
+    globalThis.fetch = (async () => new Response("erro interno sk-ant-teste-falso", { status: 500 })) as typeof fetch;
+    const e500 = await tryClaudeJson("s", "p");
+    assert.ok(!e500.ok && e500.reason === "http" && !e500.detail.includes("sk-ant-teste-falso"));
+    globalThis.fetch = (async () => new Response("<html>não é json</html>", { status: 200 })) as typeof fetch;
+    const nj = await tryClaudeJson("s", "p");
+    assert.ok(!nj.ok && nj.reason === "json");
+    globalThis.fetch = (async () => new Response(JSON.stringify({ content: [{ type: "text", text: "sem objeto" }] }), { status: 200 })) as typeof fetch;
+    const tj = await tryClaudeJson("s", "p");
+    assert.ok(!tj.ok && tj.reason === "json");
+    globalThis.fetch = ((_u: unknown, init?: RequestInit) =>
+      new Promise((_, rej) => init?.signal?.addEventListener("abort", () => rej(Object.assign(new Error("aborted"), { name: "AbortError" }))))) as typeof fetch;
+    const to = await tryClaudeJson("s", "p", [], { timeoutMs: 30 });
+    assert.ok(!to.ok && to.reason === "timeout");
+    globalThis.fetch = (async () => new Response(JSON.stringify({ content: [{ type: "text", text: '{"x":1}' }] }), { status: 200 })) as typeof fetch;
+    const forma = await tryClaudeJson("s", "p", [], { validate: (x): x is { message: string } => typeof (x as { message?: unknown }).message === "string" });
+    assert.ok(!forma.ok && forma.reason === "forma");
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.ANTHROPIC_API_KEY;
+  }
 });

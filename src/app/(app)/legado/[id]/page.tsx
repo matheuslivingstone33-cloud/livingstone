@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { dt } from "@/lib/format";
 import type { Rule } from "@/lib/legacy";
 import { PageTitle, Stat, CardHeader } from "@/components/ui";
+import { AiVersion } from "@/components/AiVersion";
 
 export default async function LegadoDetalhe({ params }: { params: Promise<{ id: string }> }) {
   const s = await requireSession();
@@ -14,7 +15,7 @@ export default async function LegadoDetalhe({ params }: { params: Promise<{ id: 
 
   return (
     <>
-      <PageTitle back={{ href: "/legado", label: "Código legado" }} title={l.fileName} subtitle={`${dt(l.createdAt)} · IA: ${l.aiProvider === "claude" ? "Claude" : "modo demonstração"}`} />
+      <PageTitle back={{ href: "/legado", label: "Código legado" }} title={l.fileName} subtitle={`${dt(l.createdAt)} · IA: ${l.aiProvider === "claude" ? "Claude" : l.aiProvider === "demo-fallback" ? "conversão local (IA indisponível)" : "modo demonstração"}`} />
       <div className="mb-6 grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 lg:grid-cols-4">
         <Stat label="Linguagem" value={l.language} />
         <Stat label="Destino" value={l.target} tone="blue" />
@@ -25,6 +26,7 @@ export default async function LegadoDetalhe({ params }: { params: Promise<{ id: 
         <span className="absolute inset-y-0 left-0 w-1 bg-gold-400" aria-hidden="true" />
         <CardHeader title="O que o programa faz" />
         <p className="font-display max-w-3xl text-[17px] leading-relaxed text-ink-800">{l.summary}</p>
+        <AiVersion status={l.aiStatus} />
       </section>
       {rules.length > 0 && (
         <section className="card mb-4">

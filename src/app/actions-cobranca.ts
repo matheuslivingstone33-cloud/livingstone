@@ -3,8 +3,8 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { audit, auditRaw, requireSession } from "@/lib/auth";
-import { parseDebtsCsv, proposal, type Option } from "@/lib/collection";
+import { audit, auditRaw, requireSession, type Session } from "@/lib/auth";
+import { parseDebtsCsv, proposal, type AiStatus, type Option } from "@/lib/collection";
 import { getSettings } from "@/lib/settings";
 import { appUrl, applyPayment, newAgreementToken } from "@/lib/payments";
 import { decodeText, readUpload } from "@/lib/upload";
@@ -32,12 +32,16 @@ export async function importDebts(form: FormData) {
   redirect(`/cobranca?importados=${rows.length}`);
 }
 
-async function createProposal(orgId: string, debtId: string) {
+type ProposalOutcome = { created: false } | { created: true; aiStatus: AiStatus };
+
+// Grava a proposta e audita a IA quando ela foi rejeitada ou falhou (só contrato e o que faltou, nunca o texto inteiro)
+async function createProposal(s: Session, debtId: string, useAi = true): Promise<ProposalOutcome> {
+  const orgId = s.orgId;
   const d = await db.debt.findFirstOrThrow({ where: { id: debtId, orgId } });
-  if (d.status === "ACORDO" || d.status === "QUITADO") return false;
+  if (d.status === "ACORDO" || d.status === "QUITADO") return { created: false };
   const cfg = await getSettings(orgId);
   const token = newAgreementToken();
-  const p = await proposal({ ...d, principal: Number(d.principal) }, `${appUrl()}/acordo/${token}`, cfg.collection, cfg.pix.merchant);
+  const p = await proposal({ ...d, principal: Number(d.principal) }, `${appUrl()}/acordo/${token}`, cfg.collection, cfg.pix.merchant, { useAi });
   const rec = p.options[p.recommended];
   await db.$transaction([
     // Uma proposta ativa por contrato: as anteriores em aberto são canceladas
@@ -54,33 +58,63 @@ async function createProposal(orgId: string, debtId: string) {
         installment: rec.installment,
         options: p.options,
         message: p.message,
+        messageBase: p.messageBase,
+        aiStatus: p.aiStatus,
         aiProvider: p.provider,
         expiresAt: new Date(Date.now() + cfg.collection.validityDays * 86_400_000),
       },
     }),
     db.debt.update({ where: { id: debtId }, data: { status: "NEGOCIANDO" } }),
   ]);
-  return true;
+  if (p.aiStatus === "rejeitada")
+    await audit(s, "ia.rejeitada", `Cobrança, contrato ${d.contract}: faltou ${p.missing.join("; ")}`.slice(0, 500));
+  if (p.aiStatus === "falhou") await audit(s, "ia.falhou", `Cobrança, contrato ${d.contract}: ${p.aiDetail ?? ""}`.slice(0, 500));
+  return { created: true, aiStatus: p.aiStatus };
 }
 
 export async function generateProposal(debtId: string) {
   const s = await requireSession(["ADMIN", "ANALISTA"]);
   const d = await db.debt.findFirst({ where: { id: debtId, orgId: s.orgId } });
   if (!d) fail("/cobranca", "Contrato não encontrado.");
-  if (!(await createProposal(s.orgId, debtId))) fail(`/cobranca/${debtId}`, "Este contrato já tem acordo fechado.");
-  await audit(s, "cobranca.proposta", `Contrato ${d.contract}`);
+  const r = await createProposal(s, debtId);
+  if (!r.created) fail(`/cobranca/${debtId}`, "Este contrato já tem acordo fechado.");
+  await audit(s, "cobranca.proposta", `Contrato ${d.contract} (IA: ${r.aiStatus})`);
   revalidatePath("/cobranca");
   redirect(`/cobranca/${debtId}`);
 }
 
+// Após 3 falhas seguidas da IA, o resto do lote sai com a mensagem padrão (sem esperar timeouts em série)
+const BREAKER_LIMIT = 3;
+
 export async function generateAllProposals() {
   const s = await requireSession(["ADMIN", "ANALISTA"]);
   const open = await db.debt.findMany({ where: { orgId: s.orgId, status: "EM_ABERTO" }, select: { id: true } });
-  let n = 0;
-  for (const d of open) if (await createProposal(s.orgId, d.id)) n++;
-  await audit(s, "cobranca.proposta_lote", `${n} propostas geradas`);
+  const c = { geradas: 0, ia: 0, rejeitadas: 0, falhas: 0, erros: 0 };
+  let seguidas = 0;
+  try {
+    for (const d of open) {
+      try {
+        const r = await createProposal(s, d.id, seguidas < BREAKER_LIMIT);
+        if (!r.created) continue;
+        c.geradas++;
+        if (r.aiStatus === "usada") c.ia++;
+        if (r.aiStatus === "rejeitada") c.rejeitadas++;
+        if (r.aiStatus === "falhou") c.falhas++;
+        seguidas = r.aiStatus === "falhou" ? seguidas + 1 : r.aiStatus === "desligada" ? seguidas : 0;
+      } catch {
+        // Um contrato com problema não derruba o lote
+        c.erros++;
+      }
+    }
+  } finally {
+    await audit(
+      s,
+      "cobranca.proposta_lote",
+      `${c.geradas} propostas geradas · IA usada ${c.ia} · rejeitada ${c.rejeitadas} · falhou ${c.falhas} · erros ${c.erros}${seguidas >= BREAKER_LIMIT ? " · IA desligada no lote após falhas seguidas" : ""}`,
+    );
+  }
   revalidatePath("/cobranca");
-  redirect(`/cobranca?propostas=${n}`);
+  redirect(`/cobranca?propostas=${c.geradas}&falhas=${c.falhas + c.erros}`);
 }
 
 export async function registerPayment(agreementId: string, form: FormData) {

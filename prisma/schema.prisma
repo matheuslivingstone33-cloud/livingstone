@@ -133,6 +133,8 @@ model CreditAnalysis {
   extracted   Json
   flags       Json
   opinion     String
+  opinionBase String? // parecer determinístico (o exibido pode ser o da IA)
+  aiStatus    String? // usada | rejeitada | falhou | desligada
   aiProvider  String
   fileNames   String[]
   createdAt   DateTime     @default(now())
@@ -149,6 +151,7 @@ model LegacyAnalysis {
   summary     String
   rules       Json
   modernCode  String
+  aiStatus    String? // usada | rejeitada | falhou | desligada
   aiProvider  String
   createdAt   DateTime     @default(now())
 }
@@ -187,6 +190,8 @@ model Agreement {
   installment   Decimal   @db.Decimal(14, 2)
   options       Json
   message       String
+  messageBase   String? // mensagem determinística (a exibida pode ser a da IA conferida)
+  aiStatus      String? // usada | rejeitada | falhou | desligada
   aiProvider    String
   status        String    @default("PROPOSTO") // PROPOSTO | ACEITO | PAGO | CANCELADO
   acceptedAt    DateTime?
@@ -249,6 +254,9 @@ model PldCase {
   dueAt         DateTime
   dossier       String?
   dossierAi     String?
+  dossierBase   String? // dossiê determinístico
+  dossierAiText String? // versão da IA, só quando aprovada na conferência
+  dossierAiAt   DateTime? // última tentativa com IA (janela de 24h)
   decision      String?
   protocol      String?
   decidedBy     String?

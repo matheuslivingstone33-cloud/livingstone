@@ -1,5 +1,7 @@
 // Cobrança: atualização da dívida, política de acordos, mensagem e Pix.
-import { aiProvider, claudeJson } from "./ai";
+import { pickAi, type AiCall } from "./ai";
+import { checkCollectionMessage } from "./ai-guard";
+import { fmtBRL } from "./format";
 import { DEFAULTS, type Band, type Settings } from "./settings-defaults";
 
 export type CollectionCfg = Settings["collection"];
@@ -64,12 +66,21 @@ export function buildOptions(updated: number, principal: number, days: number, c
   return opts;
 }
 
-const fmt = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+export const fmt = fmtBRL;
 
 export type DebtInfo = { debtor: string; contract: string; product?: string | null; principal: number; dueDate: Date };
 
-export async function proposal(d: DebtInfo, link: string, cfg: CollectionCfg = DEFAULTS.collection, merchant = process.env.PIX_MERCHANT ?? "") {
-  const upd = updateDebt(d.principal, d.dueDate, new Date(), cfg);
+export type { AiStatus } from "./ai-guard";
+import type { AiStatus } from "./ai-guard";
+
+export async function proposal(
+  d: DebtInfo,
+  link: string,
+  cfg: CollectionCfg = DEFAULTS.collection,
+  merchant = process.env.PIX_MERCHANT ?? "",
+  opts: { now?: Date; call?: AiCall; useAi?: boolean } = {},
+) {
+  const upd = updateDebt(d.principal, d.dueDate, opts.now ?? new Date(), cfg);
   const options = buildOptions(upd.total, d.principal, upd.days, cfg);
   // Recomendação: à vista para dívidas menores; parcelado intermediário para as maiores
   const recommended = upd.total <= 3000 || options.length === 1 ? 0 : Math.min(2, options.length - 1);
@@ -77,7 +88,7 @@ export async function proposal(d: DebtInfo, link: string, cfg: CollectionCfg = D
   const best = options[0];
   const parc = options[options.length - 1];
 
-  let message = [
+  const messageBase = [
     `Olá, ${first}! Aqui é da ${merchant ? titleCase(merchant) : "sua instituição"}.`,
     `Temos uma condição especial para regularizar o contrato ${d.contract}${d.product ? ` (${d.product})` : ""}:`,
     `• À vista: ${fmt(best.total)}${best.discountPct > 0 ? ` (${best.discountPct.toFixed(0)}% de desconto)` : ""}`,
@@ -88,19 +99,37 @@ export async function proposal(d: DebtInfo, link: string, cfg: CollectionCfg = D
     .filter(Boolean)
     .join("\n");
 
-  const provider = aiProvider();
-  if (provider === "claude") {
-    const r = await claudeJson<{ message: string }>(
-      "Você redige mensagens de negociação de dívidas para WhatsApp em nome de uma instituição financeira brasileira. Seja cordial, claro e respeitoso; siga o art. 42 do CDC (sem ameaças, constrangimento ou exposição). Mensagem curta, sem emojis em excesso.",
-      `Reescreva a mensagem abaixo de forma mais persuasiva e humana, mantendo exatamente os valores, o contrato e o link.
+  const base = { ...upd, options, recommended, messageBase };
+  const result = (message: string, provider: string, aiStatus: AiStatus, aiDetail?: string, missing: string[] = []) => ({
+    ...base,
+    message,
+    provider,
+    aiStatus,
+    aiDetail,
+    missing,
+  });
+  // A mensagem só vai para a IA quando há chave (ou uma função injetada nos testes)
+  const call = opts.useAi === false ? undefined : pickAi(opts.call);
+  if (!call) return result(messageBase, "demo", "desligada");
+
+  const r = await call<{ message: string }>(
+    "Você redige mensagens de negociação de dívidas para WhatsApp em nome de uma instituição financeira brasileira. Seja cordial, claro e respeitoso; siga o art. 42 do CDC (sem ameaças, constrangimento ou exposição). Mensagem curta, sem emojis em excesso. Não inclua nenhum link além do fornecido.",
+    `Reescreva a mensagem abaixo de forma mais persuasiva e humana, mantendo exatamente os valores, o contrato e o link.
 Dias em atraso: ${upd.days}. Retorne JSON {"message": string}.
 
-${message}`,
-    );
-    message = r.message;
-  }
-
-  return { ...upd, options, recommended, message, provider };
+${messageBase}`,
+    [],
+    { validate: (x): x is { message: string } => !!x && typeof (x as { message?: unknown }).message === "string" },
+  );
+  if (!r.ok) return result(messageBase, "claude", "falhou", `${r.reason}: ${r.detail}`.slice(0, 300));
+  const multi = options.length > 1;
+  const check = checkCollectionMessage(r.data.message, {
+    values: { cashTotal: best.total, discountPct: best.discountPct, installments: multi ? parc.installments : undefined, installment: multi ? parc.installment : undefined },
+    contract: d.contract,
+    link,
+  });
+  if (!check.ok) return result(messageBase, "claude", "rejeitada", `Faltou: ${check.missing.join("; ")}`.slice(0, 300), check.missing);
+  return result(r.data.message.trim(), "claude", "usada");
 }
 
 const titleCase = (s: string) => s.toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase());

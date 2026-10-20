@@ -1,5 +1,7 @@
 // PLD/FT: regras de monitoramento baseadas na Circular BCB 3.978/2020 e na Carta Circular 4.001/2020.
-import { aiProvider, claudeJson } from "./ai";
+import { pickAi, type AiCall } from "./ai";
+import { checkDossier } from "./ai-guard";
+import type { AiStatus } from "./ai-guard";
 import { DEFAULTS, type Settings } from "./settings-defaults";
 import { buildIndex, nameKey, type ListEntry, type ListIndex } from "./lists";
 
@@ -291,7 +293,9 @@ export type CaseInfo = {
   score: number;
 };
 
-export async function buildDossier(c: CaseInfo): Promise<{ text: string; provider: string }> {
+export type DossierResult = { text: string; base: string; aiText?: string; provider: string; aiStatus: AiStatus; aiDetail?: string };
+
+export async function buildDossier(c: CaseInfo, opts: { useAi?: boolean; call?: AiCall } = {}): Promise<DossierResult> {
   const d = (x: Date) => x.toLocaleDateString("pt-BR", { timeZone: "UTC" });
   const base = [
     `DOSSIÊ DE ANÁLISE PLD/FT`,
@@ -324,10 +328,20 @@ export async function buildDossier(c: CaseInfo): Promise<{ text: string; provide
         : `Indícios moderados: recomenda-se diligência adicional (contato com o cliente, documentos de origem dos recursos) antes da decisão.`,
   ].join("\n");
 
-  if (aiProvider() !== "claude") return { text: base, provider: "demo" };
-  const r = await claudeJson<{ text: string }>(
+  const call = opts.useAi === false ? undefined : pickAi(opts.call);
+  if (!call) return { text: base, base, provider: "demo", aiStatus: "desligada" };
+  const r = await call<{ text: string }>(
     "Você é especialista em PLD/FT de instituição financeira brasileira. Redija dossiês objetivos, técnicos e factuais, sem juízo de culpa, adequados para fundamentar comunicação ao COAF. Não invente fatos além dos fornecidos.",
-    `Reescreva o dossiê abaixo em linguagem técnica e clara, mantendo todos os fatos, valores, datas e referências normativas. Inclua na seção 4 a análise de como as ocorrências se relacionam entre si. Retorne JSON {"text": string}.\n\n${base}`,
+    `Reescreva o dossiê abaixo em linguagem técnica e clara, mantendo todos os fatos, valores, datas e referências normativas exatamente como estão escritos. Inclua na seção 4 a análise de como as ocorrências se relacionam entre si. Retorne JSON {"text": string}.\n\n${base}`,
+    [],
+    { validate: (x): x is { text: string } => !!x && typeof (x as { text?: unknown }).text === "string" },
   );
-  return { text: r.text, provider: "claude" };
+  if (!r.ok) return { text: base, base, provider: "claude", aiStatus: "falhou", aiDetail: `${r.reason}: ${r.detail}`.slice(0, 300) };
+  const check = checkDossier(r.data.text, base);
+  if (!check.ok) return { text: base, base, provider: "claude", aiStatus: "rejeitada", aiDetail: `Faltou: ${check.missing.join("; ")}`.slice(0, 300) };
+  return { text: r.data.text, base, aiText: r.data.text, provider: "claude", aiStatus: "usada" };
 }
+
+// IA no dossiê: no máximo uma tentativa por caso a cada 24h (custo e consistência); o ADMIN pode forçar.
+export const DOSSIER_AI_WINDOW_MS = 24 * 3_600_000;
+export const dossierAiAvailableAt = (last: Date | null | undefined) => (last ? new Date(last.getTime() + DOSSIER_AI_WINDOW_MS) : null);
