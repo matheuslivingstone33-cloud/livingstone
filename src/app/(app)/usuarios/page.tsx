@@ -4,6 +4,7 @@ import { dt } from "@/lib/format";
 import { changeUserRole, createUser, revokeUserSessions, setUserActive } from "../../actions";
 import { PageTitle, CardHeader, TableCard } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
+import { PasswordField } from "@/components/PasswordField";
 
 const roleLabel: Record<string, string> = { ADMIN: "Administrador", ANALISTA: "Analista", AUDITOR: "Auditor" };
 
@@ -15,13 +16,13 @@ export default async function UsuariosPage() {
   return (
     <>
       <PageTitle eyebrow="Acesso" title="Usuários" subtitle="Analistas operam os módulos; auditores apenas consultam e veem a trilha de auditoria" />
-      <form action={createUser} className="card mb-8 grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1.3fr_auto_auto]">
+      <form action={createUser} className="card mb-8 grid items-start gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1.3fr_auto_auto]">
         <div className="sm:col-span-2 lg:col-span-5">
           <CardHeader title="Adicionar usuário" />
         </div>
         <input className="input" name="name" placeholder="Nome" required aria-label="Nome" />
         <input className="input" name="email" type="email" placeholder="E-mail" required aria-label="E-mail" />
-        <input className="input" name="password" type="password" placeholder="Senha (mín. 12, letras e números)" minLength={12} required autoComplete="new-password" aria-label="Senha" />
+        <PasswordField name="password" placeholder="Senha" />
         <select className="input" name="role" defaultValue="ANALISTA" aria-label="Perfil">
           <option value="ANALISTA">Analista</option>
           <option value="AUDITOR">Auditor</option>

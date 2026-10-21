@@ -828,3 +828,12 @@ test("API: arquivo no limite cabe no corpo; acima dele dá erro com a mensagem n
   assert.ok(!r.ok);
   assert.ok(r.errors.some((e) => e.mensagem === `Arquivo acima de ${formatBytes(API_LIMITS.arquivoBytes)}.`), JSON.stringify(r.errors));
 });
+
+test("Senha: a lista de regras do navegador concorda com a validação do servidor", async () => {
+  const { passwordProblem, passwordRules } = await import("../src/lib/password");
+  for (const p of ["", "curta1", "somenteletrasaqui", "123456789012", "mat123456789", "aaaaaaaaaaaa", "Senha-forte-2026x", "Livingstone-Mat2303", "qwerty-abc-123"]) {
+    const todas = passwordRules(p).every((r) => r.ok);
+    assert.equal(todas, passwordProblem(p) === null, p);
+  }
+  assert.match(passwordProblem("mat123456789") ?? "", /previsível/);
+});

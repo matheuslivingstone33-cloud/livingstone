@@ -122,12 +122,7 @@ export async function verifyAuditChain(orgId: string, upToSeq?: number): Promise
 }
 
 // Política de senha
-export function passwordProblem(p: string): string | null {
-  if (p.length < 12) return "A senha precisa ter ao menos 12 caracteres.";
-  if (!/[a-z]/i.test(p) || !/\d/.test(p)) return "A senha precisa ter letras e números.";
-  if (/^(.)\1+$/.test(p) || /123456|senha|password|qwerty/i.test(p)) return "Senha muito previsível.";
-  return null;
-}
+export { passwordProblem } from "./password";
 
 export const LOGIN_MAX_FAILS = 5;
 export const LOGIN_LOCK_MINUTES = 15;

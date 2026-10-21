@@ -2,6 +2,7 @@ import { requireSession } from "@/lib/auth";
 import { changeOwnPassword } from "../../actions";
 import { PageTitle, Notice, CardHeader } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
+import { PasswordField } from "@/components/PasswordField";
 
 export default async function ContaPage({ searchParams }: { searchParams: Promise<{ ok?: string }> }) {
   await requireSession();
@@ -18,8 +19,7 @@ export default async function ContaPage({ searchParams }: { searchParams: Promis
         </div>
         <div>
           <label className="label" htmlFor="next">Nova senha</label>
-          <input className="input" id="next" name="next" type="password" required minLength={12} autoComplete="new-password" />
-          <p className="hint">Mínimo de 12 caracteres, com letras e números.</p>
+          <PasswordField id="next" name="next" />
         </div>
         <div>
           <label className="label" htmlFor="confirm">Confirmar nova senha</label>
