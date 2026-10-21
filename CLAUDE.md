@@ -9,6 +9,8 @@
 
 ## Antes de mudar código
 - Mudanças que envolvam vários arquivos, fluxos ou decisões técnicas passam antes pelo agente `arquiteto` (`.claude/agents/arquiteto.md`). Não alterar arquivos antes de receber o plano dele.
+- Quando a tarefa for entender o que já está implementado, como usar melhor um módulo ou encontrar oportunidades de melhoria no produto/código, use o agente `analista-modulos` (`.claude/agents/analista-modulos.md`) para produzir uma análise baseada em evidências antes de propor mudanças.
+- Quando a tarefa exigir avaliar regras de negócio, casos de borda, cobertura de testes ou validar uma mudança em módulo, use o agente `validador-modulos` (`.claude/agents/validador-modulos.md`). Ele revisa e valida sem editar o código.
 
 ## Como cada módulo é organizado
 1. **Lógica pura** em `src/lib/<modulo>.ts`: sem acesso ao banco nem ao Next. Recebe dados e devolve resultado.
