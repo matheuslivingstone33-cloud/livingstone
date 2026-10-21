@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { audit, requireSession } from "@/lib/auth";
+import { fmtData } from "@/lib/tz";
 import { BankFileError, parseBankFile, parseExpectedCsv, type ReconcileOptions } from "@/lib/reconcile";
 import { getSettings } from "@/lib/settings";
 import { assertUploadTotal, decodeText, readUpload } from "@/lib/upload";
@@ -46,7 +47,7 @@ export async function createReconciliation(form: FormData) {
   const expected = parseExpectedCsv(decodeText(exp.data));
   if (!expected.length) fail(back, "Nenhum título válido na lista de esperados. Confira as colunas referencia e valor.");
   const { rec, itemCount } = await persistReconciliation(s.orgId, {
-    name: String(form.get("name") || `Conciliação ${new Date().toLocaleDateString("pt-BR")}`),
+    name: String(form.get("name") || `Conciliação ${fmtData(new Date())}`),
     bankFileName: bank.name,
     bankFormat: format,
     expectedFileName: exp.name,

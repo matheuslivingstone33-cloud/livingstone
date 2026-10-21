@@ -86,7 +86,7 @@ export default async function PldCasePage({ params }: { params: Promise<{ id: st
                   const hit = evidenceKeys.has(`${t.date.toISOString().slice(0, 10)}|${Number(t.amount)}|${t.type}`);
                   return (
                     <tr key={t.id} className={hit ? "bg-amber-50 hover:bg-amber-100/70" : ""}>
-                      <td className="whitespace-nowrap">{dt(t.date)}</td>
+                      <td className="whitespace-nowrap">{day(t.date)}</td>
                       <td>{TYPE_LABEL[t.type] ?? t.type}</td>
                       <td className={`num whitespace-nowrap font-medium ${t.direction === "C" ? "text-emerald-700" : "text-red-700"}`}>
                         {t.direction === "C" ? "+" : "−"} {brl(t.amount)}

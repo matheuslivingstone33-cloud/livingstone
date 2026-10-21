@@ -35,7 +35,7 @@ export default async function CreditoDetalhe({ params }: { params: Promise<{ id:
       <PageTitle
         back={{ href: "/credito", label: "Análises de crédito" }}
         title={c.applicant}
-        subtitle={`${c.document} · ${dt(c.createdAt)} · IA: ${c.aiProvider === "claude" ? "Claude" : c.aiProvider === "demo-fallback" ? "leitura local (IA indisponível)" : "modo demonstração"}`}
+        subtitle={`${c.document} · ${dt(c.createdAt)} · IA: ${c.aiProvider === "claude" ? "Claude" : c.aiProvider === "demo-fallback" ? "leitura local (IA indisponível)" : "regras locais (sem IA)"}`}
         action={<StatusBadge status={c.decision} />}
       />
       <div className="mb-6 grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 lg:grid-cols-4">

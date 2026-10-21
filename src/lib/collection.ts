@@ -3,12 +3,13 @@ import { pickAi, type AiCall } from "./ai";
 import { checkCollectionMessage } from "./ai-guard";
 import { fmtBRL } from "./format";
 import { DEFAULTS, type Band, type Settings } from "./settings-defaults";
+import { diasEntreSP } from "./tz";
 
 export type CollectionCfg = Settings["collection"];
 export type PixCfg = Settings["pix"];
 
-export const daysBetween = (from: Date, to = new Date()) =>
-  Math.max(0, Math.floor((Date.UTC(to.getFullYear(), to.getMonth(), to.getDate()) - from.getTime()) / 86_400_000));
+// Vencimento é data de calendário (meia-noite UTC); "hoje" é o dia corrente em Brasília
+export const daysBetween = (from: Date, to = new Date()) => diasEntreSP(from, to);
 
 export const debtStatus: Record<string, [string, string]> = {
   EM_ABERTO: ["Em aberto", "bg-red-100 text-red-800"],

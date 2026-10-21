@@ -23,7 +23,7 @@ export function detectLanguage(name: string, code: string): string {
 const camel = (s: string) =>
   s.toLowerCase().replace(/[-_](\w)/g, (_, c: string) => c.toUpperCase()).replace(/[^a-zA-Z0-9]/g, "");
 
-// Tradução simplificada de COBOL para TypeScript (modo demonstração)
+// Tradução simplificada de COBOL para TypeScript (conversão local, sem IA)
 function cobolToTs(code: string): { rules: Rule[]; ts: string; fields: string[]; paragraphs: string[] } {
   const verbs = /^(IF|ELSE|END-IF|COMPUTE|MOVE|PERFORM|DISPLAY|STOP|GOBACK|ADD|SUBTRACT|MULTIPLY|DIVIDE|READ|WRITE|OPEN|CLOSE|CALL|EVALUATE|WHEN|END-|0\d|[1-7]\d\s|\*|[A-Z0-9-]+\.$|[A-Z]+ (DIVISION|SECTION))/i;
   const lines: string[] = [];
@@ -149,9 +149,9 @@ ${code}`,
     return {
       language,
       linesOfCode,
-      summary: `Programa ${programId} em COBOL com ${linesOfCode} linhas úteis, ${fields.length} campo(s) de dados e ${paragraphs.length} rotina(s) (${paragraphs.join(", ") || "nenhuma"}). Foram identificadas ${rules.length} regra(s) de negócio (condições e cálculos). Modo demonstração: tradução estrutural automática para TypeScript; com a IA ativa, o resumo e a conversão ficam completos e idiomáticos.`,
+      summary: `Programa ${programId} em COBOL com ${linesOfCode} linhas úteis, ${fields.length} campo(s) de dados e ${paragraphs.length} rotina(s) (${paragraphs.join(", ") || "nenhuma"}). Foram identificadas ${rules.length} regra(s) de negócio (condições e cálculos). Conversão local (sem IA): tradução estrutural automática para TypeScript; com a IA ativa, o resumo e a conversão ficam completos e idiomáticos.`,
       rules,
-      modernCode: target === "TypeScript" ? ts : `// Modo demonstração converte apenas para TypeScript.\n\n${ts}`,
+      modernCode: target === "TypeScript" ? ts : `// Conversão local (sem IA) converte apenas para TypeScript.\n\n${ts}`,
       ...fallback,
     };
   }
@@ -159,7 +159,7 @@ ${code}`,
   return {
     language,
     linesOfCode,
-    summary: `Arquivo em ${language} com ${linesOfCode} linhas úteis. No modo demonstração, a conversão automática cobre apenas COBOL. Configure a chave da IA para analisar ${language}.`,
+    summary: `Arquivo em ${language} com ${linesOfCode} linhas úteis. Na conversão local (sem IA), a conversão automática cobre apenas COBOL. Configure a chave da IA para analisar ${language}.`,
     rules: [],
     modernCode: "",
     ...fallback,

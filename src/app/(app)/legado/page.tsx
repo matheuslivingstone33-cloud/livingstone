@@ -3,7 +3,7 @@ import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { dt } from "@/lib/format";
 import { createLegacyAnalysis } from "../../actions";
-import { PageTitle, Empty, DemoFiles, CardHeader, TableCard } from "@/components/ui";
+import { PageTitle, Empty, CardHeader, TableCard } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 import { FileSizeGuard } from "@/components/FileSizeGuard";
 
@@ -37,8 +37,7 @@ export default async function LegadoPage() {
               <option>Python</option>
             </select>
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4 md:col-span-3">
-            <DemoFiles files={[{ href: "/demo/CALCJUROS.cbl", label: "CALCJUROS.cbl (cálculo de juros e multa)" }]} />
+          <div className="flex flex-wrap items-center justify-end gap-3 border-t border-line pt-4 md:col-span-3">
             <SubmitButton pending="Analisando código...">Analisar</SubmitButton>
           </div>
         </form>
@@ -64,7 +63,7 @@ export default async function LegadoPage() {
             </tbody>
           </table>
         ) : (
-          <Empty>Nenhum programa analisado. Use o arquivo COBOL de exemplo para testar.</Empty>
+          <Empty>Nenhum programa analisado ainda. Envie um arquivo de código legado para começar.</Empty>
         )}
       </TableCard>
     </>

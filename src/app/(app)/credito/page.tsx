@@ -3,7 +3,7 @@ import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, dt } from "@/lib/format";
 import { createCreditAnalysis } from "../../actions";
-import { PageTitle, Empty, StatusBadge, DemoFiles, CardHeader, TableCard } from "@/components/ui";
+import { PageTitle, Empty, StatusBadge, CardHeader, TableCard } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 import { FileSizeGuard } from "@/components/FileSizeGuard";
 
@@ -48,15 +48,7 @@ export default async function CreditoPage() {
             <p className="hint mt-1">Até 4 MB por envio.</p>
             <FileSizeGuard inputIds={["docs"]} />
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4 md:col-span-3">
-            <DemoFiles
-              files={[
-                { href: "/demo/holerite_maria.txt", label: "holerite (bom pagador)" },
-                { href: "/demo/extrato_maria.csv", label: "extrato (bom pagador)" },
-                { href: "/demo/holerite_joao.txt", label: "holerite (alto risco)" },
-                { href: "/demo/extrato_joao.csv", label: "extrato (alto risco)" },
-              ]}
-            />
+          <div className="flex flex-wrap items-center justify-end gap-3 border-t border-line pt-4 md:col-span-3">
             <SubmitButton pending="Analisando documentos...">Analisar</SubmitButton>
           </div>
         </form>
@@ -75,14 +67,14 @@ export default async function CreditoPage() {
                   <td className="num">{brl(c.requested)}</td>
                   <td className="num font-semibold">{c.score}</td>
                   <td><StatusBadge status={c.decision} /></td>
-                  <td className="text-ink-500">{c.aiProvider === "claude" ? "Claude" : "Demonstração"}</td>
+                  <td className="text-ink-500">{c.aiProvider === "claude" ? "Claude" : "Regras locais"}</td>
                   <td className="whitespace-nowrap text-ink-500">{dt(c.createdAt)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         ) : (
-          <Empty>Nenhuma análise. Use os documentos de exemplo para testar.</Empty>
+          <Empty>Nenhuma análise ainda. Preencha a proposta e anexe os documentos do solicitante para começar.</Empty>
         )}
       </TableCard>
     </>

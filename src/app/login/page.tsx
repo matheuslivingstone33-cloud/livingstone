@@ -13,7 +13,6 @@ const points = [
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ erro?: string }> }) {
   const { erro } = await searchParams;
-  const showDemo = process.env.NODE_ENV !== "production";
   return (
     <main className="grid min-h-screen bg-paper lg:grid-cols-[1.05fr_1fr]">
       <section className="on-ink surface-ink hidden flex-col justify-between p-12 lg:flex xl:p-16">
@@ -79,14 +78,6 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
               <Icon name="lock" size={16} />
               Entrar
             </button>
-            {showDemo && (
-              <p className="notice notice-info mb-0 text-xs">
-                <Icon name="info" size={16} className="shrink-0" />
-                <span>
-                  Ambiente de demonstração: <b>admin@demo.local</b> (senha definida em <code className="font-mono">prisma/seed.ts</code>).
-                </span>
-              </p>
-            )}
             <p className="pt-2 text-center text-sm">
               <Link href="/" className="inline-flex items-center gap-1.5 rounded text-ink-500 hover:text-brand-700">
                 <Icon name="back" size={14} />

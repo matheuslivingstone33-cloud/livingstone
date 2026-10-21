@@ -1,6 +1,6 @@
 import QRCode from "qrcode";
 import { db } from "@/lib/db";
-import { brl, day } from "@/lib/format";
+import { brl, day, dayInst } from "@/lib/format";
 import { nextInstallment, pixPayload, pixTxid, type Option } from "@/lib/collection";
 import { getSettings } from "@/lib/settings";
 import { acceptAgreement } from "../../actions-cobranca";
@@ -92,7 +92,7 @@ export default async function AcordoPage({ params }: { params: Promise<{ token: 
             ))}
           </fieldset>
           <SubmitButton pending="Confirmando...">Aceitar acordo</SubmitButton>
-          <p className="text-center text-sm text-ink-500">Proposta válida até {day(a.expiresAt)}.</p>
+          <p className="text-center text-sm text-ink-500">Proposta válida até {dayInst(a.expiresAt)}.</p>
         </form>
       </Shell>
     );
@@ -100,7 +100,7 @@ export default async function AcordoPage({ params }: { params: Promise<{ token: 
   if (expired)
     return (
       <Shell org={d.org.name}>
-        <div className="card text-center text-base leading-relaxed text-ink-700">Esta proposta expirou em {day(a.expiresAt)}. Fale com a instituição para receber uma nova.</div>
+        <div className="card text-center text-base leading-relaxed text-ink-700">Esta proposta expirou em {dayInst(a.expiresAt)}. Fale com a instituição para receber uma nova.</div>
       </Shell>
     );
 

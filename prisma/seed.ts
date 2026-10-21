@@ -18,8 +18,9 @@ async function main() {
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
   for (const u of users)
     await db.user.upsert({ where: { email: u.email }, update: {}, create: { ...u, passwordHash, orgId: org.id } });
-  // Lista interna fictícia usada pelos dados de demonstração de PLD
-  if (!(await db.restrictedEntry.count({ where: { orgId: org.id, source: "INTERNA" } })))
+  // Lista interna FICTÍCIA (empresa inventada "citada em operação policial"), só para ambiente de demonstração.
+  // Só é criada com SEED_DEMO_LIST=1; por padrão não, para nunca marcar como restrita uma empresa real em produção.
+  if (process.env.SEED_DEMO_LIST === "1" && !(await db.restrictedEntry.count({ where: { orgId: org.id, source: "INTERNA" } })))
     await db.restrictedEntry.create({
       data: {
         orgId: org.id,
@@ -27,7 +28,7 @@ async function main() {
         name: "Construtora Horizonte Azul",
         nameKey: "CONSTRUTORA HORIZONTE AZUL",
         document: "99888777000166",
-        reason: "Empresa citada em operação policial (lista interna de demonstração)",
+        reason: "Empresa citada em operação policial (lista interna fictícia)",
       },
     });
   console.log(

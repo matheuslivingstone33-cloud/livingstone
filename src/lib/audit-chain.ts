@@ -2,6 +2,7 @@
 // Puro (só node:crypto): sem banco nem Next. Datas sempre por parâmetro.
 import { createHash, createHmac, hkdfSync } from "node:crypto";
 import { safeEqualHex } from "./api-keys";
+import { diaSP, inicioDoDiaSP } from "./tz";
 
 export type AuditRow = {
   id: string;
@@ -131,14 +132,13 @@ const get = (p: Params, k: string) => {
   return (Array.isArray(v) ? v[0] : v ?? "").trim();
 };
 
-// America/Sao_Paulo não tem horário de verão desde 2019: offset fixo -03:00
+// Meia-noite em Brasília (ver inicioDoDiaSP em tz.ts)
 const dayStart = (iso: string): Date | null => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
-  const d = new Date(`${iso}T00:00:00-03:00`);
+  const d = inicioDoDiaSP(iso);
   if (Number.isNaN(d.getTime())) return null;
   // rejeita datas que o JS "corrige" (ex.: 2026-02-31)
-  const back = new Date(d.getTime() - 3 * 3600_000).toISOString().slice(0, 10);
-  return back === iso ? d : null;
+  return diaSP(d) === iso ? d : null;
 };
 
 export type AuditFilters = {

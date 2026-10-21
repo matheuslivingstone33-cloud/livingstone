@@ -1,5 +1,5 @@
 // Snapshot curado para o tour público de Crédito e Legado.
-// Valores copiados do que analyzeCredit e analyzeLegacy produzem em modo demonstração (sem IA)
+// Valores copiados do que analyzeCredit e analyzeLegacy produzem com regras locais (sem IA)
 // para os arquivos de public/demo/ (veja os testes em tests/modulos.test.mts). Não chama IA.
 
 export const TOUR_CREDIT = [

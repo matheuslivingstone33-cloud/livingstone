@@ -15,7 +15,7 @@ export default async function LegadoDetalhe({ params }: { params: Promise<{ id: 
 
   return (
     <>
-      <PageTitle back={{ href: "/legado", label: "Código legado" }} title={l.fileName} subtitle={`${dt(l.createdAt)} · IA: ${l.aiProvider === "claude" ? "Claude" : l.aiProvider === "demo-fallback" ? "conversão local (IA indisponível)" : "modo demonstração"}`} />
+      <PageTitle back={{ href: "/legado", label: "Código legado" }} title={l.fileName} subtitle={`${dt(l.createdAt)} · IA: ${l.aiProvider === "claude" ? "Claude" : l.aiProvider === "demo-fallback" ? "conversão local (IA indisponível)" : "regras locais (sem IA)"}`} />
       <div className="mb-6 grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 lg:grid-cols-4">
         <Stat label="Linguagem" value={l.language} />
         <Stat label="Destino" value={l.target} tone="blue" />

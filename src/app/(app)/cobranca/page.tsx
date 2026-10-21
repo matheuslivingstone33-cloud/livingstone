@@ -5,7 +5,7 @@ import { brl, day } from "@/lib/format";
 import { bandOf, debtStatus, updateDebt } from "@/lib/collection";
 import { getSettings } from "@/lib/settings";
 import { importDebts, generateAllProposals, generateProposal } from "../../actions-cobranca";
-import { PageTitle, Stat, Empty, DemoFiles, Notice, CardHeader, TableCard, FilterBar } from "@/components/ui";
+import { PageTitle, Stat, Empty, Notice, CardHeader, TableCard, FilterBar } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 import { FileSizeGuard } from "@/components/FileSizeGuard";
 
@@ -100,7 +100,6 @@ export default async function CobrancaPage({
             <p className="hint mt-1">Até 4 MB por envio.</p>
             <FileSizeGuard inputIds={["debts-file"]} />
             <p className="hint mt-0">CSV com: contrato; devedor; cpf_cnpj; telefone; email; produto; valor; vencimento</p>
-            <DemoFiles files={[{ href: "/demo/carteira_inadimplentes.csv", label: "carteira de exemplo" }]} />
             <SubmitButton pending="Importando...">Importar</SubmitButton>
           </form>
         )}
@@ -142,7 +141,7 @@ export default async function CobrancaPage({
             </tbody>
           </table>
         ) : (
-          <Empty>Nenhum contrato. Importe a carteira de exemplo para testar.</Empty>
+          <Empty>Nenhum contrato ainda. Importe a carteira de inadimplentes para começar.</Empty>
         )}
       </TableCard>
     </>

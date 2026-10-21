@@ -32,7 +32,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     .slice(0, 2)
     .map((p) => p[0])
     .join("");
-  const aiTitle = demo ? "Configure ANTHROPIC_API_KEY no .env para ativar a IA real" : undefined;
+  const aiTitle = demo ? "IA não configurada; análises usam regras locais" : undefined;
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
@@ -54,7 +54,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <div className="relative hidden border-t border-white/10 px-6 py-4 md:block">
           <span className={`inline-flex items-center gap-2 text-xs ${demo ? "text-gold-300" : "text-brand-200"}`} title={aiTitle}>
             <span className={`h-1.5 w-1.5 rounded-full ${demo ? "bg-gold-400" : "bg-brand-400"}`} aria-hidden="true" />
-            {demo ? "IA: modo demonstração" : "IA: Claude ativo"}
+            {demo ? "IA: regras locais" : "IA: Claude ativo"}
           </span>
         </div>
       </aside>
@@ -62,7 +62,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <header className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-line bg-paper/85 px-4 py-2.5 backdrop-blur-md md:justify-end md:px-8">
           <span className={`badge md:hidden ${demo ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-800"}`} title={aiTitle}>
             <span className={`h-1.5 w-1.5 rounded-full ${demo ? "bg-amber-500" : "bg-emerald-500"}`} aria-hidden="true" />
-            {demo ? "IA: modo demonstração" : "IA: Claude ativo"}
+            {demo ? "IA: regras locais" : "IA: Claude ativo"}
           </span>
           <div className="flex items-center gap-2 text-sm md:gap-3">
             <Link href="/conta" className="flex items-center gap-2.5 rounded-xl py-1 pl-1 pr-2 text-ink-600 transition-colors hover:bg-white hover:text-ink-900">

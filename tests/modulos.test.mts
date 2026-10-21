@@ -837,3 +837,19 @@ test("Senha: a lista de regras do navegador concorda com a validação do servid
   }
   assert.match(passwordProblem("mat123456789") ?? "", /previsível/);
 });
+
+test("fuso: instantes em America/Sao_Paulo e datas de calendário em UTC", async () => {
+  const { fmtDataHora, diaSP, diasEntreSP, inicioDoDiaSP, fmtDiaCalendario } = await import("../src/lib/tz");
+  const a = fmtDataHora(new Date("2026-10-15T23:30:00Z"));
+  assert.ok(a.includes("15/10/2026") && a.includes("20:30"), a);
+  const b = fmtDataHora(new Date("2026-10-16T02:00:00Z"));
+  assert.ok(b.includes("15/10/2026") && b.includes("23:00"), b);
+  assert.equal(diaSP(new Date("2026-10-16T02:59:00Z")), "2026-10-15");
+  assert.equal(diaSP(new Date("2026-10-16T03:00:00Z")), "2026-10-16");
+  const venc = new Date("2026-10-15T00:00:00Z");
+  assert.equal(diasEntreSP(venc, new Date("2026-10-16T02:00:00Z")), 0);
+  assert.equal(diasEntreSP(venc, new Date("2026-10-16T03:30:00Z")), 1);
+  assert.equal(diasEntreSP(new Date("2026-12-01T00:00:00Z"), new Date("2026-10-16T03:30:00Z")), 0);
+  assert.equal(inicioDoDiaSP("2026-10-15").toISOString(), "2026-10-15T03:00:00.000Z");
+  assert.equal(fmtDiaCalendario(new Date("2026-10-15T00:00:00Z")), "15/10/2026");
+});

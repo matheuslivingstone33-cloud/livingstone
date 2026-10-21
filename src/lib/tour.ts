@@ -4,11 +4,13 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parseBankFile, parseExpectedCsv, reconcileWith, summarize } from "./reconcile";
 import { bandOf, buildOptions, parseDebtsCsv, updateDebt } from "./collection";
-import { analyzeClient, groupByClient, parseTransactionsCsv, scoreOf } from "./pld";
+import { DEMO_LIST, analyzeClient, groupByClient, parseTransactionsCsv, scoreOf } from "./pld";
+import { buildIndex } from "./lists";
 import { DEFAULTS } from "./settings-defaults";
 
-/** Data de referência fixa: os dias de atraso e encargos não mudam conforme o dia em que a página é aberta. */
-export const TOUR_REFERENCE_DATE = new Date(Date.UTC(2026, 9, 15));
+/** Data de referência fixa: os dias de atraso e encargos não mudam conforme o dia em que a página é aberta.
+ *  Meio-dia em Brasília (15:00 UTC): é 15/10/2026 tanto em SP (dias de atraso) quanto em UTC (exibição com day). */
+export const TOUR_REFERENCE_DATE = new Date(Date.UTC(2026, 9, 15, 15));
 
 /** Opções de conciliação mostradas no tour (tolerância de 2 centavos e casamento por valor e data). */
 export const TOUR_RECONCILE = { toleranciaCentavos: 2, casarPorValorData: true, toleranciaDias: 3 };
@@ -53,7 +55,7 @@ export function buildTourData(demoDir = path.join(process.cwd(), "public", "demo
   const txs = parseTransactionsCsv(readDemo("transacoes_pld.csv", demoDir));
   const clients = [...groupByClient(txs).values()]
     .map((list) => {
-      const alerts = analyzeClient(list, DEFAULTS.pld);
+      const alerts = analyzeClient(list, DEFAULTS.pld, buildIndex(DEMO_LIST));
       return { clientName: list[0].clientName, txCount: list.length, alerts, ...scoreOf(alerts) };
     })
     .sort((a, b) => b.score - a.score || a.clientName.localeCompare(b.clientName, "pt-BR"));

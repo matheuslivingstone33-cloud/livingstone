@@ -1,4 +1,4 @@
-// Tour público: mostra os módulos funcionando sobre os arquivos de demonstração, sem login e sem gravar nada.
+// Tour público: mostra os módulos funcionando sobre arquivos fictícios (public/demo), sem login e sem gravar nada.
 // Observação: não usa `dynamic = "force-static"` porque o idioma vem de ?lang=en (searchParams), como na landing;
 // com force-static o searchParams chegaria vazio e a versão em inglês nunca apareceria.
 import type { Metadata } from "next";
@@ -13,7 +13,7 @@ import { TOUR_CREDIT, TOUR_LEGACY } from "@/lib/tour-static";
 
 export const metadata: Metadata = {
   title: `Tour — ${BRAND.name}`,
-  description: "Veja a conciliação, a cobrança, o PLD, o crédito e o legado funcionando com dados de exemplo.",
+  description: "Veja a conciliação, a cobrança, o PLD, o crédito e o legado funcionando com números ilustrativos.",
 };
 
 type Lang = "pt" | "en";
@@ -22,8 +22,8 @@ const T = {
   pt: {
     eyebrow: "Tour do produto",
     h1: "Veja a Livingstone trabalhando",
-    sub: "Cada número abaixo foi calculado pelas mesmas regras do sistema, lendo os arquivos de demonstração. Nada aqui é gravado.",
-    notice: "Dados de exemplo, fictícios, gerados a partir dos arquivos de demonstração.",
+    sub: "Cada número abaixo foi calculado pelas mesmas regras do sistema, lendo arquivos fictícios. Nada aqui é gravado.",
+    notice: "Números ilustrativos, calculados a partir de arquivos fictícios.",
     nav: { conciliacao: "Conciliação", cobranca: "Cobrança", pld: "PLD", credito: "Crédito", legado: "Legado" },
     back: "Voltar",
     login: "Entrar",
@@ -72,7 +72,7 @@ const T = {
       flags: "Pontos de atenção",
       noFlags: "Nenhum ponto de atenção identificado.",
       files: "Arquivos",
-      snapshot: "Resultado do modo demonstração (sem IA) para estes arquivos.",
+      snapshot: "Resultado das regras locais (sem IA) para estes arquivos.",
     },
     leg: {
       title: "Modernização de legado",
@@ -82,7 +82,7 @@ const T = {
       where: "Onde",
       rule: "Regra",
       code: "Trecho do código gerado",
-      snapshot: "Resultado do modo demonstração (sem IA). Com a IA ativa, a conversão fica mais completa.",
+      snapshot: "Resultado das regras locais (sem IA). Com a IA ativa, a conversão fica mais completa.",
     },
     trail: "Cada ação no sistema real entra numa trilha de auditoria encadeada por hash, que evidencia alterações.",
     ctaTitle: "Quer ver com os seus arquivos?",
@@ -91,8 +91,8 @@ const T = {
   en: {
     eyebrow: "Product tour",
     h1: "See Livingstone at work",
-    sub: "Every number below was computed by the same rules the system uses, reading the demo files. Nothing here is saved.",
-    notice: "Sample, fictitious data generated from the demo files.",
+    sub: "Every number below was computed by the same rules the system uses, reading fictitious files. Nothing here is saved.",
+    notice: "Illustrative figures computed from fictitious files.",
     nav: { conciliacao: "Reconciliation", cobranca: "Collections", pld: "AML", credito: "Credit", legado: "Legacy" },
     back: "Back",
     login: "Sign in",
@@ -141,7 +141,7 @@ const T = {
       flags: "Points of attention",
       noFlags: "No points of attention found.",
       files: "Files",
-      snapshot: "Demo-mode result (no AI) for these files.",
+      snapshot: "Local-rules result (no AI) for these files.",
     },
     leg: {
       title: "Legacy modernization",
@@ -151,7 +151,7 @@ const T = {
       where: "Where",
       rule: "Rule",
       code: "Generated code excerpt",
-      snapshot: "Demo-mode result (no AI). With AI enabled, the conversion is more complete.",
+      snapshot: "Local-rules result (no AI). With AI enabled, the conversion is more complete.",
     },
     trail: "Every action in the real system goes into a hash-chained audit trail that makes changes evident.",
     ctaTitle: "Want to see it with your files?",

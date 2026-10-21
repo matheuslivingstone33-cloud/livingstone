@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { brl, day, dt } from "@/lib/format";
+import { brl, day, dayInst, dt } from "@/lib/format";
 import { importPld } from "../../actions-pld";
-import { PageTitle, Stat, Empty, DemoFiles, Notice, StatusBadge, CardHeader, TableCard, FilterBar } from "@/components/ui";
+import { PageTitle, Stat, Empty, Notice, StatusBadge, CardHeader, TableCard, FilterBar } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 import { FileSizeGuard } from "@/components/FileSizeGuard";
 import { PLD_STATUS, RiskBadge, DueBadge } from "./badges";
@@ -63,7 +63,6 @@ export default async function PldPage({ searchParams }: { searchParams: Promise<
             <p className="hint mt-1">Até 4 MB por envio.</p>
             <FileSizeGuard inputIds={["pld-file"]} />
             <p className="hint mt-0">CSV: data; cliente; cpf_cnpj; renda_mensal; pep; tipo; valor; contraparte; doc_contraparte</p>
-            <DemoFiles files={[{ href: "/demo/transacoes_pld.csv", label: "transações de exemplo (60 dias)" }]} />
             <SubmitButton pending="Analisando...">Analisar</SubmitButton>
           </form>
         )}
@@ -124,14 +123,14 @@ export default async function PldPage({ searchParams }: { searchParams: Promise<
                     <td className="num text-emerald-700">{brl(c.totalIn)}</td>
                     <td className="num text-red-700">{brl(c.totalOut)}</td>
                     <td><span className={`badge ${PLD_STATUS[c.status][1]}`}>{PLD_STATUS[c.status][0]}</span></td>
-                    <td>{c.status === "EM_ANALISE" ? <DueBadge dueAt={c.dueAt} /> : <span className="text-xs text-ink-500">{day(c.decidedAt)}</span>}</td>
+                    <td>{c.status === "EM_ANALISE" ? <DueBadge dueAt={c.dueAt} /> : <span className="text-xs text-ink-500">{dayInst(c.decidedAt)}</span>}</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
         ) : (
-          <Empty>Nenhum caso nesta situação. Analise o arquivo de transações de exemplo para testar.</Empty>
+          <Empty>Nenhum caso nesta situação.</Empty>
         )}
       </TableCard>
     </>

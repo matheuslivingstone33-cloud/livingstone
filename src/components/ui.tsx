@@ -184,25 +184,6 @@ export function Empty({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function DemoFiles({ files }: { files: { href: string; label: string }[] }) {
-  return (
-    <p className="flex flex-wrap items-center gap-x-1 gap-y-1 text-xs text-ink-500">
-      <span className="mr-1 inline-flex items-center gap-1 font-medium text-ink-600">
-        <Icon name="download" size={14} />
-        Arquivos de exemplo:
-      </span>
-      {files.map((f, i) => (
-        <span key={f.href}>
-          {i > 0 && <span aria-hidden="true">· </span>}
-          <a className="rounded text-brand-700 underline decoration-brand-300 underline-offset-2 hover:decoration-brand-700" href={f.href} download>
-            {f.label}
-          </a>
-        </span>
-      ))}
-    </p>
-  );
-}
-
 /** Mensagem de confirmação após uma ação (substitui os "p" verdes soltos). */
 export function Notice({ tone = "success", children }: { tone?: "success" | "warning" | "danger" | "info"; children: React.ReactNode }) {
   const cls = { success: "notice-success", warning: "notice-warning", danger: "notice-danger", info: "notice-info" }[tone];

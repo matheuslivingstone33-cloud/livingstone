@@ -3,7 +3,7 @@ import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, dt } from "@/lib/format";
 import { createReconciliation } from "../../actions-conciliacao";
-import { PageTitle, Empty, DemoFiles, CardHeader } from "@/components/ui";
+import { PageTitle, Empty, CardHeader } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 import { FileSizeGuard } from "@/components/FileSizeGuard";
 
@@ -58,14 +58,7 @@ export default async function ConciliacaoPage() {
               </div>
             </div>
           </details>
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4 md:col-span-3">
-            <DemoFiles
-              files={[
-                { href: "/demo/retorno_cnab400.ret", label: "retorno CNAB 400" },
-                { href: "/demo/extrato.ofx", label: "extrato OFX" },
-                { href: "/demo/titulos_esperados.csv", label: "títulos esperados" },
-              ]}
-            />
+          <div className="flex flex-wrap items-center justify-end gap-3 border-t border-line pt-4 md:col-span-3">
             <SubmitButton pending="Conciliando...">Conciliar</SubmitButton>
           </div>
         </form>
@@ -99,7 +92,7 @@ export default async function ConciliacaoPage() {
             </tbody>
           </table>
         ) : (
-          <Empty>Nenhuma conciliação. Use os arquivos de exemplo acima para testar.</Empty>
+          <Empty>Nenhuma conciliação ainda. Envie o retorno do banco e a lista de títulos esperados para começar.</Empty>
         )}
         </div>
       </section>

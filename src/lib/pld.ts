@@ -3,6 +3,7 @@ import { pickAi, type AiCall } from "./ai";
 import { checkDossier } from "./ai-guard";
 import type { AiStatus } from "./ai-guard";
 import { DEFAULTS, type Settings } from "./settings-defaults";
+import { fmtDiaCalendario } from "./tz";
 import { buildIndex, nameKey, type ListEntry, type ListIndex } from "./lists";
 
 export type Tx = {
@@ -31,10 +32,14 @@ export type Alert = {
 export const CASH_LIMIT = DEFAULTS.pld.cashLimit; // comunicação obrigatória de espécie (Circ. 3.978, art. 49)
 const DAY = 86_400_000;
 
-// Lista interna fictícia usada só nos dados de demonstração; em produção, importe CSNU, OFAC e PEP em Configurações
+// Lista interna FICTÍCIA: só o tour e os testes a passam explicitamente. Nunca é padrão: em produção valem
+// apenas as listas importadas pela instituição (CSNU, OFAC, PEP, interna) em Configurações.
 export const DEMO_LIST: ListEntry[] = [
-  { source: "INTERNA", name: "Construtora Horizonte Azul", nameKey: nameKey("Construtora Horizonte Azul"), document: "99888777000166", reason: "Empresa citada em operação policial (lista interna de demonstração)" },
+  { source: "INTERNA", name: "Construtora Horizonte Azul", nameKey: nameKey("Construtora Horizonte Azul"), document: "99888777000166", reason: "Empresa citada em operação policial (lista interna fictícia)" },
 ];
+
+/** Padrão de analyzeClient: nenhuma lista. */
+const SEM_LISTAS: ListIndex = buildIndex([]);
 
 const CREDIT_TYPES = ["PIX_RECEBIDO", "TED_RECEBIDA", "DEPOSITO_ESPECIE", "SALARIO", "DEPOSITO"];
 const CASH_TYPES = ["DEPOSITO_ESPECIE", "SAQUE_ESPECIE"];
@@ -89,7 +94,7 @@ export function parseTransactionsCsv(text: string): Tx[] {
 
 export type PldCfg = Settings["pld"];
 
-export function analyzeClient(txs: Tx[], cfg: PldCfg = DEFAULTS.pld, lists: ListIndex = buildIndex(DEMO_LIST)): Alert[] {
+export function analyzeClient(txs: Tx[], cfg: PldCfg = DEFAULTS.pld, lists: ListIndex = SEM_LISTAS): Alert[] {
   const CASH_LIMIT = cfg.cashLimit;
   const alerts: Alert[] = [];
   const sorted = [...txs].sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -296,7 +301,8 @@ export type CaseInfo = {
 export type DossierResult = { text: string; base: string; aiText?: string; provider: string; aiStatus: AiStatus; aiDetail?: string };
 
 export async function buildDossier(c: CaseInfo, opts: { useAi?: boolean; call?: AiCall } = {}): Promise<DossierResult> {
-  const d = (x: Date) => x.toLocaleDateString("pt-BR", { timeZone: "UTC" });
+  // Período do lote é data de calendário (meia-noite UTC); a conferência da IA compara com este mesmo texto
+  const d = (x: Date) => fmtDiaCalendario(x);
   const base = [
     `DOSSIÊ DE ANÁLISE PLD/FT`,
     ``,

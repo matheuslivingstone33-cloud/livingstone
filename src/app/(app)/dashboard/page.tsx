@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, dt } from "@/lib/format";
+import { TZ } from "@/lib/tz";
 import { debtStatus } from "@/lib/collection";
 import { PageTitle, Stat, Empty, CardHeader, MoreLink } from "@/components/ui";
 import { AreaTrend, Bars, CHART, StackBar } from "@/components/charts";
@@ -17,7 +18,7 @@ function weekly(payments: { amount: unknown; paidAt: Date }[]) {
   const WEEK = 7 * 86_400_000;
   const buckets = Array.from({ length: WEEKS }, (_, i) => {
     const end = new Date(now - (WEEKS - 1 - i) * WEEK);
-    return { label: end.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }).replace(".", ""), value: 0 };
+    return { label: end.toLocaleDateString("pt-BR", { timeZone: TZ, day: "2-digit", month: "short" }).replace(".", ""), value: 0 };
   });
   for (const p of payments) {
     const age = Math.floor((now - p.paidAt.getTime()) / WEEK);
@@ -52,7 +53,7 @@ export default async function Dashboard() {
   const problems = (recAgg._sum.divergent ?? 0) + (recAgg._sum.missing ?? 0);
   const decTotal = (dec.APROVAR ?? 0) + (dec.ANALISAR ?? 0) + (dec.RECUSAR ?? 0);
 
-  const today = new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+  const today = new Date().toLocaleDateString("pt-BR", { timeZone: TZ, weekday: "long", day: "numeric", month: "long" });
 
   return (
     <>
