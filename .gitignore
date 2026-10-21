@@ -45,3 +45,6 @@ next-env.d.ts
 
 # log do servidor de dev
 .next-dev.log
+
+# preferências pessoais do editor
+.vscode/settings.json
