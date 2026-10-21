@@ -1,10 +1,12 @@
 // Validação do corpo JSON da API de conciliação e conversão para os tipos de reconcile.ts. Puro: sem banco nem Next.
 import { BankFileError, parseBankFile, type BankEntry, type Cnab400Layout, type ExpectedEntry, type ReconcileOptions } from "./reconcile";
 import { decodeText } from "./upload";
+import { formatBytes } from "./upload-limits";
 
 export type FieldError = { campo: string; mensagem: string };
 
-export const API_LIMITS = { esperados: 20_000, lancamentos: 20_000, arquivoBytes: 3 * 1024 * 1024 } as const;
+// arquivoBytes: em base64 (x4/3) mais o JSON precisa caber em API_MAX_BODY_BYTES (4 MB)
+export const API_LIMITS = { esperados: 20_000, lancamentos: 20_000, arquivoBytes: 2_900_000 } as const;
 
 export type ReconciliationInput = {
   name: string;
@@ -103,7 +105,7 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
         errors.push({ campo: "banco.arquivo.conteudoBase64", mensagem: "Conteúdo em base64 obrigatório." });
       else {
         const buf = Buffer.from(b64, "base64");
-        if (buf.length > API_LIMITS.arquivoBytes) errors.push({ campo: "banco.arquivo.conteudoBase64", mensagem: "Arquivo acima de 3 MB." });
+        if (buf.length > API_LIMITS.arquivoBytes) errors.push({ campo: "banco.arquivo.conteudoBase64", mensagem: `Arquivo acima de ${formatBytes(API_LIMITS.arquivoBytes)}.` });
         else if (buf.includes(0)) errors.push({ campo: "banco.arquivo.conteudoBase64", mensagem: "O arquivo não parece ser texto (OFX, CNAB ou CSV)." });
         else if (bankFileName)
           try {

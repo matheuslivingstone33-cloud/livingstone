@@ -13,9 +13,10 @@ import {
   safeEqualHex,
   type ApiScope,
 } from "./api-keys";
+import { formatBytes } from "./upload-limits";
 
-// ATENÇÃO (Vercel): 5 MB está acima do corpo máximo de função (~4,5 MB). Pendência de decisão; ver docs/DEPLOY.md.
-export const API_MAX_BODY_BYTES = 5 * 1024 * 1024;
+// Cabe no corpo máximo de função da Vercel (~4,5 MB)
+export const API_MAX_BODY_BYTES = 4 * 1024 * 1024;
 export const API_RATE_PER_MINUTE = 60;
 
 export function apiError(status: number, code: string, message: string, details?: unknown, headers?: Record<string, string>) {
@@ -57,7 +58,7 @@ export async function withApiKey(req: Request, scope: ApiScope, handler: (ctx: A
   const path = url.pathname.slice(0, 300);
 
   const declared = Number(req.headers.get("content-length") ?? 0);
-  if (declared > API_MAX_BODY_BYTES) return apiError(413, "payload_too_large", "Corpo acima de 5 MB.");
+  if (declared > API_MAX_BODY_BYTES) return apiError(413, "payload_too_large", `Corpo acima de ${formatBytes(API_MAX_BODY_BYTES)}.`);
 
   // Autenticação: a resposta é sempre a mesma para chave ausente, malformada, desconhecida ou revogada
   const bearer = parseBearer(req.headers.get("authorization"));
@@ -96,7 +97,7 @@ export async function withApiKey(req: Request, scope: ApiScope, handler: (ctx: A
     return apiError(400, "idempotency_key_required", "Envie o header Idempotency-Key (1 a 100 caracteres: letras, números, _ ou -).");
 
   const raw = await readLimited(req);
-  if (raw === null) return apiError(413, "payload_too_large", "Corpo acima de 5 MB.");
+  if (raw === null) return apiError(413, "payload_too_large", `Corpo acima de ${formatBytes(API_MAX_BODY_BYTES)}.`);
   let body: unknown;
   try {
     body = JSON.parse(raw);

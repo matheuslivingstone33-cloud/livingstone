@@ -5,6 +5,7 @@ import { brl, dt } from "@/lib/format";
 import { createReconciliation } from "../../actions-conciliacao";
 import { PageTitle, Empty, DemoFiles, CardHeader } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
+import { FileSizeGuard } from "@/components/FileSizeGuard";
 
 // Tempo máximo da função na Vercel (actions e exportações longas)
 export const maxDuration = 60;
@@ -33,6 +34,8 @@ export default async function ConciliacaoPage() {
           <div>
             <label className="label" htmlFor="expectedFile">Títulos esperados (CSV)</label>
             <input className="input" id="expectedFile" name="expectedFile" type="file" accept=".csv,.txt" required />
+            <p className="hint mt-1">Até 4 MB por envio.</p>
+            <FileSizeGuard inputIds={["bankFile","expectedFile"]} />
           </div>
           <details className="disclosure rounded-xl border border-line bg-paper/50 px-4 py-3 md:col-span-3">
             <summary>Regras avançadas</summary>

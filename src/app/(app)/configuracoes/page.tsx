@@ -8,6 +8,7 @@ import { revokeApiKey } from "../../actions-api";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { PageTitle, Notice } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
+import { FileSizeGuard } from "@/components/FileSizeGuard";
 import { CopyButton } from "@/components/CopyButton";
 import { dt } from "@/lib/format";
 
@@ -217,6 +218,8 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
           <div className="min-w-64 flex-1">
             <label className="label" htmlFor="list-file">Arquivo</label>
             <input className="input" id="list-file" name="file" type="file" accept=".xml,.csv,.txt" required />
+            <p className="hint mt-1">Até 4 MB por envio.</p>
+            <FileSizeGuard inputIds={["list-file"]} />
           </div>
           <SubmitButton pending="Importando...">Importar (substitui a lista)</SubmitButton>
         </form>

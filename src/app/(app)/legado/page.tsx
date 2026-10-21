@@ -5,6 +5,7 @@ import { dt } from "@/lib/format";
 import { createLegacyAnalysis } from "../../actions";
 import { PageTitle, Empty, DemoFiles, CardHeader, TableCard } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
+import { FileSizeGuard } from "@/components/FileSizeGuard";
 
 // Tempo máximo da função na Vercel (actions e exportações longas)
 export const maxDuration = 60;
@@ -24,6 +25,8 @@ export default async function LegadoPage() {
           <div className="md:col-span-2">
             <label className="label" htmlFor="source">Arquivo de código</label>
             <input className="input" id="source" name="source" type="file" accept=".cbl,.cob,.cpy,.pas,.dpr,.bas,.frm,.cls,.txt" required />
+            <p className="hint mt-1">Até 4 MB por envio.</p>
+            <FileSizeGuard inputIds={["source"]} />
           </div>
           <div>
             <label className="label" htmlFor="target">Converter para</label>

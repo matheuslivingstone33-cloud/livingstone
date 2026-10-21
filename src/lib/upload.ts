@@ -1,8 +1,10 @@
 // Validação de uploads pelo conteúdo real (assinatura do arquivo), não pela extensão ou pelo tipo informado pelo navegador.
 import type { AiFile } from "./ai";
 
-// ATENÇÃO (Vercel): 10 MB está acima do corpo máximo de função (~4,5 MB). Pendência de decisão; ver docs/DEPLOY.md.
-export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+import { MAX_UPLOAD_BYTES, checkUploadSizes, uploadSizeError } from "./upload-limits";
+
+// Limites em upload-limits.ts (cabem no corpo máximo de função da Vercel, ~4,5 MB)
+export { MAX_UPLOAD_BYTES };
 export type UploadKind = "text" | "pdf" | "image";
 
 export class UploadError extends Error {}
@@ -20,13 +22,20 @@ function sniff(buf: Buffer): { kind: UploadKind; mime: string } | null {
 
 export async function readUpload(entry: FormDataEntryValue | null, allowed: UploadKind[]): Promise<AiFile | null> {
   if (!(entry instanceof File) || entry.size === 0) return null;
-  if (entry.size > MAX_UPLOAD_BYTES) throw new UploadError(`O arquivo "${entry.name}" excede 10 MB.`);
+  if (entry.size > MAX_UPLOAD_BYTES) throw new UploadError(uploadSizeError(entry.name, entry.size));
   const data = Buffer.from(await entry.arrayBuffer());
   const t = sniff(data);
   if (!t || !allowed.includes(t.kind))
     throw new UploadError(`O arquivo "${entry.name}" não é de um tipo aceito aqui (${allowed.join(", ")}).`);
   const name = entry.name.replace(/[^\w.\- ()À-ú]/g, "_").slice(0, 120);
   return { name, mime: t.mime, data };
+}
+
+/** Confere a soma dos arquivos de um envio (cada um já é conferido em readUpload). */
+export function assertUploadTotal(entries: (FormDataEntryValue | null)[]) {
+  const files = entries.filter((e): e is File => e instanceof File);
+  const err = checkUploadSizes(files.map((f) => ({ name: f.name, size: f.size })));
+  if (err) throw new UploadError(err);
 }
 
 // CNAB, OFX e CSV de bancos brasileiros costumam vir em Latin-1

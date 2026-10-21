@@ -7,6 +7,7 @@ import { getSettings } from "@/lib/settings";
 import { importDebts, generateAllProposals, generateProposal } from "../../actions-cobranca";
 import { PageTitle, Stat, Empty, DemoFiles, Notice, CardHeader, TableCard, FilterBar } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
+import { FileSizeGuard } from "@/components/FileSizeGuard";
 
 // Tempo máximo da função na Vercel (actions e exportações longas)
 export const maxDuration = 60;
@@ -95,7 +96,9 @@ export default async function CobrancaPage({
         {canEdit && (
           <form action={importDebts} className="card space-y-3">
             <CardHeader title="Importar carteira" />
-            <input className="input" name="file" type="file" accept=".csv,.txt" required />
+            <input className="input" id="debts-file" name="file" type="file" accept=".csv,.txt" required />
+            <p className="hint mt-1">Até 4 MB por envio.</p>
+            <FileSizeGuard inputIds={["debts-file"]} />
             <p className="hint mt-0">CSV com: contrato; devedor; cpf_cnpj; telefone; email; produto; valor; vencimento</p>
             <DemoFiles files={[{ href: "/demo/carteira_inadimplentes.csv", label: "carteira de exemplo" }]} />
             <SubmitButton pending="Importando...">Importar</SubmitButton>

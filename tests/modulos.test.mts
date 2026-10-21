@@ -20,7 +20,9 @@ import { cell, csvDocument, num } from "../src/lib/csv";
 import { buildTourData } from "../src/lib/tour";
 import { isPublic } from "../src/lib/public-routes";
 import { decideIdempotency, generateKey, hasScope, hashKey, idempotencyFingerprint, parseBearer, safeEqualHex } from "../src/lib/api-keys";
-import { validateReconciliationBody } from "../src/lib/api-payload";
+import { API_LIMITS, validateReconciliationBody } from "../src/lib/api-payload";
+import { API_MAX_BODY_BYTES } from "../src/lib/api-http";
+import { MAX_UPLOAD_BYTES, checkUploadSizes, formatBytes, uploadSizeError } from "../src/lib/upload-limits";
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -804,4 +806,25 @@ test("Tour: determinístico com demoDir explícito", () => {
   const a = buildTourData(dir);
   assert.deepEqual(a, buildTourData(dir));
   assert.deepEqual(a, buildTourData());
+});
+
+test("Upload: limites de 4 MB por arquivo e por envio", () => {
+  assert.equal(formatBytes(4 * 1024 * 1024), "4,0 MB");
+  const m = uploadSizeError("extrato.ofx", 5 * 1024 * 1024, MAX_UPLOAD_BYTES);
+  for (const t of ["extrato.ofx", "5,0 MB", "4,0 MB", "Divida"]) assert.ok(m.includes(t), m);
+  assert.equal(checkUploadSizes([{ name: "a", size: MAX_UPLOAD_BYTES }]), null);
+  assert.match(checkUploadSizes([{ name: "a.csv", size: MAX_UPLOAD_BYTES + 1 }]) ?? "", /O arquivo "a.csv"/);
+  const half = 2.5 * 1024 * 1024;
+  assert.match(checkUploadSizes([{ name: "a", size: half }, { name: "b", size: half }]) ?? "", /Os arquivos somam 5,0 MB/);
+  assert.ok(demo("transacoes_pld.csv").length < MAX_UPLOAD_BYTES);
+});
+
+test("API: arquivo no limite cabe no corpo; acima dele dá erro com a mensagem nova", () => {
+  const max = Buffer.alloc(API_LIMITS.arquivoBytes, 0x20).toString("base64");
+  const minimo = JSON.stringify({ nome: "x", esperados: [], banco: { arquivo: { nome: "r.ret", conteudoBase64: max } } });
+  assert.ok(Buffer.byteLength(minimo) <= API_MAX_BODY_BYTES);
+  const body = { ...demoBody(), banco: { arquivo: { nome: "r.ret", conteudoBase64: Buffer.alloc(API_LIMITS.arquivoBytes + 1, 0x20).toString("base64") } } };
+  const r = validateReconciliationBody(body);
+  assert.ok(!r.ok);
+  assert.ok(r.errors.some((e) => e.mensagem === `Arquivo acima de ${formatBytes(API_LIMITS.arquivoBytes)}.`), JSON.stringify(r.errors));
 });

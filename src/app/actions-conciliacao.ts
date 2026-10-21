@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { audit, requireSession } from "@/lib/auth";
 import { BankFileError, parseBankFile, parseExpectedCsv, type ReconcileOptions } from "@/lib/reconcile";
 import { getSettings } from "@/lib/settings";
-import { decodeText, readUpload } from "@/lib/upload";
+import { assertUploadTotal, decodeText, readUpload } from "@/lib/upload";
 import { fail } from "@/lib/errors";
 import { persistReconciliation } from "@/lib/servicos/conciliacao";
 
@@ -20,6 +20,11 @@ function intIn(form: FormData, name: string, max: number, label: string, back: s
 export async function createReconciliation(form: FormData) {
   const s = await requireSession(["ADMIN", "ANALISTA"]);
   const back = "/conciliacao";
+  try {
+    assertUploadTotal([form.get("bankFile"), form.get("expectedFile")]);
+  } catch (e) {
+    fail(back, (e as Error).message);
+  }
   const bank = await readUpload(form.get("bankFile"), ["text"]).catch((e: Error) => fail(back, e.message));
   const exp = await readUpload(form.get("expectedFile"), ["text"]).catch((e: Error) => fail(back, e.message));
   if (!bank || !exp) fail(back, "Envie os dois arquivos.");

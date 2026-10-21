@@ -5,7 +5,9 @@ import type { ListIndex } from "./lists";
 /** Regras que tornam a comunicação obrigatória (abrem caso mesmo abaixo da pontuação mínima). */
 export const MANDATORY_RULES = ["ESPECIE_50K", "CLIENTE_LISTA_RESTRITIVA"];
 
-/** Limite de transações por upload. */
+/** Limite de transações por upload (teto lógico). Na prática o limite de 4 MB por arquivo chega antes:
+ * public/demo/transacoes_pld.csv tem ~112 bytes/linha (6.169 bytes, 55 linhas); com linhas de ~90 a 112 bytes,
+ * 4 MB comportam ~37 a 46 mil transações. */
 export const PLD_MAX_TRANSACOES = 100_000;
 
 const DAY = 86_400_000;

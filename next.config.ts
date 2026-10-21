@@ -27,10 +27,9 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  // Uploads de documentos e arquivos bancários de até 10 MB.
-  // ATENÇÃO (Vercel): o corpo máximo de uma função é ~4,5 MB; acima disso a plataforma recusa (413) antes do Next.
-  // Limite de negócio mantido; ver docs/DEPLOY.md (pendência de decisão).
-  experimental: { serverActions: { bodySizeLimit: "12mb" } },
+  // Uploads de até 4 MB por envio (src/lib/upload-limits.ts). O corpo máximo de função na Vercel é ~4,5 MB:
+  // o limite do Next acompanha esse teto e a aplicação recusa antes, com mensagem amigável.
+  experimental: { serverActions: { bodySizeLimit: "4.5mb" } },
   // O /tour lê public/demo/ com fs em tempo de execução: inclui os arquivos no bundle da função na Vercel
   outputFileTracingIncludes: { "/tour": ["./public/demo/**"] },
   poweredByHeader: false,

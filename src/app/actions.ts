@@ -20,7 +20,7 @@ import {
 import { fail } from "@/lib/errors";
 import { analyzeCredit } from "@/lib/credit";
 import { analyzeLegacy } from "@/lib/legacy";
-import { decodeText, readUpload } from "@/lib/upload";
+import { assertUploadTotal, decodeText, readUpload } from "@/lib/upload";
 import { getSettings } from "@/lib/settings";
 import type { AiFile } from "@/lib/ai";
 
@@ -73,6 +73,11 @@ form: FormData) {
   const s = await requireSession(["ADMIN", "ANALISTA"]);
   const back = "/credito";
   const entries = form.getAll("docs").slice(0, 10);
+  try {
+    assertUploadTotal(entries);
+  } catch (e) {
+    fail(back, (e as Error).message);
+  }
   const files = (await Promise.all(entries.map((e) => readUpload(e, ["text", "pdf", "image"]))).catch((e: Error) => fail(back, e.message))).filter(
     (f): f is AiFile => !!f,
   );

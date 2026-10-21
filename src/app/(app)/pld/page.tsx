@@ -5,6 +5,7 @@ import { brl, day, dt } from "@/lib/format";
 import { importPld } from "../../actions-pld";
 import { PageTitle, Stat, Empty, DemoFiles, Notice, StatusBadge, CardHeader, TableCard, FilterBar } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
+import { FileSizeGuard } from "@/components/FileSizeGuard";
 import { PLD_STATUS, RiskBadge, DueBadge } from "./badges";
 
 // Importação grande roda dentro da server action desta página (vale em todos os planos da Vercel)
@@ -58,7 +59,9 @@ export default async function PldPage({ searchParams }: { searchParams: Promise<
         {s.role !== "AUDITOR" && (
           <form action={importPld} className="card space-y-3">
             <CardHeader title="Analisar transações" />
-            <input className="input" name="file" type="file" accept=".csv,.txt" required />
+            <input className="input" id="pld-file" name="file" type="file" accept=".csv,.txt" required />
+            <p className="hint mt-1">Até 4 MB por envio.</p>
+            <FileSizeGuard inputIds={["pld-file"]} />
             <p className="hint mt-0">CSV: data; cliente; cpf_cnpj; renda_mensal; pep; tipo; valor; contraparte; doc_contraparte</p>
             <DemoFiles files={[{ href: "/demo/transacoes_pld.csv", label: "transações de exemplo (60 dias)" }]} />
             <SubmitButton pending="Analisando...">Analisar</SubmitButton>

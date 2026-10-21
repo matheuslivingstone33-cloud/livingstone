@@ -3,6 +3,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Logo } from "@/components/Logo";
 import { BRAND } from "@/lib/brand";
+import { API_MAX_BODY_BYTES } from "@/lib/api-http";
+import { API_LIMITS } from "@/lib/api-payload";
+import { formatBytes } from "@/lib/upload-limits";
+
+const CORPO_MAX = formatBytes(API_MAX_BODY_BYTES);
+const ARQUIVO_MAX = formatBytes(API_LIMITS.arquivoBytes);
 
 export const metadata: Metadata = {
   title: `API — ${BRAND.name}`,
@@ -70,7 +76,7 @@ const ERRORS: [string, string, string][] = [
   ["403", "insufficient_scope", "A chave não tem o escopo da operação"],
   ["404", "not_found", "Recurso inexistente ou de outra instituição"],
   ["409", "request_in_progress", "Outra requisição com a mesma Idempotency-Key está em processamento"],
-  ["413", "payload_too_large", "Corpo acima de 5 MB"],
+  ["413", "payload_too_large", `Corpo acima de ${CORPO_MAX}`],
   ["422", "idempotency_key_reused", "Idempotency-Key já usada com outro corpo"],
   ["429", "rate_limited", "Mais de 60 requisições por minuto na chave (veja Retry-After)"],
   ["500", "internal_error", "Erro interno; pode repetir com a mesma Idempotency-Key"],
@@ -134,7 +140,7 @@ export default function ApiDocs() {
         </Sec>
 
         <Sec id="criar" title="POST /api/v1/conciliacoes">
-          <p>Campos: <C>nome</C>; <C>esperados</C> (até 20.000: referencia, pagador opcional, valor em reais, vencimento AAAA-MM-DD); <C>banco</C> com <em>exatamente um</em> entre <C>lancamentos</C> (referencia opcional, valor, data) e <C>arquivo</C> (nome e conteudoBase64, até 3 MB); <C>opcoes</C> opcional (toleranciaCentavos 0 a 100, valorEData, toleranciaDias 0 a 10). O layout CNAB 400 é o configurado pela instituição.</p>
+          <p>Campos: <C>nome</C>; <C>esperados</C> (até 20.000: referencia, pagador opcional, valor em reais, vencimento AAAA-MM-DD); <C>banco</C> com <em>exatamente um</em> entre <C>lancamentos</C> (referencia opcional, valor, data) e <C>arquivo</C> (nome e conteudoBase64, até {ARQUIVO_MAX} antes da codificação); <C>opcoes</C> opcional (toleranciaCentavos 0 a 100, valorEData, toleranciaDias 0 a 10). O layout CNAB 400 é o configurado pela instituição.</p>
           <Code>{POST_BODY}</Code>
           <Code>{CURL_POST}</Code>
           <Code>{CURL_FILE}</Code>
@@ -153,7 +159,7 @@ export default function ApiDocs() {
         <Sec id="limites" title="Limites">
           <ul className="list-disc space-y-1 pl-5">
             <li>60 requisições por minuto por chave; acima disso, 429 com <C>Retry-After</C>.</li>
-            <li>Corpo de até 5 MB; arquivo do banco de até 3 MB; até 20.000 títulos e 20.000 lançamentos.</li>
+            <li>Corpo de até {CORPO_MAX}; arquivo do banco de até {ARQUIVO_MAX}; até 20.000 títulos e 20.000 lançamentos.</li>
           </ul>
         </Sec>
 

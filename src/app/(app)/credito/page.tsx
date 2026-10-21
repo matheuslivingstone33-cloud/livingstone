@@ -5,6 +5,7 @@ import { brl, dt } from "@/lib/format";
 import { createCreditAnalysis } from "../../actions";
 import { PageTitle, Empty, StatusBadge, DemoFiles, CardHeader, TableCard } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
+import { FileSizeGuard } from "@/components/FileSizeGuard";
 
 // Tempo máximo da função na Vercel (actions e exportações longas)
 export const maxDuration = 60;
@@ -44,6 +45,8 @@ export default async function CreditoPage() {
           <div>
             <label className="label" htmlFor="docs">Documentos (holerite, extrato…)</label>
             <input className="input" id="docs" name="docs" type="file" multiple accept=".txt,.csv,.pdf,image/*" required />
+            <p className="hint mt-1">Até 4 MB por envio.</p>
+            <FileSizeGuard inputIds={["docs"]} />
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4 md:col-span-3">
             <DemoFiles
