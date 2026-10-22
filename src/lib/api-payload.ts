@@ -1,5 +1,5 @@
 // Validação do corpo JSON da API de conciliação e conversão para os tipos de reconcile.ts. Puro: sem banco nem Next.
-import { BankFileError, parseBankFile, type BankEntry, type Cnab400Layout, type ExpectedEntry, type ReconcileOptions } from "./reconcile";
+import { BankFileError, normRef, parseBankFile, utcDay, type BankEntry, type Cnab400Layout, type ExpectedEntry, type ReconcileOptions } from "./reconcile";
 import { decodeText } from "./upload";
 import { formatBytes } from "./upload-limits";
 
@@ -22,14 +22,20 @@ type Result = { ok: true; value: ReconciliationInput } | { ok: false; errors: Fi
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+const REF_MAX = 60;
+// Referência sem truncar: acima do limite é erro (truncar poderia casar títulos diferentes)
+function refOf(v: unknown, campo: string, errors: FieldError[]) {
+  const r = typeof v === "string" ? v.trim() : "";
+  if (r.length > REF_MAX) errors.push({ campo, mensagem: `No máximo ${REF_MAX} caracteres.` });
+  return r;
+}
 
 /** Data estrita AAAA-MM-DD (rejeita 2026-02-30) */
 export function parseIsoDay(v: unknown): Date | null {
   if (typeof v !== "string") return null;
   const m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return null;
-  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
-  return d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3] ? d : null;
+  return utcDay(+m[1], +m[2], +m[3]) ?? null;
 }
 
 // Valor em reais com no máximo 2 casas, positivo e abaixo de 1 trilhão (cabe em Decimal(14,2))
@@ -56,19 +62,28 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
   const esp = body.esperados;
   if (!Array.isArray(esp) || esp.length === 0) errors.push({ campo: "esperados", mensagem: "Envie ao menos um título esperado." });
   else if (esp.length > API_LIMITS.esperados) errors.push({ campo: "esperados", mensagem: `No máximo ${API_LIMITS.esperados} títulos por conciliação.` });
-  else
+  else {
+    const seen = new Map<string, number>();
     esp.forEach((e, i) => {
       const at = `esperados[${i}]`;
       if (errors.length >= 50) return;
       if (!isObj(e)) return void errors.push({ campo: at, mensagem: "Deve ser um objeto." });
-      const reference = str(e.referencia, 60);
+      const reference = refOf(e.referencia, `${at}.referencia`, errors);
       if (!reference) errors.push({ campo: `${at}.referencia`, mensagem: "Obrigatória." });
+      else {
+        // Títulos esperados com a mesma referência normalizada tornariam a conciliação ambígua
+        const k = normRef(reference);
+        const j = seen.get(k);
+        if (j !== undefined) errors.push({ campo: `${at}.referencia`, mensagem: `Referência repetida (mesma de esperados[${j}]).` });
+        else seen.set(k, i);
+      }
       if (!validAmount(e.valor)) errors.push({ campo: `${at}.valor`, mensagem: "Número positivo em reais, com até 2 casas decimais." });
       const dueAt = parseIsoDay(e.vencimento);
       if (!dueAt) errors.push({ campo: `${at}.vencimento`, mensagem: "Data no formato AAAA-MM-DD." });
       if (e.pagador !== undefined && e.pagador !== null && typeof e.pagador !== "string") errors.push({ campo: `${at}.pagador`, mensagem: "Deve ser texto." });
       expected.push({ reference, payer: str(e.pagador, 120) || undefined, amount: e.valor as number, dueAt: dueAt ?? undefined });
     });
+  }
 
   // Banco: exatamente um de lancamentos / arquivo
   let entries: BankEntry[] = [];
@@ -92,7 +107,7 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
         if (!validAmount(r.valor)) errors.push({ campo: `${at}.valor`, mensagem: "Número positivo em reais, com até 2 casas decimais." });
         const paidAt = parseIsoDay(r.data);
         if (!paidAt) errors.push({ campo: `${at}.data`, mensagem: "Data no formato AAAA-MM-DD." });
-        entries.push({ reference: str(r.referencia, 60), amount: r.valor as number, paidAt: paidAt ?? undefined });
+        entries.push({ reference: refOf(r.referencia, `${at}.referencia`, errors), amount: r.valor as number, paidAt: paidAt ?? undefined });
       });
   } else {
     const a = banco.arquivo;

@@ -3,6 +3,8 @@
 export type BankEntry = { reference: string; payer?: string; amount: number; paidAt?: Date };
 export type ExpectedEntry = { reference: string; payer?: string; amount: number; dueAt?: Date };
 
+export class BankFileError extends Error {}
+
 export type ItemStatus = "CONCILIADO" | "DIVERGENTE" | "PENDENTE" | "NAO_ESPERADO";
 export type ResultItem = {
   reference: string;
@@ -21,37 +23,59 @@ export const normRef = (s: string) => {
   return /^\d+$/.test(t) ? t.replace(/^0+/, "") || "0" : t;
 };
 
-function parseMoney(raw: string): number {
-  const s = raw.trim().replace(/[R$\s]/g, "");
-  // "1.234,56" -> 1234.56 ; "1234.56" -> 1234.56
-  if (s.includes(",")) return Number(s.replace(/\./g, "").replace(",", "."));
-  return Number(s);
+/** Dia de calendário em UTC; undefined se a data não existe (31/02, mês 13...). */
+export function utcDay(y: number, m: number, d: number): Date | undefined {
+  if (![y, m, d].every(Number.isInteger)) return undefined;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d ? dt : undefined;
 }
 
-function parseDate(raw: string): Date | undefined {
+/**
+ * Valor monetário em texto → número, ou null se ilegível. Remove "R$" e espaços; aceita "-" inicial.
+ * "br" (CSV): vírgula é decimal ("1.234,56", "12,5"). Sem vírgula, "1.234" e "1.234.567" são milhar,
+ *   e "1234.56"/"1.5" são decimal com ponto. ATENÇÃO: "1.500" é ambíguo e vira 1500 (milhar), não 1,5.
+ * "ofx": ponto decimal primeiro ("1500.00"); se não casar, aplica as regras "br" ("1.234,56" → 1234.56).
+ * Qualquer outra forma ("12,345", "abc", "1,2,3") → null.
+ */
+export function parseMoney(raw: string, mode: "br" | "ofx" = "br"): number | null {
+  const s = raw.trim().replace(/R\$/g, "").replace(/\s/g, "");
+  if (mode === "ofx" && /^-?\d+(\.\d{1,2})?$/.test(s)) return Number(s);
+  if (/^-?\d{1,3}(\.\d{3})+(,\d{1,2})?$/.test(s) || /^-?\d+(,\d{1,2})?$/.test(s)) return Number(s.replace(/\./g, "").replace(",", "."));
+  if (/^-?\d{1,3}(\.\d{3})+$/.test(s)) return Number(s.replace(/\./g, ""));
+  if (/^-?\d+(\.\d{1,2})?$/.test(s)) return Number(s);
+  return null;
+}
+
+const validMoney = (n: number | null): n is number => n !== null && Number.isFinite(n) && n > 0 && n < 1e12;
+
+/** undefined = campo vazio; null = preenchido mas inválido. Aceita dd/mm/aaaa, aaaa-mm-dd[hora] e aaaammdd[hora]. */
+export function parseDate(raw: string): Date | undefined | null {
   const s = raw.trim();
+  if (!s) return undefined;
   let m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (m) return new Date(Date.UTC(+m[3], +m[2] - 1, +m[1]));
+  if (m) return utcDay(+m[3], +m[2], +m[1]) ?? null;
   m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  if (m) return utcDay(+m[1], +m[2], +m[3]) ?? null;
   m = s.match(/^(\d{4})(\d{2})(\d{2})/); // OFX: AAAAMMDD...
-  if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
-  return undefined;
+  if (m) return utcDay(+m[1], +m[2], +m[3]) ?? null;
+  return null;
 }
 
-function splitCsv(text: string): string[][] {
-  const lines = text.replace(/^﻿/, "").split(/\r?\n/).filter((l) => l.trim());
-  const sep = (lines[0]?.match(/;/g)?.length ?? 0) >= (lines[0]?.match(/,/g)?.length ?? 0) ? ";" : ",";
-  return lines.map((l) => l.split(sep).map((c) => c.trim().replace(/^"|"$/g, "")));
+function splitCsv(text: string): { line: number; cells: string[] }[] {
+  const all = text.replace(/^﻿/, "").split(/\r?\n/);
+  const lines = all.map((l, i) => ({ l, line: i + 1 })).filter((x) => x.l.trim());
+  const first = lines[0]?.l ?? "";
+  const sep = (first.match(/;/g)?.length ?? 0) >= (first.match(/,/g)?.length ?? 0) ? ";" : ",";
+  return lines.map(({ l, line }) => ({ line, cells: l.split(sep).map((c) => c.trim().replace(/^"|"$/g, "")) }));
 }
 
 function csvObjects(text: string) {
   const [header, ...rows] = splitCsv(text);
   if (!header) return [];
-  const keys = header.map((h) =>
+  const keys = header.cells.map((h) =>
     h.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z]/g, ""),
   );
-  return rows.map((r) => Object.fromEntries(keys.map((k, i) => [k, r[i] ?? ""])));
+  return rows.map((r) => ({ line: r.line, o: Object.fromEntries(keys.map((k, i) => [k, r.cells[i] ?? ""])) as Record<string, string> }));
 }
 
 const pick = (o: Record<string, string>, ...names: string[]) => {
@@ -59,42 +83,72 @@ const pick = (o: Record<string, string>, ...names: string[]) => {
   return "";
 };
 
+function fileErrors(label: string, errors: string[]) {
+  if (errors.length)
+    throw new BankFileError(`Arquivo ${label}: ${errors.length} linha(s) inválida(s). ${errors.slice(0, 5).join("; ")}${errors.length > 5 ? "…" : ""}`);
+}
+
+// Lê linhas de CSV (esperados ou banco). Linha toda vazia é ignorada; referência sem valor/data válidos é erro.
+function parseCsvRows(text: string, label: string, valueCols: string[], dateCols: string[]) {
+  const errors: string[] = [];
+  const out: { reference: string; payer?: string; amount: number; date?: Date }[] = [];
+  for (const { line, o } of csvObjects(text)) {
+    if (Object.values(o).every((v) => !v.trim())) continue;
+    const reference = pick(o, "referencia", "nossonumero", "documento", "id");
+    const rawValue = pick(o, ...valueCols);
+    const rawDate = pick(o, ...dateCols);
+    if (!reference) {
+      if (rawValue) errors.push(`Linha ${line}: referência obrigatória`);
+      continue;
+    }
+    const amount = parseMoney(rawValue, "br");
+    const date = parseDate(rawDate);
+    if (!rawValue) errors.push(`Linha ${line}: valor obrigatório`);
+    else if (amount === null || !Number.isFinite(amount)) errors.push(`Linha ${line}: valor ${rawValue} ilegível`);
+    else if (!validMoney(amount)) errors.push(`Linha ${line}: valor ${rawValue} deve ser positivo`);
+    if (date === null) errors.push(`Linha ${line}: data ${rawDate} inválida`);
+    if (validMoney(amount) && date !== null)
+      out.push({ reference, payer: pick(o, "pagador", "cliente", "sacado", "nome") || undefined, amount, date });
+  }
+  fileErrors(label, errors);
+  return out;
+}
+
 export function parseExpectedCsv(text: string): ExpectedEntry[] {
-  return csvObjects(text)
-    .map((o) => ({
-      reference: pick(o, "referencia", "nossonumero", "documento", "id"),
-      payer: pick(o, "pagador", "cliente", "sacado", "nome") || undefined,
-      amount: parseMoney(pick(o, "valor", "valortitulo", "valoresperado")),
-      dueAt: parseDate(pick(o, "vencimento", "data")),
-    }))
-    .filter((e) => e.reference && Number.isFinite(e.amount));
+  return parseCsvRows(text, "de esperados", ["valor", "valortitulo", "valoresperado"], ["vencimento", "data"]).map(
+    ({ date, ...e }) => ({ ...e, dueAt: date }),
+  );
 }
 
 function parseBankCsv(text: string): BankEntry[] {
-  return csvObjects(text)
-    .map((o) => ({
-      reference: pick(o, "referencia", "nossonumero", "documento", "id"),
-      payer: pick(o, "pagador", "cliente", "sacado", "nome") || undefined,
-      amount: parseMoney(pick(o, "valorpago", "valor", "valorrecebido")),
-      paidAt: parseDate(pick(o, "datapagamento", "data", "datacredito")),
-    }))
-    .filter((e) => e.reference && Number.isFinite(e.amount));
+  return parseCsvRows(text, "do banco", ["valorpago", "valor", "valorrecebido"], ["datapagamento", "data", "datacredito"]).map(
+    ({ date, ...e }) => ({ ...e, paidAt: date }),
+  );
 }
 
 function parseOfx(text: string): BankEntry[] {
   const tag = (block: string, name: string) =>
     block.match(new RegExp(`<${name}>([^<\r\n]*)`, "i"))?.[1]?.trim() ?? "";
   const blocks = text.split(/<STMTTRN>/i).slice(1).map((b) => b.split(/<\/STMTTRN>/i)[0]);
-  return blocks
-    .map((b) => {
-      const memo = tag(b, "MEMO");
-      const amount = Number(tag(b, "TRNAMT").replace(",", "."));
-      // A referência do título costuma vir em REFNUM/CHECKNUM ou no histórico (MEMO)
-      const reference =
-        tag(b, "REFNUM") || tag(b, "CHECKNUM") || memo.match(/\b\d{5,}\b/)?.[0] || tag(b, "FITID");
-      return { reference, payer: tag(b, "NAME") || memo || undefined, amount, paidAt: parseDate(tag(b, "DTPOSTED")) };
-    })
-    .filter((e) => e.amount > 0); // apenas créditos
+  const errors: string[] = [];
+  const out: BankEntry[] = [];
+  blocks.forEach((b, i) => {
+    const fitid = tag(b, "FITID");
+    const rawAmount = tag(b, "TRNAMT");
+    const amount = parseMoney(rawAmount, "ofx");
+    if (amount === null || !Number.isFinite(amount)) return void errors.push(`Transação ${i + 1} (FITID ${fitid || "-"}): valor '${rawAmount}' ilegível`);
+    if (amount <= 0) return; // débito: não é pagamento recebido
+    if (amount >= 1e12) return void errors.push(`Transação ${i + 1} (FITID ${fitid || "-"}): valor '${rawAmount}' fora do limite`);
+    const rawDate = tag(b, "DTPOSTED");
+    const paidAt = parseDate(rawDate);
+    if (paidAt === null) return void errors.push(`Transação ${i + 1} (FITID ${fitid || "-"}): data '${rawDate}' inválida`);
+    const memo = tag(b, "MEMO");
+    // A referência do título costuma vir em REFNUM/CHECKNUM ou no histórico (MEMO)
+    const reference = tag(b, "REFNUM") || tag(b, "CHECKNUM") || memo.match(/\b\d{5,}\b/)?.[0] || fitid;
+    out.push({ reference, payer: tag(b, "NAME") || memo || undefined, amount, paidAt });
+  });
+  fileErrors("OFX", errors);
+  return out;
 }
 
 // Posições 1-based [início, fim] do registro detalhe; cada banco usa um layout próprio (configurável por instituição)
@@ -116,8 +170,6 @@ export const DEFAULT_CNAB400: Cnab400Layout = {
 
 const cut = (l: string, [a, b]: [number, number]) => l.slice(a - 1, b);
 
-export class BankFileError extends Error {}
-
 function parseCnab400(text: string, layout: Cnab400Layout): BankEntry[] {
   const lines = text.split(/\r?\n/).filter((l) => l[0] === "1");
   const out: BankEntry[] = [];
@@ -128,11 +180,10 @@ function parseCnab400(text: string, layout: Cnab400Layout): BankEntry[] {
     const v = cut(l, layout.valorPago);
     if (!/^\d+$/.test(v) || !/^\d{6}$/.test(d))
       throw new BankFileError(`CNAB 400: valor ou data não numéricos na linha de detalhe ${i + 1}. Confira o layout do banco em Configurações.`);
-    out.push({
-      reference: cut(l, layout.nossoNumero).trim(),
-      amount: Number(v) / 100,
-      paidAt: new Date(Date.UTC(2000 + +d.slice(4, 6), +d.slice(2, 4) - 1, +d.slice(0, 2))),
-    });
+    const paidAt = utcDay(2000 + +d.slice(4, 6), +d.slice(2, 4), +d.slice(0, 2));
+    if (!paidAt) throw new BankFileError(`CNAB 400: data ${d} inválida na linha de detalhe ${i + 1}.`);
+    if (!(Number(v) > 0)) throw new BankFileError(`CNAB 400: liquidação com valor zero na linha de detalhe ${i + 1}.`);
+    out.push({ reference: cut(l, layout.nossoNumero).trim(), amount: Number(v) / 100, paidAt });
   });
   return out;
 }
@@ -150,11 +201,19 @@ function parseCnab240(text: string): BankEntry[] {
     if (!u || u[13] !== "U") throw new BankFileError(`CNAB 240: segmento T sem o segmento U correspondente (registro ${i + 1}).`);
     if (!["06", "17"].includes(t.slice(15, 17))) continue;
     const d = u.slice(137, 145);
+    const v = u.slice(77, 92);
+    // Data em branco ou zerada é tolerada (sem data); preenchida tem de ser DDMMAAAA válida
+    let paidAt: Date | undefined;
+    if (d.trim() && !/^0+$/.test(d)) {
+      paidAt = /^\d{8}$/.test(d) ? utcDay(+d.slice(4, 8), +d.slice(2, 4), +d.slice(0, 2)) : undefined;
+      if (!paidAt) throw new BankFileError(`CNAB 240: data ${d.trim()} inválida no segmento U (registro ${i + 2}).`);
+    }
+    if (!/^\d+$/.test(v) || !(Number(v) > 0)) throw new BankFileError(`CNAB 240: valor pago ausente ou zero no segmento U (registro ${i + 2}).`);
     out.push({
       reference: t.slice(37, 57).trim(),
       payer: t.slice(148, 188).trim() || undefined,
-      amount: Number(u.slice(77, 92)) / 100,
-      paidAt: /^\d{8}$/.test(d) ? new Date(Date.UTC(+d.slice(4, 8), +d.slice(2, 4) - 1, +d.slice(0, 2))) : undefined,
+      amount: Number(v) / 100,
+      paidAt,
     });
   }
   return out;

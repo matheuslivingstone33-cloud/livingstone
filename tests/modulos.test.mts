@@ -1045,3 +1045,103 @@ test("IA pureza: libs puras não importam o medidor nem o banco", () => {
     assert.ok(!/from\s+["'](\.\/|@\/lib\/)(ai-meter|db)["']/.test(src), f);
   }
 });
+
+// ---- Etapa 2: regras financeiras e de listas ----
+import { parseMoney, utcDay } from "../src/lib/reconcile";
+import { parseIsoDay } from "../src/lib/api-payload";
+
+test("Upload: linha inválida recusa o arquivo inteiro citando as linhas", () => {
+  assert.throws(() => parseExpectedCsv("referencia;valor\nA1;-50,00\nA2;0"), (e: Error) => /Linha 2/.test(e.message) && /Linha 3/.test(e.message) && /positivo/.test(e.message));
+  assert.throws(() => parseBankFile("x.csv", "referencia;valor\nA1;-50,00"), /Linha 2/);
+  assert.throws(() => parseExpectedCsv("referencia;valor\n;10,00"), /referência obrigatória/);
+  // Linha só com separadores é ignorada
+  assert.equal(parseExpectedCsv("referencia;valor\nA1;10,00\n;").length, 1);
+});
+
+test("Datas estritas no CSV, CNAB e API", () => {
+  assert.throws(() => parseExpectedCsv("referencia;valor;vencimento\nA1;10,00;31/02/2026"), /Linha 2: data/);
+  assert.throws(() => parseExpectedCsv("referencia;valor;vencimento\nA1;10,00;2026-13-45"), /Linha 2: data/);
+  assert.deepEqual(parseExpectedCsv("referencia;valor;vencimento\nA1;10,00;29/02/2028")[0].dueAt, new Date(Date.UTC(2028, 1, 29)));
+  assert.equal(parseExpectedCsv("referencia;valor;vencimento\nA1;10,00;")[0].dueAt, undefined);
+  assert.equal(utcDay(2026, 2, 29), undefined);
+  const cnab = (data: string, valor: string) => ("1" + " ".repeat(61) + "00012345" + " ".repeat(38) + "06" + data + " ".repeat(137) + valor).padEnd(400);
+  assert.throws(() => parseBankFile("x.ret", cnab("310226", "0000000010050")), /data 310226 inválida/);
+  assert.throws(() => parseBankFile("x.ret", cnab("151026", "0000000000000")), /valor zero/);
+  assert.equal(parseBankFile("x.ret", cnab("151026", "0000000010050")).entries[0].amount, 100.5);
+  assert.equal(parseIsoDay("2026-02-30"), null);
+  assert.deepEqual(parseIsoDay("2026-02-28"), new Date(Date.UTC(2026, 1, 28)));
+});
+
+test("Valores: formatos BR, ponto decimal e OFX", () => {
+  const v = (s: string) => parseExpectedCsv(`referencia;valor\nA1;${s}`)[0].amount;
+  assert.equal(v("1.234"), 1234);
+  assert.equal(v("R$ 1.234"), 1234);
+  assert.equal(v("1.234,56"), 1234.56);
+  assert.equal(v("1234.56"), 1234.56);
+  assert.equal(v("1.5"), 1.5);
+  assert.equal(parseMoney("1.234.567"), 1234567);
+  assert.throws(() => v("12,345"), /ilegível/);
+  assert.throws(() => v("abc"), /ilegível/);
+  const ofx = (...trn: string[]) => `<OFX>${trn.map((t) => `<STMTTRN>${t}</STMTTRN>`).join("")}</OFX>`;
+  assert.equal(parseBankFile("x.ofx", ofx("<DTPOSTED>20261005<TRNAMT>1.234,56<FITID>A")).entries[0].amount, 1234.56);
+  assert.throws(() => parseBankFile("x.ofx", ofx("<DTPOSTED>20261005<TRNAMT>abc<FITID>F77")), /FITID F77/);
+  const r = parseBankFile("x.ofx", ofx("<DTPOSTED>20261005<TRNAMT>-80.00<FITID>D1", "<DTPOSTED>20261005<TRNAMT>80.00<FITID>C1"));
+  assert.equal(r.entries.length, 1);
+  assert.equal(r.entries[0].amount, 80);
+});
+
+test("decidePayment recusa valores inválidos", () => {
+  assert.throws(() => decidePayment(100, 0, -50, "strict"), RangeError);
+  assert.throws(() => decidePayment(100, 0, 0, "strict"), RangeError);
+  assert.throws(() => decidePayment(100, 0, NaN, "accept_excess"), RangeError);
+  assert.throws(() => decidePayment(100, 0, Infinity, "accept_excess"), RangeError);
+  assert.throws(() => decidePayment(NaN, 0, 10, "strict"), RangeError);
+});
+
+test("API: referência longa ou repetida nos esperados", () => {
+  const campos = (b: unknown) => {
+    const r = validateReconciliationBody(b);
+    return r.ok ? [] : r.errors.map((e) => e.campo);
+  };
+  const base = () => ({
+    nome: "t",
+    esperados: [{ referencia: "A-1", valor: 10, vencimento: "2026-10-01" }, { referencia: "B1", valor: 10, vencimento: "2026-10-01" }],
+    banco: { lancamentos: [{ referencia: "A1", valor: 10, data: "2026-10-01" }, { referencia: "A1", valor: 10, data: "2026-10-01" }] },
+  });
+  assert.deepEqual(campos(base()), []); // lançamentos repetidos são permitidos
+  const longo = base();
+  longo.esperados[0].referencia = "X".repeat(61);
+  longo.banco.lancamentos[1].referencia = "Y".repeat(61);
+  assert.deepEqual(campos(longo), ["esperados[0].referencia", "banco.lancamentos[1].referencia"]);
+  const rep = base();
+  rep.esperados[1].referencia = "a1";
+  const r = validateReconciliationBody(rep);
+  assert.ok(!r.ok && r.errors.some((e) => e.campo === "esperados[1].referencia" && /esperados\[0\]/.test(e.mensagem)));
+});
+
+test("Listas: sanção sem documento casa pelo nome; documento diferente vira possível homônimo", () => {
+  const idx = buildIndex([
+    { source: "OFAC", name: "Fulano X", nameKey: nameKey("Fulano X") },
+    { source: "INTERNA", name: "Beltrano Y", nameKey: nameKey("Beltrano Y"), document: "11122233344" },
+  ]);
+  // Lista de sanções sem documento: nome coincidente é match forte, com ou sem CPF do cliente
+  assert.equal(idx.match("99988877766", "Fulano X")?.name, "Fulano X");
+  assert.equal(idx.match(undefined, "Fulano X")?.name, "Fulano X");
+  assert.equal(idx.possibleHomonym("99988877766", "Fulano X"), undefined);
+  // Lista com documento completo e cliente com outro documento: não casa, é homônimo para conferir
+  assert.equal(idx.match("55566677788", "Beltrano Y"), undefined);
+  assert.equal(idx.possibleHomonym("55566677788", "Beltrano Y")?.name, "Beltrano Y");
+  assert.equal(idx.match("11122233344", "qualquer")?.name, "Beltrano Y");
+  assert.equal(buildIndex([]).possibleHomonym("1", "x"), undefined);
+
+  const sancionado = parseTransactionsCsv("data;cliente;cpf_cnpj;renda_mensal;pep;tipo;valor;contraparte;doc_contraparte\n08/10/2026 10:00;Fulano X;999.888.777-66;5000,00;N;PIX_RECEBIDO;1000,00;Empresa Z;\n");
+  assert.ok(analyzeClient(sancionado, DEFAULTS.pld, idx).some((a) => a.rule === "CLIENTE_LISTA_RESTRITIVA"));
+
+  const txs = parseTransactionsCsv("data;cliente;cpf_cnpj;renda_mensal;pep;tipo;valor;contraparte;doc_contraparte\n08/10/2026 10:00;Beltrano Y;555.666.777-88;5000,00;N;PIX_RECEBIDO;1000,00;Empresa Z;\n");
+  const alerts = analyzeClient(txs, DEFAULTS.pld, idx);
+  const h = alerts.find((a) => a.rule === "POSSIVEL_HOMONIMO");
+  assert.equal(h?.weight, 10);
+  assert.ok(!alerts.some((a) => a.rule === "CLIENTE_LISTA_RESTRITIVA"));
+  assert.ok(!PLD_MANDATORY.includes("POSSIVEL_HOMONIMO"));
+  assert.ok(prepararLote(txs, DEFAULTS.pld, idx, new Date(0)).casos.every((c) => !c.mandatory));
+});

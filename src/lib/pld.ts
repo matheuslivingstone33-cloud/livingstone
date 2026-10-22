@@ -267,6 +267,27 @@ export function analyzeClient(txs: Tx[], cfg: PldCfg = DEFAULTS.pld, lists: List
       evidence: [],
     });
 
+  // 9. Mesmo nome de entrada sem documento numa lista de sanções, mas o cliente/contraparte tem documento:
+  // não é match confirmado (pode ser homônimo), fica como alerta leve para o analista conferir.
+  const homonymOf = (doc: string | undefined, name: string | undefined) => {
+    const h = lists.possibleHomonym(doc, name);
+    return h && h.source !== "PEP" ? h : undefined;
+  };
+  const homonyms = [
+    ...(selfHit ? [] : [homonymOf(sorted[0].clientDoc, sorted[0].clientName)].filter(Boolean).map((h) => `${sorted[0].clientName}: ${h!.source} — ${h!.reason ?? h!.name}`)),
+    ...sorted.filter((t) => !hitOf(t) && homonymOf(t.counterDoc, t.counterparty)).map((t) => `${t.counterparty}: ${homonymOf(t.counterDoc, t.counterparty)!.source} — ${homonymOf(t.counterDoc, t.counterparty)!.reason ?? ""}`),
+  ];
+  const homonymTxs = sorted.filter((t) => !hitOf(t) && homonymOf(t.counterDoc, t.counterparty));
+  if (homonyms.length)
+    alerts.push({
+      rule: "POSSIVEL_HOMONIMO",
+      title: "Possível homônimo em lista — conferir documento",
+      weight: 10,
+      description: `Nome igual a entrada sem documento em lista restritiva: ${[...new Set(homonyms)].join("; ")}. Confirme pelo documento antes de tratar como match.`,
+      reference: "Lei 13.810/2019 e Circular BCB 3.978/2020, art. 34",
+      evidence: homonymTxs.map(ev),
+    });
+
   return alerts;
 }
 

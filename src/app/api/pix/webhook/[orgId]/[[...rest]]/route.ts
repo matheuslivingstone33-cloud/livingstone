@@ -43,7 +43,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
     const key = ev.endToEndId ?? ev.txid ?? "?";
     const ref = ev.txid ? parseTxid(ev.txid) : null;
     const amount = Number(ev.valor);
-    if (!ref || !ev.endToEndId || !(amount > 0)) {
+    if (!ref || !ev.endToEndId || !(Number.isFinite(amount) && amount > 0)) {
       results[key] = "ignorado";
       continue;
     }

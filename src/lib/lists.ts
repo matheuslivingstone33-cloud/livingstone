@@ -106,8 +106,15 @@ export function parseList(source: string, text: string): ListEntry[] {
   });
 }
 
-// Busca em memória: documento completo, CPF mascarado da CGU (6 dígitos centrais + nome) ou nome exato normalizado
-export type ListIndex = { match(doc: string | undefined, name: string | undefined): ListEntry | undefined };
+// Busca em memória: documento completo, CPF mascarado da CGU (6 dígitos centrais + nome) ou nome exato normalizado.
+// match: (1) documento completo no índice; (2) entrada com CPF mascarado casa se o CPF de 11 dígitos tem os 6 centrais;
+// (3) entrada sem documento casa por nome só se o cliente também não tem documento.
+// (4) entrada sem documento: casa pelo nome (sanções); (5) documento completo diferente: não casa, vira possibleHomonym.
+// (5) entrada com documento completo diferente do informado: não casa.
+export type ListIndex = {
+  match(doc: string | undefined, name: string | undefined): ListEntry | undefined;
+  possibleHomonym(doc: string | undefined, name: string | undefined): ListEntry | undefined;
+};
 
 export function buildIndex(entries: ListEntry[]): ListIndex {
   const byDoc = new Map<string, ListEntry>();
@@ -116,19 +123,24 @@ export function buildIndex(entries: ListEntry[]): ListIndex {
     if (e.document && e.document.length >= 11) byDoc.set(e.document, e);
     byName.set(e.nameKey, [...(byName.get(e.nameKey) ?? []), e]);
   }
+  const named = (name: string | undefined) => (name ? byName.get(nameKey(name)) ?? [] : []);
   return {
     match(doc, name) {
       const d = digits(doc);
       if (d && byDoc.has(d)) return byDoc.get(d);
-      if (!name) return undefined;
-      const cands = byName.get(nameKey(name));
-      if (!cands) return undefined;
-      // Nome igual: confirma pelo trecho de CPF quando a lista traz CPF mascarado (6 dígitos centrais)
-      for (const c of cands) {
+      for (const c of named(name)) {
+        // Listas de sanções (CSNU, OFAC) não trazem documento: a triagem é pelo nome e todo nome
+        // coincidente é um alerta forte, mesmo que o cliente tenha CPF/CNPJ — a identidade é conferida no caso.
         if (!c.document) return c;
         if (c.document.length === 6 && d.length === 11 && d.slice(3, 9) === c.document) return c;
       }
       return undefined;
+    },
+    possibleHomonym(doc, name) {
+      // Homônimo de verdade: a lista traz o documento completo e ele é diferente do cliente
+      const d = digits(doc);
+      if (!d || byDoc.has(d)) return undefined;
+      return named(name).find((c) => !!c.document && c.document.length >= 11 && c.document !== d);
     },
   };
 }

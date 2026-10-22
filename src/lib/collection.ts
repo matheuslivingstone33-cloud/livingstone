@@ -243,6 +243,9 @@ export type PaymentDecision =
 
 
 export function decidePayment(total: number, alreadyPaid: number, amount: number, mode: "strict" | "accept_excess"): PaymentDecision {
+  // Defesa em profundidade: os chamadores já validam, mas valor inválido nunca pode virar pagamento
+  if (!Number.isFinite(amount) || amount <= 0) throw new RangeError("Valor de pagamento inválido");
+  if (!Number.isFinite(total) || !Number.isFinite(alreadyPaid)) throw new RangeError("Total ou valor já pago inválido");
   const remaining = r2(total - alreadyPaid);
   if (mode === "strict" && amount > remaining + 0.01) return { kind: "reject_overpaid", remaining };
   const paid = r2(alreadyPaid + amount);

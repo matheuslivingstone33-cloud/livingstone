@@ -44,7 +44,12 @@ export async function createReconciliation(form: FormData) {
     fail(back, e instanceof BankFileError ? e.message : "Não foi possível ler o arquivo do banco.");
   }
   const { format, entries } = parsed;
-  const expected = parseExpectedCsv(decodeText(exp.data));
+  let expected: ReturnType<typeof parseExpectedCsv>;
+  try {
+    expected = parseExpectedCsv(decodeText(exp.data));
+  } catch (e) {
+    fail(back, e instanceof BankFileError ? e.message : "Não foi possível ler a lista de esperados.");
+  }
   if (!expected.length) fail(back, "Nenhum título válido na lista de esperados. Confira as colunas referencia e valor.");
   const { rec, itemCount } = await persistReconciliation(s.orgId, {
     name: String(form.get("name") || `Conciliação ${fmtData(new Date())}`),
