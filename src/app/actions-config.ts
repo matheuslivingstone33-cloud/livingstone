@@ -68,13 +68,21 @@ export async function saveSettings(form: FormData) {
       caseMinScore: num(form, "pld_score"),
       analysisDays: num(form, "pld_prazo"),
     },
+    ai: {
+      dailyLimitUsd: num(form, "ai_usd"),
+      dailyLimitCalls: num(form, "ai_calls"),
+    },
   };
   if (!next.cnab400.codigosLiquidacao.length) fail(back, "CNAB 400: informe ao menos um código de liquidação (ex.: 06).");
   const problem = validateSettings(next);
   if (problem) fail(back, problem);
 
   await db.organization.update({ where: { id: s.orgId }, data: { settings: next } });
-  await audit(s, "config.salvar", "Configurações da instituição atualizadas");
+  await audit(
+    s,
+    "config.salvar",
+    `Configurações da instituição atualizadas${cur.ai.dailyLimitUsd !== next.ai.dailyLimitUsd || cur.ai.dailyLimitCalls !== next.ai.dailyLimitCalls ? ` · teto de IA: US$ ${next.ai.dailyLimitUsd}/dia e ${next.ai.dailyLimitCalls} chamadas/dia` : ""}`,
+  );
   revalidatePath("/", "layout");
   redirect(`${back}?salvo=1`);
 }

@@ -1,5 +1,6 @@
 // PLD/FT: regras de monitoramento baseadas na Circular BCB 3.978/2020 e na Carta Circular 4.001/2020.
-import { pickAi, type AiCall } from "./ai";
+import { aiMeta, pickAi, type AiCall, type AiUsage } from "./ai";
+import { untrusted } from "./ai-prompt";
 import { checkDossier } from "./ai-guard";
 import type { AiStatus } from "./ai-guard";
 import { DEFAULTS, type Settings } from "./settings-defaults";
@@ -298,7 +299,7 @@ export type CaseInfo = {
   score: number;
 };
 
-export type DossierResult = { text: string; base: string; aiText?: string; provider: string; aiStatus: AiStatus; aiDetail?: string };
+export type DossierResult = { text: string; base: string; aiText?: string; provider: string; aiStatus: AiStatus; aiDetail?: string; usage?: AiUsage; model?: string; usageId?: string };
 
 export async function buildDossier(c: CaseInfo, opts: { useAi?: boolean; call?: AiCall } = {}): Promise<DossierResult> {
   // Período do lote é data de calendário (meia-noite UTC); a conferência da IA compara com este mesmo texto
@@ -338,14 +339,16 @@ export async function buildDossier(c: CaseInfo, opts: { useAi?: boolean; call?: 
   if (!call) return { text: base, base, provider: "demo", aiStatus: "desligada" };
   const r = await call<{ text: string }>(
     "Você é especialista em PLD/FT de instituição financeira brasileira. Redija dossiês objetivos, técnicos e factuais, sem juízo de culpa, adequados para fundamentar comunicação ao COAF. Não invente fatos além dos fornecidos.",
-    `Reescreva o dossiê abaixo em linguagem técnica e clara, mantendo todos os fatos, valores, datas e referências normativas exatamente como estão escritos. Inclua na seção 4 a análise de como as ocorrências se relacionam entre si. Retorne JSON {"text": string}.\n\n${base}`,
+    `Reescreva o dossiê abaixo em linguagem técnica e clara, mantendo todos os fatos, valores, datas e referências normativas exatamente como estão escritos. Inclua na seção 4 a análise de como as ocorrências se relacionam entre si. Não acrescente fatos, valores, datas, números, documentos, normas nem negações que não estejam no dossiê. Retorne JSON {"text": string}.\n\n${untrusted("dossie_base", base)}`,
     [],
-    { validate: (x): x is { text: string } => !!x && typeof (x as { text?: unknown }).text === "string" },
+    { task: "pld", validate: (x): x is { text: string } => !!x && typeof (x as { text?: unknown }).text === "string" },
   );
-  if (!r.ok) return { text: base, base, provider: "claude", aiStatus: "falhou", aiDetail: `${r.reason}: ${r.detail}`.slice(0, 300) };
+  const meta = aiMeta(r);
+  if (!r.ok && r.reason === "limite") return { text: base, base, provider: "demo", aiStatus: "bloqueada_limite", aiDetail: r.detail.slice(0, 300), ...meta };
+  if (!r.ok) return { text: base, base, provider: "claude", aiStatus: "falhou", aiDetail: `${r.reason}: ${r.detail}`.slice(0, 300), ...meta };
   const check = checkDossier(r.data.text, base);
-  if (!check.ok) return { text: base, base, provider: "claude", aiStatus: "rejeitada", aiDetail: `Faltou: ${check.missing.join("; ")}`.slice(0, 300) };
-  return { text: r.data.text, base, aiText: r.data.text, provider: "claude", aiStatus: "usada" };
+  if (!check.ok) return { text: base, base, provider: "claude", aiStatus: "rejeitada", aiDetail: `Faltou: ${check.missing.join("; ")}`.slice(0, 300), ...meta };
+  return { text: r.data.text, base, aiText: r.data.text, provider: "claude", aiStatus: "usada", ...meta };
 }
 
 // IA no dossiê: no máximo uma tentativa por caso a cada 24h (custo e consistência); o ADMIN pode forçar.

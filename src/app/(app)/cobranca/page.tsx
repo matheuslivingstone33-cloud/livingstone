@@ -15,11 +15,13 @@ export const maxDuration = 60;
 export default async function CobrancaPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; importados?: string; propostas?: string; falhas?: string }>;
+  searchParams: Promise<{ status?: string; importados?: string; propostas?: string; falhas?: string; restantes?: string; bloqueadas?: string }>;
 }) {
   const s = await requireSession();
-  const { status, importados, propostas, falhas } = await searchParams;
-  const nFalhas = Math.max(0, Math.floor(Number(falhas) || 0));
+  const { status, importados, propostas, falhas, restantes, bloqueadas } = await searchParams;
+  const intParam = (v?: string) => Math.max(0, Math.floor(Number(v) || 0));
+  const nFalhas = intParam(falhas);
+  const nBloqueadas = intParam(bloqueadas);
   const all = await db.debt.findMany({
     where: { orgId: s.orgId },
     orderBy: { dueDate: "asc" },
@@ -41,6 +43,9 @@ export default async function CobrancaPage({
   });
   const maxBand = Math.max(...byBand.map((b) => b.total), 1);
   const canEdit = s.role !== "AUDITOR";
+  // Restantes vem da URL, mas o banner só aparece se ainda houver contratos em aberto de verdade
+  const emAberto = rows.filter((d) => d.status === "EM_ABERTO").length;
+  const nRestantes = Math.min(intParam(restantes), emAberto);
 
   return (
     <>
@@ -65,6 +70,23 @@ export default async function CobrancaPage({
         </Notice>
       )}
 
+      {propostas && nBloqueadas > 0 && (
+        <Notice tone="info">
+          O teto diário de IA da instituição foi atingido: {nBloqueadas} proposta(s) saíram com a mensagem padrão, sem IA. O limite pode ser ajustado em Configurações.
+        </Notice>
+      )}
+      {canEdit && nRestantes > 0 && (
+        <Notice tone="warning">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>
+              {nRestantes} contrato(s) ainda sem proposta. A geração para em cerca de 45 segundos por vez para não estourar o tempo do servidor.
+            </span>
+            <form action={generateAllProposals}>
+              <SubmitButton pending="Gerando propostas...">Continuar gerando</SubmitButton>
+            </form>
+          </div>
+        </Notice>
+      )}
 
       <div className="mb-6 grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 lg:grid-cols-4">
         <Stat label="Carteira em atraso (atualizada)" value={brl(carteira)} tone="red" />

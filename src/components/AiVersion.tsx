@@ -1,6 +1,6 @@
 import { StatusBadge } from "@/components/ui";
 
-const BADGE: Record<string, string> = { usada: "IA_USADA", rejeitada: "IA_REJEITADA", falhou: "IA_FALHOU" };
+const BADGE: Record<string, string> = { usada: "IA_USADA", rejeitada: "IA_REJEITADA", falhou: "IA_FALHOU", bloqueada_limite: "IA_LIMITE" };
 
 /** Selo de qual versão está na tela e, quando a IA foi usada, a versão determinística para conferência. */
 export function AiVersion({ status, base, label = "Ver versão padrão (sem IA)" }: { status?: string | null; base?: string | null; label?: string }) {

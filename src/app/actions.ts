@@ -23,6 +23,7 @@ import { analyzeLegacy } from "@/lib/legacy";
 import { assertUploadTotal, decodeText, readUpload } from "@/lib/upload";
 import { getSettings } from "@/lib/settings";
 import type { AiFile } from "@/lib/ai";
+import { aiCallFor, markUsageRejected } from "@/lib/ai-meter";
 
 // Hash fixo para comparar quando o e-mail não existe: o tempo de resposta não revela quais e-mails são válidos
 const DUMMY_HASH = bcrypt.hashSync("senha-inexistente-para-comparacao", 10);
@@ -63,9 +64,11 @@ export async function logout() {
   redirect("/login");
 }
 
-// Registra quando a IA falhou ou foi rejeitada (sem o texto devolvido, só o motivo)
-async function auditAi(s: Session, modulo: string, ref: string, status: string, detail?: string) {
-  if (status === "rejeitada" || status === "falhou") await audit(s, `ia.${status}`, `${modulo}, ${ref}: ${detail ?? ""}`.slice(0, 500));
+// Registra quando a IA falhou, foi rejeitada ou barrada pelo teto (sem o texto devolvido, só o motivo)
+async function auditAi(s: Session, modulo: string, ref: string, r: { aiStatus: string; aiDetail?: string; usageId?: string }) {
+  if (r.aiStatus === "rejeitada") await markUsageRejected(s.orgId, r.usageId);
+  if (r.aiStatus === "bloqueada_limite") await audit(s, "ia.limite", `${modulo}: teto diário de IA atingido`);
+  if (r.aiStatus === "rejeitada" || r.aiStatus === "falhou") await audit(s, `ia.${r.aiStatus}`, `${modulo}, ${ref}: ${r.aiDetail ?? ""}`.slice(0, 500));
 }
 
 export async function createCreditAnalysis(
@@ -93,7 +96,7 @@ form: FormData) {
   if (!(Number.isInteger(input.months) && input.months >= 1 && input.months <= 420)) fail(back, "Prazo deve ser de 1 a 420 meses.");
   if (!(input.monthlyRate >= 0 && input.monthlyRate <= 0.2)) fail(back, "Taxa deve estar entre 0% e 20% ao mês.");
 
-  const r = await analyzeCredit(input, files, (await getSettings(s.orgId)).credit);
+  const r = await analyzeCredit(input, files, (await getSettings(s.orgId)).credit, { call: aiCallFor(s.orgId) });
   const rec = await db.creditAnalysis.create({
     data: {
       orgId: s.orgId,
@@ -112,7 +115,7 @@ form: FormData) {
     },
   });
   await audit(s, "credito.analisar", `${input.applicant}: ${r.decision} (score ${r.score})`);
-  await auditAi(s, "Crédito", input.applicant, r.aiStatus, r.aiDetail);
+  await auditAi(s, "Crédito", input.applicant, r);
   revalidatePath("/credito");
   redirect(`/credito/${rec.id}`);
 }
@@ -123,7 +126,7 @@ export async function createLegacyAnalysis(form: FormData) {
   if (!f) fail("/legado", "Envie um arquivo de código.");
   const target = ["TypeScript", "Java", "C#", "Python"].includes(String(form.get("target"))) ? String(form.get("target")) : "TypeScript";
 
-  const r = await analyzeLegacy(f.name, decodeText(f.data), target);
+  const r = await analyzeLegacy(f.name, decodeText(f.data), target, { call: aiCallFor(s.orgId) });
   const rec = await db.legacyAnalysis.create({
     data: {
       orgId: s.orgId,
@@ -139,7 +142,7 @@ export async function createLegacyAnalysis(form: FormData) {
     },
   });
   await audit(s, "legado.analisar", `${f.name} (${r.language} → ${target})`);
-  await auditAi(s, "Legado", f.name, r.aiStatus, r.aiDetail);
+  await auditAi(s, "Legado", f.name, r);
   revalidatePath("/legado");
   redirect(`/legado/${rec.id}`);
 }

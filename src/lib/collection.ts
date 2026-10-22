@@ -1,5 +1,6 @@
 // Cobrança: atualização da dívida, política de acordos, mensagem e Pix.
-import { pickAi, type AiCall } from "./ai";
+import { aiMeta, pickAi, type AiCall } from "./ai";
+import { untrusted } from "./ai-prompt";
 import { checkCollectionMessage } from "./ai-guard";
 import { fmtBRL } from "./format";
 import { DEFAULTS, type Band, type Settings } from "./settings-defaults";
@@ -69,6 +70,16 @@ export function buildOptions(updated: number, principal: number, days: number, c
 
 export const fmt = fmtBRL;
 
+/** Lote de propostas: tempo total antes de parar e devolver o restante (a função da Vercel tem 60 s). */
+export const PROPOSAL_BATCH_DEADLINE_MS = 45_000;
+/** Trava do lote na instituição (um lote por vez). */
+export const PROPOSAL_BATCH_LOCK_MS = 70_000;
+/** Tempo da IA para o próximo contrato do lote: até 15 s, sem passar do prazo do lote + 8 s de folga. */
+export const batchAiTimeout = (deadline: number, now: number) => Math.min(15_000, deadline + 8_000 - now);
+
+/** Texto de terceiros que entra no prompt: sem sinais de tag e curto. */
+export const promptSafe = (s: string | null | undefined, max = 80) => String(s ?? "").replace(/[<>]/g, "").replace(/\s+/g, " ").trim().slice(0, max);
+
 export type DebtInfo = { debtor: string; contract: string; product?: string | null; principal: number; dueDate: Date };
 
 export type { AiStatus } from "./ai-guard";
@@ -79,19 +90,20 @@ export async function proposal(
   link: string,
   cfg: CollectionCfg = DEFAULTS.collection,
   merchant = process.env.PIX_MERCHANT ?? "",
-  opts: { now?: Date; call?: AiCall; useAi?: boolean } = {},
+  opts: { now?: Date; call?: AiCall; useAi?: boolean; timeoutMs?: number } = {},
 ) {
   const upd = updateDebt(d.principal, d.dueDate, opts.now ?? new Date(), cfg);
   const options = buildOptions(upd.total, d.principal, upd.days, cfg);
   // Recomendação: à vista para dívidas menores; parcelado intermediário para as maiores
   const recommended = upd.total <= 3000 || options.length === 1 ? 0 : Math.min(2, options.length - 1);
-  const first = d.debtor.split(" ")[0];
+  const first = promptSafe(d.debtor).split(" ")[0];
+  const product = promptSafe(d.product);
   const best = options[0];
   const parc = options[options.length - 1];
 
   const messageBase = [
     `Olá, ${first}! Aqui é da ${merchant ? titleCase(merchant) : "sua instituição"}.`,
-    `Temos uma condição especial para regularizar o contrato ${d.contract}${d.product ? ` (${d.product})` : ""}:`,
+    `Temos uma condição especial para regularizar o contrato ${d.contract}${product ? ` (${product})` : ""}:`,
     `• À vista: ${fmt(best.total)}${best.discountPct > 0 ? ` (${best.discountPct.toFixed(0)}% de desconto)` : ""}`,
     options.length > 1 ? `• Ou em até ${parc.installments}x de ${fmt(parc.installment)}` : "",
     `Veja as opções e pague por Pix em: ${link}`,
@@ -101,8 +113,9 @@ export async function proposal(
     .join("\n");
 
   const base = { ...upd, options, recommended, messageBase };
-  const result = (message: string, provider: string, aiStatus: AiStatus, aiDetail?: string, missing: string[] = []) => ({
+  const result = (message: string, provider: string, aiStatus: AiStatus, aiDetail?: string, missing: string[] = [], meta: ReturnType<typeof aiMeta> = {}) => ({
     ...base,
+    ...meta,
     message,
     provider,
     aiStatus,
@@ -115,22 +128,26 @@ export async function proposal(
 
   const r = await call<{ message: string }>(
     "Você redige mensagens de negociação de dívidas para WhatsApp em nome de uma instituição financeira brasileira. Seja cordial, claro e respeitoso; siga o art. 42 do CDC (sem ameaças, constrangimento ou exposição). Mensagem curta, sem emojis em excesso. Não inclua nenhum link além do fornecido.",
-    `Reescreva a mensagem abaixo de forma mais persuasiva e humana, mantendo exatamente os valores, o contrato e o link.
+    `Reescreva a mensagem abaixo de forma mais persuasiva e humana, mantendo exatamente os valores, o contrato e o link. Não acrescente valores, datas, percentuais, números, contratos ou links que não estejam nela.
 Dias em atraso: ${upd.days}. Retorne JSON {"message": string}.
 
-${messageBase}`,
+${untrusted("mensagem_base", messageBase)}`,
     [],
-    { validate: (x): x is { message: string } => !!x && typeof (x as { message?: unknown }).message === "string" },
+    { task: "cobranca", timeoutMs: opts.timeoutMs, validate: (x): x is { message: string } => !!x && typeof (x as { message?: unknown }).message === "string" },
   );
-  if (!r.ok) return result(messageBase, "claude", "falhou", `${r.reason}: ${r.detail}`.slice(0, 300));
+  const meta = aiMeta(r);
+  if (!r.ok && r.reason === "limite") return result(messageBase, "demo", "bloqueada_limite", r.detail.slice(0, 300), [], meta);
+  if (!r.ok) return result(messageBase, "claude", "falhou", `${r.reason}: ${r.detail}`.slice(0, 300), [], meta);
   const multi = options.length > 1;
   const check = checkCollectionMessage(r.data.message, {
     values: { cashTotal: best.total, discountPct: best.discountPct, installments: multi ? parc.installments : undefined, installment: multi ? parc.installment : undefined },
     contract: d.contract,
     link,
+    base: messageBase,
+    days: upd.days,
   });
-  if (!check.ok) return result(messageBase, "claude", "rejeitada", `Faltou: ${check.missing.join("; ")}`.slice(0, 300), check.missing);
-  return result(r.data.message.trim(), "claude", "usada");
+  if (!check.ok) return result(messageBase, "claude", "rejeitada", `Faltou: ${check.missing.join("; ")}`.slice(0, 300), check.missing, meta);
+  return result(r.data.message.trim(), "claude", "usada", undefined, [], meta);
 }
 
 const titleCase = (s: string) => s.toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase());

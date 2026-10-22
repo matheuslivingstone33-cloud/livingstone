@@ -16,7 +16,10 @@ Plataforma de operações bancárias com IA para cooperativas de crédito, finan
 ## IA
 
 - **Sem chave:** leitura local de .txt, .csv e PDFs digitais (com texto). Fotos e PDFs escaneados exigem a IA. A conversão de legado cobre COBOL → TypeScript.
-- **Com chave:** preencha `ANTHROPIC_API_KEY` no `.env` (crie em https://console.anthropic.com) e reinicie. O Claude passa a ler PDFs e imagens, analisar Delphi/VB6 e converter para Java, C# e Python.
+- **Com chave:** preencha `ANTHROPIC_API_KEY` no `.env` (crie em https://console.anthropic.com) e reinicie. O Claude passa a ler PDFs e imagens, analisar Delphi/VB6 e converter para Java, C# e Python. É a única variável de IA obrigatória.
+- **Modelo por tarefa:** cobrança, PLD e crédito usam `claude-haiku-5-5` (esforço baixo); legado usa `claude-sonnet-5-5`. Para trocar, use `AI_MODEL_COBRANCA`, `AI_MODEL_PLD`, `AI_MODEL_CREDITO` ou `AI_MODEL_LEGADO`.
+- **Teto por instituição:** em Configurações → IA, o Administrador define o gasto (padrão US$ 2) e o número de chamadas (padrão 300) por dia, no horário de Brasília; 0 desliga a IA. Atingido o teto, os módulos seguem com o texto padrão e a auditoria registra `ia.limite`. O consumo (sem conteúdo) fica na tabela `AiUsage`.
+- **Legado:** arquivos acima de 1500 linhas úteis são analisados sem IA (conversão local), com aviso.
 
 As regras de decisão de crédito são sempre determinísticas (iguais nos dois modos), para o resultado ser auditável.
 

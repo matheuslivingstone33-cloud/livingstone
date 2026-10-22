@@ -32,6 +32,9 @@ model Organization {
   pldCases   PldCase[]
   apiKeys    ApiKey[]
   apiRequests ApiRequest[]
+  aiUsages   AiUsage[]
+  // Trava do lote de propostas com IA (um lote por vez na instituição)
+  aiBatchLockUntil DateTime?
 }
 
 model User {
@@ -328,4 +331,22 @@ model ApiRequest {
 
   @@unique([apiKeyId, idempotencyKey])
   @@index([apiKeyId, createdAt])
+}
+
+// Consumo de IA por chamada (teto diário da instituição). Nunca guarda prompt nem resposta.
+model AiUsage {
+  id           String       @id @default(cuid())
+  orgId        String
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  task         String
+  model        String
+  inputTokens  Int          @default(0)
+  outputTokens Int          @default(0)
+  cacheTokens  Int          @default(0)
+  costUsd      Decimal      @db.Decimal(12, 6)
+  // reservada | usada | falhou | rejeitada | bloqueada_limite
+  status       String
+  createdAt    DateTime     @default(now())
+
+  @@index([orgId, createdAt])
 }

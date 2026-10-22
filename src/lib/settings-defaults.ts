@@ -50,6 +50,8 @@ export const DEFAULTS = {
     caseMinScore: 20,
     analysisDays: 45,
   },
+  // Teto diário de IA da instituição (dia em Brasília). 0 em qualquer um desliga a IA.
+  ai: { dailyLimitUsd: 2, dailyLimitCalls: 300 },
 };
 
 export type Settings = typeof DEFAULTS;

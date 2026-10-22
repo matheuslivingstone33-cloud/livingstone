@@ -39,7 +39,8 @@ Cadastre em **Production** e **Preview** (valores diferentes por ambiente):
 | `APP_URL` | sim | URL do ambiente (ex.: `https://finops.suaempresa.com.br` em produção, URL fixa do preview no preview). Usada em links de acordo e na URL do webhook |
 | `CRON_SECRET` | sim | ≥ 32 caracteres; a Vercel envia `Authorization: Bearer <CRON_SECRET>` ao cron. Sem ele, `/api/cron/limpeza` responde 401 |
 | `AUDIT_RECEIPT_SECRET` | não | segredo próprio do recibo da auditoria (≥ 32); sem ele, é derivado do `AUTH_SECRET`. Trocar invalida recibos emitidos |
-| `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | não | sem chave, a IA não derruba nada: os módulos seguem com as regras determinísticas e sem os textos de IA |
+| `ANTHROPIC_API_KEY` | não | única variável da IA necessária. Sem chave, a IA não derruba nada: os módulos seguem com as regras determinísticas e sem os textos de IA |
+| `AI_MODEL_COBRANCA`, `AI_MODEL_PLD`, `AI_MODEL_CREDITO`, `AI_MODEL_LEGADO` | não | troca o modelo de uma tarefa (só aceita id `claude-...`). Padrão: Haiku 5.5 para cobrança, PLD e crédito; Sonnet 5.5 para legado. `ANTHROPIC_MODEL` não é mais lida |
 | `PIX_KEY`, `PIX_MERCHANT`, `PIX_CITY` | não | padrão do Pix |
 | `PIX_WEBHOOK_ALLOW_QUERY_SECRET` | não | deixe **desligado**. `1` aceita `?secret=` na URL do webhook, só para PSP que não envia header customizado (o segredo passa a aparecer em logs) |
 

@@ -40,6 +40,8 @@ export function validateSettings(s: Settings): string | null {
   if (!between(p.cashLimit, 1_000, 1_000_000)) return "PLD: limite de espécie inválido.";
   if (!between(p.analysisDays, 1, 45)) return "PLD: o prazo de análise não pode passar de 45 dias (Circular 3.978, art. 43).";
   if (!between(p.incomeRatio, 1, p.incomeRatioHigh)) return "PLD: razões de renda inválidas.";
+  if (!between(s.ai.dailyLimitUsd, 0, 1000) || !between(s.ai.dailyLimitCalls, 0, 10_000) || !Number.isInteger(s.ai.dailyLimitCalls))
+    return "IA: teto diário inválido (0 a 1000 USD e 0 a 10000 chamadas; 0 desliga a IA).";
   if (s.pix.key && !/^([^@\s]+@[^@\s]+\.[^@\s]+|\+55\d{10,11}|\d{11}|\d{14}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(s.pix.key))
     return "Pix: chave inválida (use e-mail, +55 telefone, CPF, CNPJ ou chave aleatória).";
   return null;

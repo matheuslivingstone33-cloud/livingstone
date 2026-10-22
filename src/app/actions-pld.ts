@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { audit, requireSession, type Session } from "@/lib/auth";
+import { aiCallFor, markUsageRejected } from "@/lib/ai-meter";
 import { aiProvider } from "@/lib/ai";
 import { DOSSIER_AI_WINDOW_MS, buildDossier, parseTransactionsCsv, type Alert } from "@/lib/pld";
 import { PLD_MAX_TRANSACOES } from "@/lib/pld-lote";
@@ -86,8 +87,10 @@ async function runDossier(s: Session, caseId: string, force: boolean) {
       alerts: c.alerts as unknown as Alert[],
       score: c.score,
     },
-    { useAi },
+    { useAi, call: useAi ? aiCallFor(s.orgId) : undefined },
   );
+  // Barrada pelo teto não conta como tentativa: a janela de 24h não começa
+  const tried = useAi && d.aiStatus !== "bloqueada_limite";
   // Fora da janela sem IA: mantém a última versão aprovada da IA, se ela ainda confere com a base atual
   const keepAi = !useAi && c.dossierAiText && c.dossierBase === d.base ? c.dossierAiText : undefined;
   const shown = d.aiText ?? keepAi ?? d.base;
@@ -97,10 +100,12 @@ async function runDossier(s: Session, caseId: string, force: boolean) {
       dossier: shown,
       dossierBase: d.base,
       // claude = IA conferida na tela; ia-rejeitada/ia-falhou = padrão exibido após tentativa; demo = sem IA
-      dossierAi: d.aiText || keepAi ? "claude" : useAi && d.provider === "claude" ? `ia-${d.aiStatus}` : recent && c.dossierAi?.startsWith("ia-") ? c.dossierAi : "demo",
-      ...(useAi ? { dossierAiAt: new Date(), dossierAiText: d.aiText ?? null } : {}),
+      dossierAi: d.aiText || keepAi ? "claude" : tried && d.provider === "claude" ? `ia-${d.aiStatus}` : recent && c.dossierAi?.startsWith("ia-") ? c.dossierAi : "demo",
+      ...(tried ? { dossierAiAt: new Date(), dossierAiText: d.aiText ?? null } : {}),
     },
   });
+  if (d.aiStatus === "rejeitada") await markUsageRejected(s.orgId, d.usageId);
+  if (d.aiStatus === "bloqueada_limite") await audit(s, "ia.limite", "PLD: teto diário de IA atingido");
   const status = useAi ? d.aiStatus : recent && aiProvider() === "claude" ? "janela_24h" : "desligada";
   await audit(s, "pld.dossie", `${c.clientName} (${c.clientDoc}) · IA: ${status}${force ? " (regeneração forçada)" : ""}${d.aiDetail ? ` · ${d.aiDetail}` : ""}`.slice(0, 500));
   revalidatePath(`/pld/${c.id}`);

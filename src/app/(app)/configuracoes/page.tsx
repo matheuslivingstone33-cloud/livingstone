@@ -11,6 +11,8 @@ import { SubmitButton } from "@/components/SubmitButton";
 import { FileSizeGuard } from "@/components/FileSizeGuard";
 import { CopyButton } from "@/components/CopyButton";
 import { dt } from "@/lib/format";
+import { TASKS, modelFor, type AiTask } from "@/lib/ai-config";
+import { diaSP, inicioDoDiaSP } from "@/lib/tz";
 
 // Tempo máximo da função na Vercel (actions e exportações longas)
 export const maxDuration = 60;
@@ -42,6 +44,30 @@ function SectionHead({ n, title, children }: { n: string; title: string; childre
 
 const P = (n: number) => +(n * 100).toFixed(2);
 
+const TASK_LABEL: Record<AiTask, string> = { cobranca: "Cobrança", pld: "PLD", credito: "Crédito", legado: "Legado" };
+const usd = (n: number) => `US$ ${n.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`;
+
+// Consumo de IA da instituição desde um instante (custo inclui reservas em andamento)
+async function aiConsumo(orgId: string, since: Date) {
+  const rows = await db.aiUsage.groupBy({ by: ["task", "status"], where: { orgId, createdAt: { gte: since } }, _sum: { costUsd: true }, _count: true });
+  const porTarefa = new Map<string, { custo: number; chamadas: number }>();
+  let custo = 0;
+  let chamadas = 0;
+  let bloqueadas = 0;
+  for (const r of rows) {
+    const c = Number(r._sum.costUsd ?? 0);
+    custo += c;
+    if (r.status === "bloqueada_limite") {
+      bloqueadas += r._count;
+      continue;
+    }
+    chamadas += r._count;
+    const t = porTarefa.get(r.task) ?? { custo: 0, chamadas: 0 };
+    porTarefa.set(r.task, { custo: t.custo + c, chamadas: t.chamadas + r._count });
+  }
+  return { custo, chamadas, bloqueadas, porTarefa };
+}
+
 export default async function ConfigPage({ searchParams }: { searchParams: Promise<{ salvo?: string; lista?: string; n?: string; webhook?: string }> }) {
   const s = await requireSession(["ADMIN"]);
   const q = await searchParams;
@@ -52,6 +78,9 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
     orderBy: [{ revokedAt: { sort: "desc", nulls: "first" } }, { createdAt: "desc" }],
     select: { id: true, name: true, prefix: true, scopes: true, createdAt: true, lastUsedAt: true, revokedAt: true, createdBy: { select: { name: true, active: true } } },
   });
+  const now = new Date();
+  const hojeSP = diaSP(now);
+  const [iaHoje, iaMes] = await Promise.all([aiConsumo(s.orgId, inicioDoDiaSP(hojeSP)), aiConsumo(s.orgId, inicioDoDiaSP(`${hojeSP.slice(0, 8)}01`))]);
   const webhookUrl = c.pix.webhookSecret ? `${appUrl()}/api/pix/webhook/${s.orgId}` : "";
 
   return (
@@ -61,7 +90,7 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
       {q.lista && <Notice>Lista {q.lista} importada: {q.n} registros.</Notice>}
 
       <nav aria-label="Seções das configurações" className="mb-6 flex flex-wrap gap-2">
-        {[["#pix", "Pix"], ["#cnab", "CNAB 400"], ["#credito", "Crédito"], ["#cobranca", "Cobrança"], ["#pld", "PLD"], ["#webhook", "Webhook"], ["#listas", "Listas"], ["#api", "API"]].map(([h, l]) => (
+        {[["#pix", "Pix"], ["#cnab", "CNAB 400"], ["#credito", "Crédito"], ["#cobranca", "Cobrança"], ["#pld", "PLD"], ["#ia", "IA"], ["#webhook", "Webhook"], ["#listas", "Listas"], ["#api", "API"]].map(([h, l]) => (
           <a key={h} href={h} className="chip">{l}</a>
         ))}
       </nav>
@@ -155,6 +184,40 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
           </div>
         </section>
 
+        <section className="card space-y-5" id="ia">
+          <SectionHead n="06" title="IA: teto diário e consumo">
+            Cada tarefa usa o modelo adequado ao trabalho: mensagens de cobrança, dossiês de PLD e leitura de documentos de crédito usam um modelo rápido e econômico; a modernização de código legado usa um modelo mais capaz. O texto da IA sempre passa pela conferência automática antes de aparecer. Ao atingir o teto do dia (horário de Brasília), os módulos seguem funcionando sem IA, com o texto padrão.
+          </SectionHead>
+          <div className="grid gap-4 md:grid-cols-3">
+            <Field label="Gasto máximo por dia" name="ai_usd" value={c.ai.dailyLimitUsd} suffix="US$" hint="0 a 1000. Use 0 para desligar a IA." />
+            <Field label="Chamadas por dia" name="ai_calls" value={c.ai.dailyLimitCalls} hint="0 a 10000. Use 0 para desligar a IA." />
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            {([["Hoje", iaHoje], ["Este mês", iaMes]] as const).map(([titulo, x]) => (
+              <div key={titulo} className="rounded-xl border border-line p-4">
+                <div className="text-xs font-medium uppercase tracking-wide text-ink-500">{titulo}</div>
+                <div className="mt-1 text-lg font-semibold tabular-nums text-ink-900">{usd(x.custo)}</div>
+                <p className="text-sm text-ink-600">
+                  {x.chamadas} chamada(s) · {x.bloqueadas} bloqueada(s) pelo teto
+                </p>
+                {x.porTarefa.size > 0 && (
+                  <ul className="mt-2 space-y-0.5 text-xs text-ink-600">
+                    {[...x.porTarefa].map(([t, v]) => (
+                      <li key={t} className="flex justify-between gap-3 tabular-nums">
+                        <span>{TASK_LABEL[t as AiTask] ?? t}</span>
+                        <span>{usd(v.custo)} · {v.chamadas}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+          <p className="hint">
+            Modelos em uso: {(Object.keys(TASKS) as AiTask[]).map((t) => `${TASK_LABEL[t]}: ${modelFor(t)}`).join(" · ")}. Valores estimados pela tabela de preços do fornecedor; a fatura oficial é a do fornecedor.
+          </p>
+        </section>
+
         <div className="sticky bottom-4 z-10 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-white/90 px-5 py-3 shadow-lift backdrop-blur-md">
           <p className="text-xs text-ink-500">As alterações valem para todos os usuários e ficam registradas na auditoria.</p>
           <SubmitButton pending="Salvando...">Salvar configurações</SubmitButton>
@@ -162,7 +225,7 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
       </form>
 
       <section className="card mt-6 space-y-4" id="webhook">
-        <SectionHead n="06" title="Baixa automática do Pix (webhook)">
+        <SectionHead n="07" title="Baixa automática do Pix (webhook)">
           Cadastre esta URL no seu banco/PSP como webhook da chave Pix e configure o segredo no header x-webhook-secret. Cada Pix recebido de um acordo é baixado automaticamente, sem digitação. O mesmo Pix nunca é baixado duas vezes.
         </SectionHead>
         {webhookUrl ? (
@@ -181,7 +244,7 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
       </section>
 
       <section className="card mt-6 space-y-5" id="listas">
-        <SectionHead n="07" title="Listas restritivas e PEP" />
+        <SectionHead n="08" title="Listas restritivas e PEP" />
         <div className="overflow-x-auto rounded-xl border border-line">
           <table className="table">
             <thead><tr><th>Lista</th><th>Onde obter</th><th className="num">Registros</th><th>Atualizada em</th></tr></thead>
@@ -227,7 +290,7 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
       </section>
 
       <section className="card mt-6 space-y-5" id="api">
-        <SectionHead n="08" title="Chaves da API">
+        <SectionHead n="09" title="Chaves da API">
           Para o ERP ou outro sistema da instituição enviar conciliações sem passar pela tela. A chave é da instituição: desativar quem a criou não a revoga. Veja a <a href="/docs/api" className="font-medium text-brand-700 underline">documentação da API</a>.
         </SectionHead>
         <ApiKeyForm />

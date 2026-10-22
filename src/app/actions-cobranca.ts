@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { audit, auditRaw, requireSession, type Session } from "@/lib/auth";
-import { parseDebtsCsv, proposal, type AiStatus, type Option } from "@/lib/collection";
+import { PROPOSAL_BATCH_DEADLINE_MS, PROPOSAL_BATCH_LOCK_MS, batchAiTimeout, parseDebtsCsv, proposal, type AiStatus, type Option } from "@/lib/collection";
+import { aiCallFor, markUsageRejected } from "@/lib/ai-meter";
 import { getSettings } from "@/lib/settings";
 import { appUrl, applyPayment, newAgreementToken } from "@/lib/payments";
 import { decodeText, readUpload } from "@/lib/upload";
@@ -33,15 +34,21 @@ export async function importDebts(form: FormData) {
 }
 
 type ProposalOutcome = { created: false } | { created: true; aiStatus: AiStatus };
+type ProposalAi = { useAi?: boolean; timeoutMs?: number };
 
-// Grava a proposta e audita a IA quando ela foi rejeitada ou falhou (só contrato e o que faltou, nunca o texto inteiro)
-async function createProposal(s: Session, debtId: string, useAi = true): Promise<ProposalOutcome> {
+// Grava a proposta e audita a IA quando ela foi rejeitada, falhou ou foi barrada pelo teto (só contrato e motivo, nunca o texto)
+async function createProposal(s: Session, debtId: string, ai: ProposalAi = {}): Promise<ProposalOutcome> {
   const orgId = s.orgId;
   const d = await db.debt.findFirstOrThrow({ where: { id: debtId, orgId } });
   if (d.status === "ACORDO" || d.status === "QUITADO") return { created: false };
   const cfg = await getSettings(orgId);
   const token = newAgreementToken();
-  const p = await proposal({ ...d, principal: Number(d.principal) }, `${appUrl()}/acordo/${token}`, cfg.collection, cfg.pix.merchant, { useAi });
+  const useAi = ai.useAi !== false;
+  const p = await proposal({ ...d, principal: Number(d.principal) }, `${appUrl()}/acordo/${token}`, cfg.collection, cfg.pix.merchant, {
+    useAi,
+    call: useAi ? aiCallFor(orgId) : undefined,
+    timeoutMs: ai.timeoutMs,
+  });
   const rec = p.options[p.recommended];
   await db.$transaction([
     // Uma proposta ativa por contrato: as anteriores em aberto são canceladas
@@ -66,8 +73,10 @@ async function createProposal(s: Session, debtId: string, useAi = true): Promise
     }),
     db.debt.update({ where: { id: debtId }, data: { status: "NEGOCIANDO" } }),
   ]);
-  if (p.aiStatus === "rejeitada")
-    await audit(s, "ia.rejeitada", `Cobrança, contrato ${d.contract}: faltou ${p.missing.join("; ")}`.slice(0, 500));
+  if (p.aiStatus === "rejeitada") {
+    await markUsageRejected(orgId, p.usageId);
+    await audit(s, "ia.rejeitada", `Cobrança, contrato ${d.contract}: ${p.missing.join("; ")}`.slice(0, 500));
+  }
   if (p.aiStatus === "falhou") await audit(s, "ia.falhou", `Cobrança, contrato ${d.contract}: ${p.aiDetail ?? ""}`.slice(0, 500));
   return { created: true, aiStatus: p.aiStatus };
 }
@@ -78,6 +87,7 @@ export async function generateProposal(debtId: string) {
   if (!d) fail("/cobranca", "Contrato não encontrado.");
   const r = await createProposal(s, debtId);
   if (!r.created) fail(`/cobranca/${debtId}`, "Este contrato já tem acordo fechado.");
+  if (r.aiStatus === "bloqueada_limite") await audit(s, "ia.limite", `Cobrança, contrato ${d.contract}: teto diário de IA atingido`);
   await audit(s, "cobranca.proposta", `Contrato ${d.contract} (IA: ${r.aiStatus})`);
   revalidatePath("/cobranca");
   redirect(`/cobranca/${debtId}`);
@@ -86,20 +96,40 @@ export async function generateProposal(debtId: string) {
 // Após 3 falhas seguidas da IA, o resto do lote sai com a mensagem padrão (sem esperar timeouts em série)
 const BREAKER_LIMIT = 3;
 
+// Lote: um por vez na instituição (trava no banco), para em PROPOSAL_BATCH_DEADLINE_MS e devolve o restante.
+// "Continuar gerando" chama esta mesma action: ela só pega contratos ainda EM_ABERTO.
 export async function generateAllProposals() {
   const s = await requireSession(["ADMIN", "ANALISTA"]);
-  const open = await db.debt.findMany({ where: { orgId: s.orgId, status: "EM_ABERTO" }, select: { id: true } });
-  const c = { geradas: 0, ia: 0, rejeitadas: 0, falhas: 0, erros: 0 };
+  const started = Date.now();
+  const lock = await db.organization.updateMany({
+    where: { id: s.orgId, OR: [{ aiBatchLockUntil: null }, { aiBatchLockUntil: { lt: new Date(started) } }] },
+    data: { aiBatchLockUntil: new Date(started + PROPOSAL_BATCH_LOCK_MS) },
+  });
+  if (!lock.count) fail("/cobranca", "Já há uma geração em andamento. Aguarde ela terminar e tente de novo.");
+
+  const deadline = started + PROPOSAL_BATCH_DEADLINE_MS;
+  const c = { geradas: 0, ia: 0, rejeitadas: 0, falhas: 0, erros: 0, bloqueadas: 0, restantes: 0 };
   let seguidas = 0;
+  let teto = false;
   try {
-    for (const d of open) {
+    const open = await db.debt.findMany({ where: { orgId: s.orgId, status: "EM_ABERTO" }, select: { id: true }, orderBy: { dueDate: "asc" } });
+    for (let i = 0; i < open.length; i++) {
+      // Sem tempo para mais um contrato: para aqui e devolve o restante para "Continuar gerando"
+      if (Date.now() >= deadline) {
+        c.restantes = open.length - i;
+        break;
+      }
       try {
-        const r = await createProposal(s, d.id, seguidas < BREAKER_LIMIT);
+        const useAi = !teto && seguidas < BREAKER_LIMIT;
+        const r = await createProposal(s, open[i].id, { useAi, timeoutMs: batchAiTimeout(deadline, Date.now()) });
         if (!r.created) continue;
         c.geradas++;
         if (r.aiStatus === "usada") c.ia++;
         if (r.aiStatus === "rejeitada") c.rejeitadas++;
         if (r.aiStatus === "falhou") c.falhas++;
+        if (r.aiStatus === "bloqueada_limite") teto = true;
+        // Teto estourado no meio do lote: o resto sai sem IA e conta como bloqueado
+        if (teto && (r.aiStatus === "bloqueada_limite" || r.aiStatus === "desligada")) c.bloqueadas++;
         seguidas = r.aiStatus === "falhou" ? seguidas + 1 : r.aiStatus === "desligada" ? seguidas : 0;
       } catch {
         // Um contrato com problema não derruba o lote
@@ -107,14 +137,16 @@ export async function generateAllProposals() {
       }
     }
   } finally {
+    await db.organization.updateMany({ where: { id: s.orgId }, data: { aiBatchLockUntil: null } }).catch(() => undefined);
+    if (teto) await audit(s, "ia.limite", `Cobrança em lote: teto diário de IA atingido; ${c.bloqueadas} proposta(s) sem IA`).catch(() => undefined);
     await audit(
       s,
       "cobranca.proposta_lote",
-      `${c.geradas} propostas geradas · IA usada ${c.ia} · rejeitada ${c.rejeitadas} · falhou ${c.falhas} · erros ${c.erros}${seguidas >= BREAKER_LIMIT ? " · IA desligada no lote após falhas seguidas" : ""}`,
+      `${c.geradas} propostas geradas · IA usada ${c.ia} · rejeitada ${c.rejeitadas} · falhou ${c.falhas} · bloqueada pelo teto ${c.bloqueadas} · erros ${c.erros} · restantes ${c.restantes}${seguidas >= BREAKER_LIMIT ? " · IA desligada no lote após falhas seguidas" : ""}`,
     );
   }
   revalidatePath("/cobranca");
-  redirect(`/cobranca?propostas=${c.geradas}&falhas=${c.falhas + c.erros}`);
+  redirect(`/cobranca?propostas=${c.geradas}&restantes=${c.restantes}&falhas=${c.falhas + c.erros}&bloqueadas=${c.bloqueadas}`);
 }
 
 export async function registerPayment(agreementId: string, form: FormData) {

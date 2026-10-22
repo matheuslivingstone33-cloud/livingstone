@@ -1,4 +1,5 @@
-import { pickAi, type AiCall } from "./ai";
+import { aiMeta, pickAi, type AiCall, type AiUsage } from "./ai";
+import { untrusted } from "./ai-prompt";
 import { isLegacyShape, type AiStatus } from "./ai-guard";
 
 export type Rule = { onde: string; regra: string };
@@ -11,7 +12,13 @@ export type LegacyResult = {
   provider: string;
   aiStatus: AiStatus;
   aiDetail?: string;
+  usage?: AiUsage;
+  model?: string;
+  usageId?: string;
 };
+
+/** Acima disso a análise segue sem IA (custo e tempo da função): só a conversão local, com aviso. */
+export const LEGACY_AI_MAX_LINES = 1500;
 
 export function detectLanguage(name: string, code: string): string {
   if (/\.(cbl|cob|cpy)$/i.test(name) || /IDENTIFICATION\s+DIVISION|PROCEDURE\s+DIVISION/i.test(code)) return "COBOL";
@@ -122,25 +129,33 @@ export async function analyzeLegacy(fileName: string, code: string, target: stri
   const language = detectLanguage(fileName, code);
   const linesOfCode = code.split(/\r?\n/).filter((l) => l.trim() && !/^\s*(\*|\/\/|'|\{)/.test(l)).length;
 
-  const call = pickAi(opts.call);
-  let fallback: { aiStatus: AiStatus; aiDetail?: string; provider: string } = { aiStatus: "desligada", provider: "demo" };
+  const tooBig = linesOfCode > LEGACY_AI_MAX_LINES;
+  const call = tooBig ? undefined : pickAi(opts.call);
+  let fallback: Pick<LegacyResult, "aiStatus" | "aiDetail" | "provider" | "usage" | "model" | "usageId"> = { aiStatus: "desligada", provider: "demo" };
+  if (tooBig && pickAi(opts.call))
+    fallback.aiDetail = `Arquivo com ${linesOfCode} linhas úteis (acima de ${LEGACY_AI_MAX_LINES}): análise feita sem IA. Divida o programa em partes menores para usar a IA.`;
   if (call) {
     const r = await call<{ summary: string; rules: Rule[]; modernCode: string }>(
       "Você é especialista em modernização de sistemas bancários legados. Explique o código de forma clara para analistas de negócio, extraia as regras de negócio e gere uma versão moderna equivalente, idiomática e comentada.",
       `Linguagem de origem: ${language}. Linguagem de destino: ${target}.
 Retorne JSON: {"summary": string (explicação em português), "rules": [{"onde": nome da rotina, "regra": regra de negócio em português}], "modernCode": string}
 
-Código (${fileName}):
-${code}`,
+${untrusted("codigo_legado", `Arquivo: ${fileName.replace(/[<>"]/g, "").slice(0, 120)}
+${code}`)}`,
       [],
-      { validate: isLegacyShape },
+      { task: "legado", validate: isLegacyShape },
     );
     if (r.ok) {
       const { summary, rules, modernCode } = r.data;
-      return { language, linesOfCode, summary, rules: rules.map(({ onde, regra }) => ({ onde, regra })), modernCode, provider: "claude", aiStatus: "usada" };
+      return { language, linesOfCode, summary, rules: rules.map(({ onde, regra }) => ({ onde, regra })), modernCode, provider: "claude", aiStatus: "usada", ...aiMeta(r) };
     }
     // Forma inválida é rejeição; rede/HTTP/JSON é falha. Nos dois casos segue o fluxo determinístico.
-    fallback = { aiStatus: r.reason === "forma" ? "rejeitada" : "falhou", aiDetail: `${r.reason}: ${r.detail}`.slice(0, 300), provider: "demo-fallback" };
+    fallback = {
+      aiStatus: r.reason === "limite" ? "bloqueada_limite" : r.reason === "forma" ? "rejeitada" : "falhou",
+      aiDetail: `${r.reason}: ${r.detail}`.slice(0, 300),
+      provider: r.reason === "limite" ? "demo" : "demo-fallback",
+      ...aiMeta(r),
+    };
   }
 
   if (language === "COBOL") {
@@ -149,7 +164,7 @@ ${code}`,
     return {
       language,
       linesOfCode,
-      summary: `Programa ${programId} em COBOL com ${linesOfCode} linhas úteis, ${fields.length} campo(s) de dados e ${paragraphs.length} rotina(s) (${paragraphs.join(", ") || "nenhuma"}). Foram identificadas ${rules.length} regra(s) de negócio (condições e cálculos). Conversão local (sem IA): tradução estrutural automática para TypeScript; com a IA ativa, o resumo e a conversão ficam completos e idiomáticos.`,
+      summary: `${tooBig ? `Aviso: ${fallback.aiDetail} ` : ""}Programa ${programId} em COBOL com ${linesOfCode} linhas úteis, ${fields.length} campo(s) de dados e ${paragraphs.length} rotina(s) (${paragraphs.join(", ") || "nenhuma"}). Foram identificadas ${rules.length} regra(s) de negócio (condições e cálculos). Conversão local (sem IA): tradução estrutural automática para TypeScript; com a IA ativa, o resumo e a conversão ficam completos e idiomáticos.`,
       rules,
       modernCode: target === "TypeScript" ? ts : `// Conversão local (sem IA) converte apenas para TypeScript.\n\n${ts}`,
       ...fallback,
