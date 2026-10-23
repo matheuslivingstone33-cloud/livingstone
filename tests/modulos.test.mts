@@ -1262,3 +1262,27 @@ test("Etapa 3 pureza: libs de fechamento não importam banco, Next, auth nem IA"
     assert.ok(!/^import /m.test(src), f);
   }
 });
+
+import { decideRate, windowStart } from "../src/lib/api-keys";
+import { outOfBudget, planWebhookBatch, WEBHOOK_MAX_EVENTS } from "../src/lib/pix-webhook";
+
+test("Limite da API: decideRate e windowStart", () => {
+  assert.deepEqual(decideRate(59, 60), { ok: true });
+  assert.equal(decideRate(60, 60).ok, false);
+  assert.equal(windowStart(new Date("2026-01-01T12:00:30Z")).toISOString(), "2026-01-01T12:00:00.000Z");
+});
+
+test("Webhook Pix: tamanho do lote e orçamento de tempo", () => {
+  assert.equal(WEBHOOK_MAX_EVENTS, 100);
+  assert.deepEqual(planWebhookBatch(100), { ok: true });
+  assert.deepEqual(planWebhookBatch(101), { ok: false, erro: "lote_grande", maximo: 100 });
+  assert.equal(outOfBudget(1000, 45_999, 45_000), false);
+  assert.equal(outOfBudget(1000, 46_000, 45_000), true);
+});
+
+test("applyPayment trava o acordo filtrando pela organização", () => {
+  const src = readFileSync(new URL("../src/lib/payments.ts", import.meta.url), "utf8");
+  const sql = src.match(/\$queryRaw[^`]*`([^`]*)`/)?.[1] ?? "";
+  assert.match(sql, /"orgId"/);
+  assert.match(sql, /FOR UPDATE/);
+});

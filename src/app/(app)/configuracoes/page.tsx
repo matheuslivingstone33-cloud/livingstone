@@ -226,7 +226,7 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
 
       <section className="card mt-6 space-y-4" id="webhook">
         <SectionHead n="07" title="Baixa automática do Pix (webhook)">
-          Cadastre esta URL no seu banco/PSP como webhook da chave Pix e configure o segredo no header x-webhook-secret. Cada Pix recebido de um acordo é baixado automaticamente, sem digitação. O mesmo Pix nunca é baixado duas vezes.
+          Cadastre esta URL no seu banco/PSP como webhook da chave Pix e configure o segredo no header x-webhook-secret. Cada Pix recebido de um acordo é baixado automaticamente, sem digitação. O mesmo Pix nunca é baixado duas vezes. Cada chamada aceita até 100 eventos; lotes maiores são recusados (413) e devem ser divididos.
         </SectionHead>
         {webhookUrl ? (
           <div className="flex flex-wrap items-center gap-2">

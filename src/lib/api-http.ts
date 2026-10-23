@@ -6,6 +6,7 @@ import { db } from "./db";
 import {
   IDEMPOTENCY_KEY_RE,
   decideIdempotency,
+  decideRate,
   hasScope,
   hashKey,
   idempotencyFingerprint,
@@ -68,15 +69,30 @@ export async function withApiKey(req: Request, scope: ApiScope, handler: (ctx: A
   if (!hasScope(key.scopes, scope)) return apiError(403, "insufficient_scope", `Esta chave não tem o escopo ${scope}.`);
 
   const now = new Date();
-  // Limite por chave, contado no banco (vale entre instâncias serverless)
-  const recent = await db.apiRequest.count({ where: { apiKeyId: key.id, createdAt: { gte: new Date(now.getTime() - 60_000) } } });
-  if (recent >= API_RATE_PER_MINUTE)
-    return apiError(429, "rate_limited", `Limite de ${API_RATE_PER_MINUTE} requisições por minuto excedido.`, undefined, { "Retry-After": "60" });
+  const base = { orgId: key.orgId, apiKeyId: key.id, method, path };
+  // Limite por chave, atômico entre instâncias: sob a trava da chave, conta o último minuto e já reserva a linha
+  // desta requisição (status 0). Toda requisição autenticada conta, inclusive replays e erros.
+  const slot = await db.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`api:${key.id}`}))`;
+    const recent = await tx.apiRequest.count({ where: { apiKeyId: key.id, createdAt: { gte: new Date(now.getTime() - 60_000) } } });
+    const rate = decideRate(recent, API_RATE_PER_MINUTE);
+    if (!rate.ok) return rate;
+    const row = await tx.apiRequest.create({ data: { ...base, status: 0, createdAt: now } });
+    return { ok: true as const, id: row.id };
+  });
+  if (!slot.ok)
+    return apiError(429, "rate_limited", `Limite de ${API_RATE_PER_MINUTE} requisições por minuto excedido.`, undefined, { "Retry-After": String(slot.retryAfter) });
+  const reqId = slot.id;
+  // Todos os caminhos daqui em diante atualizam a linha reservada; nunca criam outra
+  const record = (data: Prisma.ApiRequestUpdateInput) => db.apiRequest.update({ where: { id: reqId }, data }).catch(() => {});
+  const fail = async (status: number, code: string, message: string) => {
+    await record({ status });
+    return apiError(status, code, message);
+  };
 
   if (!key.lastUsedAt || now.getTime() - key.lastUsedAt.getTime() > 60_000)
     await db.apiKey.update({ where: { id: key.id }, data: { lastUsedAt: now } }).catch(() => {});
 
-  const base = { orgId: key.orgId, apiKeyId: key.id, method, path };
   const ctxBase = { key, orgId: key.orgId, ip: requestIp(req), params: url.searchParams };
 
   if (method !== "POST") {
@@ -87,42 +103,42 @@ export async function withApiKey(req: Request, scope: ApiScope, handler: (ctx: A
       console.error("api", method, path, e instanceof Error ? e.message : e);
       r = { status: 500, json: errBody("internal_error", "Erro interno. Tente novamente.") };
     }
-    await db.apiRequest.create({ data: { ...base, status: r.status, resourceType: r.resourceType, resourceId: r.resourceId } }).catch(() => {});
+    await record({ status: r.status, resourceType: r.resourceType, resourceId: r.resourceId });
     return NextResponse.json(r.json, { status: r.status });
   }
 
   // POST: Idempotency-Key obrigatório
   const idemKey = req.headers.get("idempotency-key") ?? "";
   if (!IDEMPOTENCY_KEY_RE.test(idemKey))
-    return apiError(400, "idempotency_key_required", "Envie o header Idempotency-Key (1 a 100 caracteres: letras, números, _ ou -).");
+    return fail(400, "idempotency_key_required", "Envie o header Idempotency-Key (1 a 100 caracteres: letras, números, _ ou -).");
 
   const raw = await readLimited(req);
-  if (raw === null) return apiError(413, "payload_too_large", `Corpo acima de ${formatBytes(API_MAX_BODY_BYTES)}.`);
+  if (raw === null) return fail(413, "payload_too_large", `Corpo acima de ${formatBytes(API_MAX_BODY_BYTES)}.`);
   let body: unknown;
   try {
     body = JSON.parse(raw);
   } catch {
-    return apiError(400, "invalid_json", "O corpo não é um JSON válido.");
+    return fail(400, "invalid_json", "O corpo não é um JSON válido.");
   }
   const fingerprint = idempotencyFingerprint(body);
 
   const existing = await db.apiRequest.findUnique({ where: { apiKeyId_idempotencyKey: { apiKeyId: key.id, idempotencyKey: idemKey } } });
   const decision = decideIdempotency(existing, fingerprint, now);
-  if (decision === "replay" && existing)
+  if (decision === "replay" && existing) {
+    await record({ status: existing.status });
     return NextResponse.json(existing.responseJson, { status: existing.status, headers: { "Idempotent-Replay": "true" } });
-  if (decision === "mismatch")
-    return apiError(422, "idempotency_key_reused", "Esta Idempotency-Key já foi usada com outro corpo. Use uma chave nova.");
-  if (decision === "em_andamento")
-    return apiError(409, "request_in_progress", "Uma requisição com esta Idempotency-Key ainda está em processamento.");
+  }
+  if (decision === "mismatch") return fail(422, "idempotency_key_reused", "Esta Idempotency-Key já foi usada com outro corpo. Use uma chave nova.");
+  if (decision === "em_andamento") return fail(409, "request_in_progress", "Uma requisição com esta Idempotency-Key ainda está em processamento.");
   if (decision === "expirado" && existing) await db.apiRequest.delete({ where: { id: existing.id } }).catch(() => {});
 
-  // Reserva a chave antes de processar: requisições simultâneas com a mesma chave recebem 409
-  let reqId: string;
+  // Reserva a Idempotency-Key na própria linha: requisições simultâneas com a mesma chave recebem 409
   try {
-    reqId = (await db.apiRequest.create({ data: { ...base, status: 0, idempotencyKey: idemKey, fingerprint } })).id;
+    await db.apiRequest.update({ where: { id: reqId }, data: { idempotencyKey: idemKey, fingerprint } });
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")
-      return apiError(409, "request_in_progress", "Uma requisição com esta Idempotency-Key ainda está em processamento.");
+      return fail(409, "request_in_progress", "Uma requisição com esta Idempotency-Key ainda está em processamento.");
+    await record({ status: 500 });
     throw e;
   }
 
@@ -132,7 +148,7 @@ export async function withApiKey(req: Request, scope: ApiScope, handler: (ctx: A
   } catch (e) {
     console.error("api", method, path, e instanceof Error ? e.message : e);
     // Falha interna: libera a chave para o cliente tentar de novo, mas mantém o registro para o limite
-    await db.apiRequest.update({ where: { id: reqId }, data: { status: 500, idempotencyKey: null } }).catch(() => {});
+    await record({ status: 500, idempotencyKey: null });
     return apiError(500, "internal_error", "Erro interno. Tente novamente.");
   }
   await db.apiRequest.update({

@@ -71,3 +71,15 @@ export function decideIdempotency(
   if (existing.responseJson === null || existing.responseJson === undefined) return "em_andamento";
   return "replay";
 }
+
+// ---------- Limite de requisições ----------
+
+/** Decide se uma requisição passa, dado quantas a chave já fez na janela. count = requisições anteriores. */
+export function decideRate(count: number, limit: number): { ok: true } | { ok: false; retryAfter: number } {
+  return count < limit ? { ok: true } : { ok: false, retryAfter: 60 };
+}
+
+/** Início do minuto (UTC) que contém `now`. Útil para relatórios e janelas alinhadas. */
+export function windowStart(now: Date): Date {
+  return new Date(Math.floor(now.getTime() / 60_000) * 60_000);
+}

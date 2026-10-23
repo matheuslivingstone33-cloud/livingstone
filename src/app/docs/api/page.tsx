@@ -158,7 +158,7 @@ export default function ApiDocs() {
 
         <Sec id="limites" title="Limites">
           <ul className="list-disc space-y-1 pl-5">
-            <li>60 requisições por minuto por chave; acima disso, 429 com <C>Retry-After</C>.</li>
+            <li>60 requisições por minuto por chave; acima disso, 429 com <C>Retry-After</C>. Toda requisição autenticada conta, inclusive replays de idempotência e respostas de erro.</li>
             <li>Corpo de até {CORPO_MAX}; arquivo do banco de até {ARQUIVO_MAX}; até 20.000 títulos e 20.000 lançamentos.</li>
           </ul>
         </Sec>

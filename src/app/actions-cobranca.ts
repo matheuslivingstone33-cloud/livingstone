@@ -52,7 +52,7 @@ async function createProposal(s: Session, debtId: string, ai: ProposalAi = {}): 
   const rec = p.options[p.recommended];
   await db.$transaction([
     // Uma proposta ativa por contrato: as anteriores em aberto são canceladas
-    db.agreement.updateMany({ where: { debtId, status: "PROPOSTO" }, data: { status: "CANCELADO" } }),
+    db.agreement.updateMany({ where: { debtId, status: "PROPOSTO", debt: { orgId } }, data: { status: "CANCELADO" } }),
     db.agreement.create({
       data: {
         debtId,
@@ -71,7 +71,7 @@ async function createProposal(s: Session, debtId: string, ai: ProposalAi = {}): 
         expiresAt: new Date(Date.now() + cfg.collection.validityDays * 86_400_000),
       },
     }),
-    db.debt.update({ where: { id: debtId }, data: { status: "NEGOCIANDO" } }),
+    db.debt.updateMany({ where: { id: debtId, orgId }, data: { status: "NEGOCIANDO" } }),
   ]);
   if (p.aiStatus === "rejeitada") {
     await markUsageRejected(orgId, p.usageId);
@@ -159,7 +159,7 @@ export async function registerPayment(agreementId: string, form: FormData) {
   const remaining = Number(a.total) - Number(a.paidAmount ?? 0);
   if (amount > remaining + 0.01) fail(back, `O valor excede o saldo do acordo (${remaining.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}).`);
 
-  const r = await applyPayment({ agreementId: a.id, amount, source: "MANUAL", createdBy: s.name });
+  const r = await applyPayment({ agreementId: a.id, orgId: s.orgId, amount, source: "MANUAL", createdBy: s.name });
   // Rechecado dentro da transação: um Pix pode ter chegado entre a conferência acima e a gravação
   if (r.status === "exceeds_balance")
     fail(back, `O valor excede o saldo do acordo (${(r.remaining ?? 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}).`);
@@ -183,7 +183,7 @@ export async function acceptAgreement(token: string, form: FormData) {
     data: { status: "ACEITO", acceptedAt: new Date(), total: opt.total, installments: opt.installments, installment: opt.installment, discountPct: opt.discountPct },
   });
   if (count === 1) {
-    await db.debt.update({ where: { id: a.debtId }, data: { status: "ACORDO" } });
+    await db.debt.updateMany({ where: { id: a.debtId, orgId: a.debt.orgId }, data: { status: "ACORDO" } });
     await auditRaw(a.debt.orgId, null, "cobranca.aceite", `Contrato ${a.debt.contract}: ${opt.label} de R$ ${opt.total.toFixed(2)} (devedor)`);
   }
   redirect(`/acordo/${token}`);

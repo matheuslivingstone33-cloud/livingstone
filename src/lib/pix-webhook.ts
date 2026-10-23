@@ -7,3 +7,15 @@ export function pickWebhookSecret(headers: Headers, url: string, allowQuery: boo
   if (!allowQuery) return "";
   return new URL(url).searchParams.get("secret") ?? "";
 }
+
+// Limites do lote: cabe com folga nos 60 s da função na Vercel
+export const WEBHOOK_MAX_EVENTS = 100;
+export const WEBHOOK_BUDGET_MS = 45_000;
+
+/** Lote acima do máximo é recusado inteiro (o PSP reenvia dividido). */
+export function planWebhookBatch(len: number, max = WEBHOOK_MAX_EVENTS): { ok: true } | { ok: false; erro: "lote_grande"; maximo: number } {
+  return len <= max ? { ok: true } : { ok: false, erro: "lote_grande", maximo: max };
+}
+
+/** true quando o tempo gasto desde startedAt já atingiu o orçamento. */
+export const outOfBudget = (startedAt: number, now: number, budget = WEBHOOK_BUDGET_MS) => now - startedAt >= budget;

@@ -31,6 +31,8 @@ export type ApplyResult = {
 
 export async function applyPayment(p: {
   agreementId: string;
+  /** Organização dona do acordo: trava, leitura e escrita filtram por ela */
+  orgId: string;
   amount: number;
   paidAt?: Date;
   source: "MANUAL" | "PIX_WEBHOOK";
@@ -40,9 +42,11 @@ export async function applyPayment(p: {
 }): Promise<ApplyResult> {
   return db.$transaction(async (tx) => {
     // Trava a linha do acordo: pagamentos simultâneos são somados em fila, nunca em paralelo
-    const rows = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "Agreement" WHERE id = ${p.agreementId} FOR UPDATE`;
+    // O JOIN com Debt garante que acordo de outra organização nunca é travado nem alterado
+    const rows = await tx.$queryRaw<{ id: string }[]>`SELECT a.id FROM "Agreement" a JOIN "Debt" d ON d.id = a."debtId" WHERE a.id = ${p.agreementId} AND d."orgId" = ${p.orgId} FOR UPDATE OF a`;
     if (!rows.length) return { status: "not_found" };
-    const a = await tx.agreement.findUniqueOrThrow({ where: { id: p.agreementId } });
+    const a = await tx.agreement.findFirst({ where: { id: p.agreementId, debt: { orgId: p.orgId } } });
+    if (!a) return { status: "not_found" };
     const webhook = p.source === "PIX_WEBHOOK";
     // Pix que chega depois da quitação já está na conta: é registrado como excedente, não descartado
     if (a.status !== "ACEITO" && !(webhook && a.status === "PAGO")) return { status: "not_payable", agreementStatus: a.status };
@@ -67,7 +71,7 @@ export async function applyPayment(p: {
     // Em acordo já quitado, a data de quitação é preservada
     const paidAt = a.status === "PAGO" ? undefined : (p.paidAt ?? new Date());
     await tx.agreement.update({ where: { id: a.id }, data: { status: settled ? "PAGO" : "ACEITO", paidAt, paidAmount: paid } });
-    await tx.debt.update({ where: { id: a.debtId }, data: { status: settled ? "QUITADO" : "ACORDO" } });
+    await tx.debt.updateMany({ where: { id: a.debtId, orgId: p.orgId }, data: { status: settled ? "QUITADO" : "ACORDO" } });
     return { status: "applied", settled, paid, overpaid };
   });
 }
