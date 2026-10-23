@@ -6,7 +6,7 @@ export type TaskConfig = { model: string; effort: AiEffort; max_tokens: number; 
 
 /** Modelo, esforço, teto de saída e tempo máximo de cada tarefa. */
 export const TASKS: Record<AiTask, TaskConfig> = {
-  cobranca: { model: "claude-haiku-5-5", effort: "low", max_tokens: 1024, timeoutMs: 15_000 },
+  cobranca: { model: "claude-haiku-5-5", effort: "low", max_tokens: 2048, timeoutMs: 15_000 },
   pld: { model: "claude-haiku-5-5", effort: "low", max_tokens: 4096, timeoutMs: 40_000 },
   credito: { model: "claude-haiku-5-5", effort: "low", max_tokens: 4096, timeoutMs: 45_000 },
   legado: { model: "claude-sonnet-5-5", effort: "medium", max_tokens: 6000, timeoutMs: 50_000 },
