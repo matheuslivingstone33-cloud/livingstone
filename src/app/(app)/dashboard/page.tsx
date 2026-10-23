@@ -3,8 +3,7 @@ import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, dt } from "@/lib/format";
 import { TZ } from "@/lib/tz";
-import { debtStatus } from "@/lib/collection";
-import { PageTitle, Stat, Empty, CardHeader, MoreLink } from "@/components/ui";
+import { PageTitle, Stat, Empty, CardHeader, MoreLink, Badge, statusLabel } from "@/components/ui";
 import { AreaTrend, Bars, CHART, StackBar } from "@/components/charts";
 import { DueBadge, RiskBadge } from "../pld/badges";
 
@@ -130,7 +129,7 @@ export default async function Dashboard() {
                   <Link href={`/pld/${c.id}`} className="flex items-center justify-between gap-3 rounded-xl px-2 py-2.5 text-sm transition-colors hover:bg-paper">
                     <span className="flex min-w-0 items-center gap-2">
                       <span className="truncate font-medium text-ink-900">{c.clientName}</span>
-                      {c.mandatory && <span className="badge bg-red-700 text-white">COE</span>}
+                      {c.mandatory && <Badge tone="critical" dot={false}>COE</Badge>}
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
                       <RiskBadge risk={c.risk} score={c.score} />
@@ -165,7 +164,7 @@ export default async function Dashboard() {
             <Bars
               rows={["EM_ABERTO", "NEGOCIANDO", "ACORDO", "QUITADO"].map((k) => {
                 const d = debts.find((x) => x.status === k);
-                return { label: debtStatus[k]?.[0] ?? k, value: Number(d?._sum.principal ?? 0), hint: plural(d?._count ?? 0, "contrato", "contratos") };
+                return { label: statusLabel(k), value: Number(d?._sum.principal ?? 0), hint: plural(d?._count ?? 0, "contrato", "contratos") };
               })}
               format={compact}
             />

@@ -4,9 +4,9 @@ import { getSettings } from "@/lib/settings";
 import { appUrl } from "@/lib/payments";
 import { saveSettings, rotateWebhookSecret } from "../../actions-config";
 import { importRestrictedList } from "../../actions-pld";
-import { revokeApiKey } from "../../actions-api";
+import { RevokeKeyButton } from "@/components/RevokeKeyButton";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
-import { PageTitle, Notice } from "@/components/ui";
+import { PageTitle, Notice, StatusBadge } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 import { FileSizeGuard } from "@/components/FileSizeGuard";
 import { CopyButton } from "@/components/CopyButton";
@@ -294,7 +294,7 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
           Para o ERP ou outro sistema da instituição enviar conciliações sem passar pela tela. A chave é da instituição: desativar quem a criou não a revoga. Veja a <a href="/docs/api" className="font-medium text-brand-700 underline">documentação da API</a>.
         </SectionHead>
         <ApiKeyForm />
-        <div className="overflow-x-auto rounded-xl border border-line">
+        <div className="hidden overflow-x-auto rounded-xl border border-line sm:block">
           <table className="table">
             <thead><tr><th>Nome</th><th>Prefixo</th><th>Escopos</th><th>Criada por</th><th>Última utilização</th><th>Situação</th><th><span className="sr-only">Ações</span></th></tr></thead>
             <tbody>
@@ -308,24 +308,35 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
                   <td className="text-xs text-ink-600">{k.scopes.join(", ")}</td>
                   <td className="whitespace-nowrap text-ink-600">{k.createdBy.name}{!k.createdBy.active && <span className="text-xs text-ink-500"> (desativado)</span>}<div className="text-xs text-ink-500">{dt(k.createdAt)}</div></td>
                   <td className="whitespace-nowrap text-ink-500">{k.lastUsedAt ? dt(k.lastUsedAt) : "nunca"}</td>
-                  <td>
-                    {k.revokedAt
-                      ? <span className="badge bg-slate-100 text-slate-700">Revogada em {dt(k.revokedAt)}</span>
-                      : <span className="badge bg-emerald-50 text-emerald-700">Ativa</span>}
-                  </td>
-                  <td className="text-right">
-                    {!k.revokedAt && (
-                      <form action={revokeApiKey}>
-                        <input type="hidden" name="id" value={k.id} />
-                        <button type="submit" className="btn-danger">Revogar</button>
-                      </form>
-                    )}
-                  </td>
+                  <td>{k.revokedAt ? <StatusBadge status="REVOGADA" label={`Revogada em ${dt(k.revokedAt)}`} /> : <StatusBadge status="ATIVA" />}</td>
+                  <td className="text-right">{!k.revokedAt && <RevokeKeyButton id={k.id} name={k.name} />}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        <ul className="space-y-3 sm:hidden" aria-label="Chaves da API">
+          {apiKeys.length === 0 && <li className="rounded-xl border border-line px-4 py-6 text-center text-sm text-ink-500">Nenhuma chave criada.</li>}
+          {apiKeys.map((k) => (
+            <li key={k.id} className="rounded-xl border border-line bg-white p-4">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <h3 className="min-w-0 break-words font-medium text-ink-900">{k.name}</h3>
+                {k.revokedAt ? <StatusBadge status="REVOGADA" label={`Revogada em ${dt(k.revokedAt)}`} /> : <StatusBadge status="ATIVA" />}
+              </div>
+              <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+                <dt className="text-ink-500">Prefixo</dt>
+                <dd><code className="font-mono text-xs">fo_live_{k.prefix}_…</code></dd>
+                <dt className="text-ink-500">Escopos</dt>
+                <dd className="break-words text-xs text-ink-600">{k.scopes.join(", ")}</dd>
+                <dt className="text-ink-500">Criada por</dt>
+                <dd className="text-ink-600">{k.createdBy.name}{!k.createdBy.active && " (desativado)"} · {dt(k.createdAt)}</dd>
+                <dt className="text-ink-500">Último uso</dt>
+                <dd className="text-ink-600">{k.lastUsedAt ? dt(k.lastUsedAt) : "nunca"}</dd>
+              </dl>
+              {!k.revokedAt && <div className="mt-4"><RevokeKeyButton id={k.id} name={k.name} /></div>}
+            </li>
+          ))}
+        </ul>
       </section>
     </>
   );

@@ -2,7 +2,7 @@ import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { dt } from "@/lib/format";
 import { changeUserRole, createUser, revokeUserSessions, setUserActive } from "../../actions";
-import { PageTitle, CardHeader, TableCard } from "@/components/ui";
+import { PageTitle, CardHeader, TableCard, StatusBadge } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 import { PasswordField } from "@/components/PasswordField";
 
@@ -56,9 +56,9 @@ export default async function UsuariosPage() {
                     )}
                   </td>
                   <td>
-                    {!u.active ? <span className="badge bg-slate-100 text-slate-600">Desativado</span>
-                      : locked ? <span className="badge bg-red-50 text-red-800">Bloqueado até {dt(u.lockedUntil)}</span>
-                      : <span className="badge bg-emerald-50 text-emerald-800"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />Ativo</span>}
+                    {!u.active ? <StatusBadge status="DESATIVADO" />
+                      : locked ? <StatusBadge status="BLOQUEADO" label={`Bloqueado até ${dt(u.lockedUntil)}`} />
+                      : <StatusBadge status="ATIVO" />}
                   </td>
                   <td className="whitespace-nowrap text-ink-500">{dt(u.lastLoginAt)}</td>
                   <td>

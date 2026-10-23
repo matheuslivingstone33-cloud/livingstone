@@ -32,7 +32,7 @@ const T = {
     ref: "Data de referência",
     conc: {
       title: "Conciliação bancária",
-      text: "Títulos esperados contra o retorno CNAB 400 do banco. Casamento por referência e, sem referência, por valor e data (±3 dias), com tolerância de 2 centavos.",
+      text: "Títulos esperados contra o retorno CNAB 400 do banco (o CNAB 240 também é lido). Casamento por referência e, sem referência, por valor e data (±3 dias), com tolerância de 2 centavos.",
       expected: "Títulos esperados",
       received: "Recebido no arquivo",
       matched: "Conciliados",
@@ -101,7 +101,7 @@ const T = {
     ref: "Reference date",
     conc: {
       title: "Bank reconciliation",
-      text: "Expected receivables against the bank's CNAB 400 return file. Matching by reference and, without one, by amount and date (±3 days), with a 2-cent tolerance.",
+      text: "Expected receivables against the bank's CNAB 400 return file (CNAB 240 is also read). Matching by reference and, without one, by amount and date (±3 days), with a 2-cent tolerance.",
       expected: "Expected items",
       received: "Received in file",
       matched: "Reconciled",

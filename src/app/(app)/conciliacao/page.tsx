@@ -17,7 +17,7 @@ export default async function ConciliacaoPage() {
 
   return (
     <>
-      <PageTitle eyebrow="Conciliação" title="Conciliação bancária" subtitle="Cruze o arquivo do banco (CNAB 400, OFX ou CSV) com os títulos esperados" />
+      <PageTitle eyebrow="Conciliação" title="Conciliação bancária" subtitle="Cruze o arquivo do banco (CNAB 400 ou 240, OFX ou CSV) com os títulos esperados" />
       {canEdit && (
         <form action={createReconciliation} className="card mb-8 grid gap-4 md:grid-cols-3">
           <div className="md:col-span-3">

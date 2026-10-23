@@ -8,165 +8,7 @@ import { bandOf, buildOptions, updateDebt } from "@/lib/collection";
 import { MalhaTransacoes } from "@/components/MalhaTransacoes";
 import { HeroVideo } from "@/components/HeroVideo";
 import { BRAND } from "@/lib/brand";
-
-type Lang = "pt" | "en";
-
-const T = {
-  pt: {
-    login: "Entrar",
-    demo: "Fazer o tour",
-    explore: "Conhecer os módulos",
-    heroTag: "Para cooperativas de crédito, financeiras e fintechs",
-    h1a: "Da dívida em atraso",
-    h1b: "ao acordo pago no Pix.",
-    sub: "Atualize a dívida com multa e juros dentro do limite legal, ofereça propostas por faixa de atraso e envie o link por WhatsApp. O cliente escolhe a condição e paga por Pix, com baixa única. Conciliação, crédito e PLD/COAF na mesma plataforma.",
-    talk: "Falar com a gente",
-    mailSubject: "Quero conhecer a Livingstone",
-    col: {
-      title: "Cobrança · acordo por faixa de atraso",
-      sample: "Números ilustrativos",
-      overdue: "dias em atraso",
-      principal: "Valor original",
-      multa: "Multa (2%)",
-      juros: "Juros de mora (1% a.m.)",
-      updated: "Dívida atualizada",
-      offers: "Propostas enviadas por WhatsApp",
-      sent: "Cliente abriu o link e escolheu à vista",
-      paid: "Pix recebido",
-      once: "baixa única no acordo",
-      aria: "Cobrança ilustrativa: dívida em atraso atualizada com multa e juros, três propostas de acordo e o pagamento à vista recebido por Pix.",
-      cash: "À vista",
-      off: "de desconto",
-      of: "de",
-      contract: "contrato",
-    },
-    reconKicker: "Conciliação",
-    reconTitle: "O retorno do banco cruzado com seus títulos",
-    reconSub: "Lê CNAB 400 e 240, OFX e CSV, aplica as regras que você configurou e mostra o que bateu, o que divergiu, o que não foi pago e o crédito que ninguém esperava.",
-    proofKicker: "Sem promessa no escuro",
-    proofTitle: "Como você verifica",
-    proofs: [
-      ["Regras à vista", "Política de crédito, limites de PLD, multa e juros ficam em Configurações. Cada mudança é validada e entra na auditoria."],
-      ["Trilha conferível na tela", "A página de Auditoria recalcula a corrente de registros e mostra se está íntegra ou em qual registro ela quebrou."],
-      ["Arquivos reais de formato bancário", "O tour usa arquivos CNAB, OFX e CSV que você pode baixar e abrir; são os mesmos dos testes automatizados."],
-      ["Quem vê o quê", "Perfis de Administrador, Analista e Auditor (só leitura), com cada consulta filtrada pela instituição do usuário."],
-    ],
-    flow: { inputs: ["CNAB 400", "OFX", "CSV", "Holerite", "COBOL"], outputs: ["Conciliado", "Divergente", "Não pago", "Não esperado"], core: "Regras auditáveis", chain: "Trilha encadeada" },
-    live: {
-      title: "Retorno do banco × títulos",
-      sample: "Números ilustrativos",
-      tol: "tolerância de 2 centavos",
-      cols: ["Referência", "Esperado", "Recebido", "Status", "Regra"],
-      matched: "conciliados",
-      excess: "Pago a maior (excedente)",
-      aria: "Conciliação ilustrativa: títulos conciliados por referência e por valor e data, uma diferença de centavos dentro da tolerância, um Pix pago a maior, um título não pago e um crédito não esperado.",
-      rules: ["Referência", "Valor e data"],
-      notes: { tol: "Diferença de R$ 0,02 dentro da tolerância", excess: "Pix · pago a maior: R$ 27,40", unpaid: "Pagamento não localizado no arquivo do banco", unexpected: "Crédito sem título correspondente" },
-      noTitle: "sem título",
-    },
-    formats: "Lê os arquivos que sua operação já usa",
-    modulesKicker: "Módulos",
-    secKicker: "Segurança",
-    legacyKicker: "Modernização",
-    modulesTitle: "Cinco rotinas que hoje consomem sua equipe",
-    modules: [
-      ["Conciliação bancária", "Lê o retorno CNAB 400, o extrato OFX ou CSV e cruza com os títulos esperados. Aponta o que bateu, o que divergiu, o que não foi pago e o crédito que ninguém esperava."],
-      ["Análise de crédito", "Lê holerite e extrato, extrai renda e despesas, avisa de cheque devolvido, apostas e CPF divergente, e aplica a política de comprometimento de renda. A decisão é sempre por regra, então dá para auditar."],
-      ["Cobrança e renegociação", "Atualiza a dívida, monta propostas por faixa de atraso e manda o link por WhatsApp. O devedor escolhe a condição e paga por Pix no mesmo lugar."],
-      ["PLD / COAF", "Oito regras abrem casos por cliente com pontuação de risco, dossiê com evidências e prazo de 45 dias. Comunicação obrigatória não pode ser arquivada."],
-      ["Código legado", "Recebe COBOL, Delphi ou VB6, explica o programa, extrai as regras de negócio e propõe a versão moderna para seu time revisar."],
-    ],
-    legacyTitle: "Do COBOL ao código que seu time entende",
-    legacySub: "A plataforma lê o programa antigo, extrai as regras de negócio e entrega o equivalente moderno.",
-    secTitle: "Cada passo registrado, cada alteração visível",
-    sec: [
-      ["Trilha encadeada", "Cada registro guarda o hash SHA-256 do anterior. Se alguém alterar ou apagar uma linha direto no banco, a corrente quebra e a tela de auditoria mostra em qual registro."],
-      ["Dados separados por organização", "Toda consulta filtra pela instituição do usuário. Perfis de Administrador, Analista e Auditor."],
-      ["Login e sessão endurecidos", "Bloqueio após tentativas, sessão derrubada na hora ao trocar senha ou perfil, cabeçalhos de segurança e uploads validados pelo conteúdo."],
-      ["Pix sem baixa duplicada", "Cada Pix é baixado uma única vez, mesmo com cliques ou webhooks simultâneos."],
-    ],
-    ctaTitle: "Veja o produto funcionando",
-    ctaSub: "Faça o tour com números ilustrativos ou entre na sua conta.",
-    foot: "Operações bancárias com IA",
-  },
-  en: {
-    login: "Sign in",
-    demo: "Take the tour",
-    explore: "Explore the modules",
-    heroTag: "For credit unions, lenders and fintechs",
-    h1a: "From overdue debt",
-    h1b: "to a deal paid by Pix.",
-    sub: "Update the debt with fines and interest within legal limits, offer deals by days overdue and send the link on WhatsApp. The debtor picks one and pays by Pix, posted exactly once. Reconciliation, credit and AML/COAF in the same platform.",
-    talk: "Talk to us",
-    mailSubject: "I want to know Livingstone",
-    col: {
-      title: "Collections · deals by days overdue",
-      sample: "Illustrative figures",
-      overdue: "days overdue",
-      principal: "Original amount",
-      multa: "Late fee (2%)",
-      juros: "Late interest (1%/month)",
-      updated: "Updated debt",
-      offers: "Offers sent on WhatsApp",
-      sent: "Debtor opened the link and chose upfront",
-      paid: "Pix received",
-      once: "posted once to the deal",
-      aria: "Illustrative collections: an overdue debt updated with fee and interest, three deal offers and the upfront payment received by Pix.",
-      cash: "Upfront",
-      off: "off",
-      of: "of",
-      contract: "contract",
-    },
-    reconKicker: "Reconciliation",
-    reconTitle: "The bank return matched to your receivables",
-    reconSub: "Reads CNAB 400 and 240, OFX and CSV, applies the rules you configured and shows what matched, what diverged, what is unpaid and the credit nobody expected.",
-    proofKicker: "No promises in the dark",
-    proofTitle: "How you check",
-    proofs: [
-      ["Rules in plain sight", "Credit policy, AML limits, fees and interest live in Settings. Every change is validated and written to the audit trail."],
-      ["A trail you can check on screen", "The Audit page recomputes the chain of records and shows whether it is intact or where it broke."],
-      ["Real bank-format files", "The tour uses CNAB, OFX and CSV files you can download and open; the same ones used in the automated tests."],
-      ["Who sees what", "Administrator, Analyst and Auditor (read-only) roles, with every query filtered by the user's institution."],
-    ],
-    flow: { inputs: ["CNAB 400", "OFX", "CSV", "Payslip", "COBOL"], outputs: ["Matched", "Divergent", "Unpaid", "Unexpected"], core: "Auditable rules", chain: "Chained trail" },
-    live: {
-      title: "Bank return × receivables",
-      sample: "Illustrative figures",
-      tol: "2-cent tolerance",
-      cols: ["Reference", "Expected", "Received", "Status", "Rule"],
-      matched: "matched",
-      excess: "Overpaid (excess)",
-      aria: "Illustrative reconciliation: receivables matched by reference and by amount and date, a cents difference within tolerance, an overpaid Pix, an unpaid receivable and an unexpected credit.",
-      rules: ["Reference", "Amount and date"],
-      notes: { tol: "R$ 0.02 difference within tolerance", excess: "Pix · overpaid by R$ 27.40", unpaid: "Payment not found in the bank file", unexpected: "Credit with no matching receivable" },
-      noTitle: "no receivable",
-    },
-    formats: "Reads the files your operation already uses",
-    modulesKicker: "Modules",
-    secKicker: "Security",
-    legacyKicker: "Modernization",
-    modulesTitle: "Five routines that drain your team today",
-    modules: [
-      ["Bank reconciliation", "Reads CNAB 400 returns, OFX or CSV statements and matches them to expected receivables. Flags what matched, what diverged, what is unpaid and the credit nobody expected."],
-      ["Credit analysis", "Reads payslips and statements, extracts income and expenses, warns about bounced checks, gambling and mismatched tax IDs, and applies your income-commitment policy. Decisions are rule-based, so they can be audited."],
-      ["Collections and renegotiation", "Updates the debt, builds offers by days overdue and sends the link on WhatsApp. The debtor picks a deal and pays by Pix in the same place."],
-      ["AML / COAF", "Eight rules open cases per client with risk scores, an evidence dossier and a 45-day deadline. Mandatory reports cannot be archived."],
-      ["Legacy code", "Takes COBOL, Delphi or VB6, explains the program, extracts the business rules and proposes a modern version for your team to review."],
-    ],
-    legacyTitle: "From COBOL to code your team understands",
-    legacySub: "The platform reads the old program, extracts the business rules and delivers the modern equivalent.",
-    secTitle: "Every step recorded, every change visible",
-    sec: [
-      ["Chained trail", "Each record stores the SHA-256 hash of the previous one. If someone edits or deletes a row straight in the database, the chain breaks and the audit screen shows where."],
-      ["Data separated per organization", "Every query filters by the user's institution. Administrator, Analyst and Auditor roles."],
-      ["Hardened login and sessions", "Lockout after failed attempts, sessions dropped instantly on password or role change, security headers and content-validated uploads."],
-      ["Pix with no double posting", "Each Pix is posted exactly once, even with simultaneous clicks or webhooks."],
-    ],
-    ctaTitle: "See the product working",
-    ctaSub: "Take the tour with illustrative figures or sign in to your account.",
-    foot: "AI-powered banking operations",
-  },
-} as const;
+import { T, type Lang } from "./landing-copy";
 
 const COBOL = `COMPUTE JUROS = SALDO * TAXA * DIAS / 30
 IF DIAS-ATRASO > 0
@@ -184,6 +26,8 @@ const TS = `function updateDebt(balance: number, daysLate: number) {
 const FORMATS = ["CNAB 400", "CNAB 240", "OFX", "CSV", "Pix", "COBOL", "Delphi", "VB6"];
 const MODULE_ICONS = ["conciliacao", "credito", "cobranca", "pld", "legado"];
 const SEC_ICONS = ["chain", "usuarios", "lock", "check"];
+// Itens da seção de provas que levam a uma página de conferência (índice → rota)
+const PROOF_LINKS: Record<number, string> = { 4: "/docs/api" };
 const OUT_COLORS = ["#34b59a", "#e0b84a", "#f87171", "#a78bfa"];
 
 // Exemplo do hero calculado pelas regras reais da cobrança (datas fixas para não mudar a cada build).
@@ -313,7 +157,8 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ l
           <HeroVideo
             src="/video/livingstone-hero.mp4"
             poster="/video/livingstone-hero-poster.png"
-            label="Animação: lançamentos do banco sendo conciliados automaticamente, seguidos dos módulos de cobrança, crédito e PLD"
+            label={t.videoAria}
+            labels={t.heroVideo}
           />
         </div>
       </section>
@@ -428,7 +273,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ l
           {t.proofKicker}
         </p>
         <h2 className="font-display mt-4 text-4xl font-semibold tracking-tight text-balance md:text-5xl">{t.proofTitle}</h2>
-        <ol className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+        <ol className="mt-12 grid gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
           {t.proofs.map(([title, body], i) => (
             <li key={title} className="border-t border-ink-900/15 pt-5">
               <span className="font-display text-2xl text-brand-600 tabular-nums" aria-hidden="true">
@@ -436,6 +281,12 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ l
               </span>
               <h3 className="mt-3 font-semibold tracking-tight">{title}</h3>
               <p className="mt-2 text-sm leading-relaxed text-ink-600">{body}</p>
+              {PROOF_LINKS[i] && (
+                <Link href={PROOF_LINKS[i]} className="mt-3 inline-flex items-center gap-1.5 rounded text-sm font-medium text-brand-700 underline-offset-4 hover:underline">
+                  {t.proofLink}
+                  <Icon name="arrow" size={14} />
+                </Link>
+              )}
             </li>
           ))}
         </ol>

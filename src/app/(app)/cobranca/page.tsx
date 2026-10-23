@@ -2,10 +2,10 @@ import Link from "next/link";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, day } from "@/lib/format";
-import { bandOf, debtStatus, updateDebt } from "@/lib/collection";
+import { bandOf, DEBT_STATUSES, updateDebt } from "@/lib/collection";
 import { getSettings } from "@/lib/settings";
 import { importDebts, generateAllProposals, generateProposal } from "../../actions-cobranca";
-import { PageTitle, Stat, Empty, Notice, CardHeader, TableCard, FilterBar } from "@/components/ui";
+import { PageTitle, Stat, Empty, Notice, CardHeader, TableCard, FilterBar, StatusBadge, statusLabel } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 import { FileSizeGuard } from "@/components/FileSizeGuard";
 
@@ -128,7 +128,7 @@ export default async function CobrancaPage({
       </div>
 
       <FilterBar label="Filtrar contratos por situação">
-        {[["", "Todos"], ...Object.entries(debtStatus).map(([k, v]) => [k, v[0]])].map(([k, label]) => (
+        {[["", "Todos"], ...DEBT_STATUSES.map((k) => [k, statusLabel(k)])].map(([k, label]) => (
           <Link key={k} href={k ? `?status=${k}` : "?"} aria-current={(status ?? "") === k ? "page" : undefined} className="chip">
             {label}
           </Link>
@@ -150,7 +150,7 @@ export default async function CobrancaPage({
                   <td className="whitespace-nowrap">{day(d.dueDate)}</td>
                   <td className="num whitespace-nowrap">{d.upd.days} dias</td>
                   <td className="num font-semibold text-ink-900">{brl(d.upd.total)}</td>
-                  <td><span className={`badge ${debtStatus[d.status][1]}`}>{debtStatus[d.status][0]}</span></td>
+                  <td><StatusBadge status={d.status} /></td>
                   <td>
                     {canEdit && d.status === "EM_ABERTO" && (
                       <form action={generateProposal.bind(null, d.id)}>

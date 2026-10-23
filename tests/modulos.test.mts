@@ -1286,3 +1286,37 @@ test("applyPayment trava o acordo filtrando pela organização", () => {
   assert.match(sql, /"orgId"/);
   assert.match(sql, /FOR UPDATE/);
 });
+
+// ---------- Textos da landing e marca ----------
+import { T as LANDING } from "../src/app/landing-copy";
+import { BRAND } from "../src/lib/brand";
+
+test("Landing: WhatsApp não promete envio automático", () => {
+  for (const f of ["../src/app/page.tsx", "../src/app/landing-copy.ts"]) {
+    const src = readFileSync(new URL(f, import.meta.url), "utf8");
+    assert.ok(!src.includes("envie o link por WhatsApp"), f);
+    assert.ok(!src.includes("enviadas por WhatsApp"), f);
+    assert.ok(!/manda o link por WhatsApp/.test(src), f);
+  }
+});
+
+test("Landing: CNAB 240 nas entradas em pt e en", () => {
+  assert.ok((LANDING.pt.flow.inputs as readonly string[]).includes("CNAB 240"));
+  assert.ok((LANDING.en.flow.inputs as readonly string[]).includes("CNAB 240"));
+});
+
+test("Landing: pt e en têm o mesmo conjunto de chaves (recursivo)", () => {
+  const shape = (v: unknown, path = ""): string[] => {
+    if (Array.isArray(v)) return [`${path}[${v.length}]`, ...v.flatMap((x, i) => shape(x, `${path}[${i}]`))];
+    if (v && typeof v === "object") return Object.entries(v).flatMap(([k, x]) => [`${path}.${k}`, ...shape(x, `${path}.${k}`)]);
+    return [];
+  };
+  assert.deepEqual(shape(LANDING.pt).sort(), shape(LANDING.en).sort());
+});
+
+test("Marca: tagline nova em pt e en", () => {
+  assert.equal(BRAND.tagline, "Operações bancárias com regras auditáveis e IA conferida");
+  assert.equal(BRAND.taglineEn, "Banking operations with auditable rules and checked AI");
+  assert.equal(LANDING.pt.foot, BRAND.tagline);
+  assert.equal(LANDING.en.foot, BRAND.taglineEn);
+});

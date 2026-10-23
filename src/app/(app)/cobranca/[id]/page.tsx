@@ -3,10 +3,10 @@ import { headers } from "next/headers";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, day, dt } from "@/lib/format";
-import { debtStatus, nextInstallment, updateDebt, type Option } from "@/lib/collection";
+import { nextInstallment, updateDebt, type Option } from "@/lib/collection";
 import { getSettings } from "@/lib/settings";
 import { generateProposal, registerPayment } from "../../../actions-cobranca";
-import { PageTitle, Stat } from "@/components/ui";
+import { PageTitle, Stat, StatusBadge, Notice } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { SubmitButton } from "@/components/SubmitButton";
 import { CopyButton } from "@/components/CopyButton";
@@ -14,13 +14,6 @@ import { AiVersion } from "@/components/AiVersion";
 
 // Tempo máximo da função na Vercel (actions e exportações longas)
 export const maxDuration = 60;
-
-const agStatus: Record<string, string> = {
-  PROPOSTO: "bg-amber-50 text-amber-800",
-  ACEITO: "bg-brand-50 text-brand-800",
-  PAGO: "bg-emerald-50 text-emerald-800",
-  CANCELADO: "bg-slate-100 text-slate-500",
-};
 
 export default async function DebtDetail({ params }: { params: Promise<{ id: string }> }) {
   const s = await requireSession();
@@ -39,7 +32,7 @@ export default async function DebtDetail({ params }: { params: Promise<{ id: str
         back={{ href: "/cobranca", label: "Carteira de cobrança" }}
         title={`${d.debtor} · contrato ${d.contract}`}
         subtitle={`${d.document}${d.product ? ` · ${d.product}` : ""}${d.phone ? ` · ${d.phone}` : ""}${d.email ? ` · ${d.email}` : ""}`}
-        action={<span className={`badge ${debtStatus[d.status][1]}`}>{debtStatus[d.status][0]}</span>}
+        action={<StatusBadge status={d.status} />}
       />
       <div className="mb-6 grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 lg:grid-cols-5">
         <Stat label="Valor original" value={brl(d.principal)} />
@@ -63,7 +56,7 @@ export default async function DebtDetail({ params }: { params: Promise<{ id: str
             <section key={a.id} className={`card ${a.status === "CANCELADO" ? "opacity-60" : ""}`}>
               <div className="card-header items-center">
                 <h2 className="card-title flex flex-wrap items-center gap-2">
-                  Proposta de {dt(a.createdAt)} <span className={`badge ${agStatus[a.status]}`}>{a.status}</span>
+                  Proposta de {dt(a.createdAt)} <StatusBadge status={a.status} />
                 </h2>
                 <span className="text-xs text-ink-500">
                   Válida até {dt(a.expiresAt)} · mensagem: {a.aiProvider === "claude" ? "Claude" : "modelo padrão"}
@@ -104,9 +97,9 @@ export default async function DebtDetail({ params }: { params: Promise<{ id: str
                         <span className="text-xs text-ink-500">último em {dt(a.paidAt)}</span>
                       </div>
                       {Number(a.paidAmount) > Number(a.total) + 0.01 && (
-                        <div className="mb-2 rounded-lg bg-amber-100 px-2 py-1 text-xs text-amber-900">
+                        <Notice tone="warning" className="mb-2 py-2 text-xs">
                           Pago a maior: {brl(Number(a.paidAmount) - Number(a.total))}. Verificar devolução ao devedor.
-                        </div>
+                        </Notice>
                       )}
                       <div className="h-2 overflow-hidden rounded-full bg-paper-2">
                         <div className="grow-x h-2 rounded-full bg-emerald-500" style={{ width: `${Math.min(100, (Number(a.paidAmount) / Number(a.total)) * 100)}%` }} />

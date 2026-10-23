@@ -35,8 +35,8 @@ export default async function AuditoriaPage({ searchParams }: { searchParams: Pr
     <>
       <PageTitle eyebrow="Auditoria" title="Trilha de auditoria" subtitle="Registro de todas as ações realizadas na plataforma" />
       <div
-        role="status"
-        className={`mb-6 flex flex-col gap-4 rounded-2xl border p-5 text-sm sm:flex-row sm:items-center ${chain.ok ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-red-300 bg-red-50 text-red-900"}`}
+        role={chain.ok ? "status" : "alert"}
+        className={`notice ${chain.ok ? "notice-success" : "notice-danger"} mb-6 flex-col gap-4 rounded-2xl p-5 sm:flex-row sm:items-center`}
       >
         <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${chain.ok ? "bg-emerald-600 text-white" : "bg-red-700 text-white"}`}>
           <Icon name={chain.ok ? "chain" : "alert"} size={22} />

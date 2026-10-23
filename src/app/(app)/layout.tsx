@@ -4,6 +4,7 @@ import { ErrorBanner } from "@/components/ErrorBanner";
 import { Logo } from "@/components/Logo";
 import { NavLinks } from "@/components/Nav";
 import { Icon } from "@/components/Icon";
+import { Badge } from "@/components/ui";
 import { requireSession } from "@/lib/auth";
 import { aiProvider } from "@/lib/ai";
 import { db } from "@/lib/db";
@@ -60,10 +61,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       </aside>
       <div className="min-w-0 flex-1">
         <header className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-line bg-paper/85 px-4 py-2.5 backdrop-blur-md md:justify-end md:px-8">
-          <span className={`badge md:hidden ${demo ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-800"}`} title={aiTitle}>
-            <span className={`h-1.5 w-1.5 rounded-full ${demo ? "bg-amber-500" : "bg-emerald-500"}`} aria-hidden="true" />
+          <Badge tone={demo ? "warning" : "success"} className="md:hidden" title={aiTitle}>
             {demo ? "IA: regras locais" : "IA: Claude ativo"}
-          </span>
+          </Badge>
           <div className="flex items-center gap-2 text-sm md:gap-3">
             <Link href="/conta" className="flex items-center gap-2.5 rounded-xl py-1 pl-1 pr-2 text-ink-600 transition-colors hover:bg-white hover:text-ink-900">
               <span className="font-display flex h-8 w-8 items-center justify-center rounded-full bg-ink-900 text-xs font-semibold text-gold-300 ring-2 ring-white">

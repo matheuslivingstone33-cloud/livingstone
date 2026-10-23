@@ -6,7 +6,7 @@ import { BRAND } from "@/lib/brand";
 import { login } from "../actions";
 
 const points = [
-  "Conciliação de CNAB 400, OFX e CSV em minutos",
+  "Conciliação de CNAB 400 e 240, OFX e CSV em minutos",
   "Crédito, cobrança e PLD/COAF com decisão auditável",
   "Trilha de auditoria à prova de adulteração",
 ];

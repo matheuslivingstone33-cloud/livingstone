@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import { decideCase, type DecideState } from "../../../actions-pld";
 import { SubmitButton } from "@/components/SubmitButton";
+import { Notice } from "@/components/ui";
 
 export function DecisionForm({ caseId, mandatory, pepNeedsAdmin }: { caseId: string; mandatory: boolean; pepNeedsAdmin: boolean }) {
   const [state, action] = useActionState<DecideState, FormData>(decideCase.bind(null, caseId), {});
@@ -44,7 +45,7 @@ export function DecisionForm({ caseId, mandatory, pepNeedsAdmin }: { caseId: str
           </p>
         </div>
       )}
-      {state.error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{state.error}</p>}
+      {state.error && <Notice tone="danger" role="alert" className="mb-0 text-sm">{state.error}</Notice>}
       <SubmitButton pending="Registrando...">Registrar decisão</SubmitButton>
     </form>
   );

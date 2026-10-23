@@ -5,11 +5,11 @@ import { brl, day, dt } from "@/lib/format";
 import { TYPE_LABEL, dossierAiAvailableAt, type Alert } from "@/lib/pld";
 import { aiProvider } from "@/lib/ai";
 import { generateDossier, regenerateDossierAi } from "../../../actions-pld";
-import { PageTitle, Stat, CardHeader, Notice } from "@/components/ui";
+import { PageTitle, Stat, CardHeader, Notice, Badge, StatusBadge, statusLabel } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 import { CopyButton } from "@/components/CopyButton";
 import { AiVersion } from "@/components/AiVersion";
-import { PLD_STATUS, RiskBadge, DueBadge } from "../badges";
+import { RiskBadge, DueBadge } from "../badges";
 import { DecisionForm } from "./DecisionForm";
 
 // Tempo máximo da função na Vercel (actions e exportações longas)
@@ -37,8 +37,8 @@ export default async function PldCasePage({ params }: { params: Promise<{ id: st
         action={
           <div className="flex flex-wrap items-center gap-2">
             {c.pep && <span className="badge bg-violet-50 text-violet-800">PEP</span>}
-            {c.mandatory && <span className="badge bg-red-700 text-white">Comunicação obrigatória</span>}
-            <span className={`badge ${PLD_STATUS[c.status][1]}`}>{PLD_STATUS[c.status][0]}</span>
+            {c.mandatory && <Badge tone="critical" dot={false}>Comunicação obrigatória</Badge>}
+            <StatusBadge status={c.status} />
           </div>
         }
       />
@@ -108,7 +108,7 @@ export default async function PldCasePage({ params }: { params: Promise<{ id: st
           {c.status !== "EM_ANALISE" ? (
             <section className="card space-y-3 text-sm">
               <CardHeader title="Decisão registrada" />
-              <p className="text-ink-700"><b className="text-ink-900">{PLD_STATUS[c.status][0]}</b> por {c.decidedBy} em {dt(c.decidedAt)}</p>
+              <p className="text-ink-700"><b className="text-ink-900">{statusLabel(c.status)}</b> por {c.decidedBy} em {dt(c.decidedAt)}</p>
               {c.protocol && <p className="text-ink-700">Protocolo SISCOAF: <span className="rounded bg-paper-2 px-1.5 py-0.5 font-mono text-ink-900">{c.protocol}</span></p>}
               <p className="whitespace-pre-wrap rounded-xl border border-line bg-paper p-3 leading-relaxed text-ink-700">{c.decision}</p>
             </section>

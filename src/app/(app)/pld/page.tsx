@@ -3,10 +3,10 @@ import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, day, dayInst, dt } from "@/lib/format";
 import { importPld } from "../../actions-pld";
-import { PageTitle, Stat, Empty, Notice, StatusBadge, CardHeader, TableCard, FilterBar } from "@/components/ui";
+import { PageTitle, Stat, Empty, Notice, StatusBadge, Badge, CardHeader, TableCard, FilterBar } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 import { FileSizeGuard } from "@/components/FileSizeGuard";
-import { PLD_STATUS, RiskBadge, DueBadge } from "./badges";
+import { RiskBadge, DueBadge } from "./badges";
 
 // Importação grande roda dentro da server action desta página (vale em todos os planos da Vercel)
 export const maxDuration = 60;
@@ -115,14 +115,14 @@ export default async function PldPage({ searchParams }: { searchParams: Promise<
                       <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-ink-500">
                         <span className="font-mono">{c.clientDoc}</span>
                         {c.pep && <span className="badge bg-violet-50 text-violet-800">PEP</span>}
-                        {c.mandatory && <span className="badge bg-red-50 text-red-800">Comunicação obrigatória</span>}
+                        {c.mandatory && <Badge tone="danger" dot={false}>Comunicação obrigatória</Badge>}
                       </div>
                     </td>
                     <td><RiskBadge risk={c.risk} score={c.score} /></td>
                     <td className="min-w-48 max-w-xs text-xs leading-relaxed text-ink-600">{alerts.map((a) => a.title).join(" · ")}</td>
                     <td className="num text-emerald-700">{brl(c.totalIn)}</td>
                     <td className="num text-red-700">{brl(c.totalOut)}</td>
-                    <td><span className={`badge ${PLD_STATUS[c.status][1]}`}>{PLD_STATUS[c.status][0]}</span></td>
+                    <td><StatusBadge status={c.status} /></td>
                     <td>{c.status === "EM_ANALISE" ? <DueBadge dueAt={c.dueAt} /> : <span className="text-xs text-ink-500">{dayInst(c.decidedAt)}</span>}</td>
                   </tr>
                 );

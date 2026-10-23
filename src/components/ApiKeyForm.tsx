@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect, useRef } from "react";
 import { createApiKey, type CreateKeyState } from "@/app/actions-api";
 import { CopyButton } from "@/components/CopyButton";
 
@@ -11,16 +11,33 @@ const SCOPES = [
 
 export function ApiKeyForm() {
   const [state, action, pending] = useActionState<CreateKeyState, FormData>(createApiKey, {});
+  const headRef = useRef<HTMLHeadingElement>(null);
+  // Leva o foco ao aviso quando uma chave nova aparece: o segredo só é mostrado esta vez
+  useEffect(() => {
+    if (state.secret) headRef.current?.focus();
+  }, [state.secret]);
   return (
     <div className="space-y-4">
       {state.secret && (
-        <div className="notice notice-warning mb-0 space-y-3" role="status">
-          <p className="font-medium">Chave “{state.name}” criada. Copie agora: ela não será mostrada de novo.</p>
+        <div className="notice notice-warning mb-0 flex-col items-stretch gap-3">
+          <h3 ref={headRef} tabIndex={-1} className="font-display text-base font-semibold focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-current">
+            Chave criada — copie agora
+          </h3>
+          <p id="api-secret-hint">A chave “{state.name}” não será mostrada de novo. Guarde em um cofre de segredos do sistema que vai chamar a API; se perder, revogue e crie outra.</p>
           <div className="flex flex-wrap items-center gap-2">
-            <code className="min-w-0 flex-1 break-all rounded-xl border border-line bg-white px-3 py-2 font-mono text-xs text-ink-700">{state.secret}</code>
+            <label htmlFor="api-secret" className="sr-only">Chave secreta</label>
+            <input
+              id="api-secret"
+              readOnly
+              value={state.secret}
+              aria-describedby="api-secret-hint"
+              onFocus={(e) => e.currentTarget.select()}
+              className="input min-w-0 flex-1 font-mono text-xs"
+              spellCheck={false}
+              autoComplete="off"
+            />
             <CopyButton text={state.secret} label="Copiar chave" />
           </div>
-          <p className="text-xs">Guarde em um cofre de segredos do sistema que vai chamar a API. Se perder, revogue e crie outra.</p>
         </div>
       )}
       {state.error && <p className="notice notice-danger mb-0" role="alert">{state.error}</p>}

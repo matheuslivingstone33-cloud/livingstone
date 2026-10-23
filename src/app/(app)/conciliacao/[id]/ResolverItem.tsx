@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import { aceitarDivergencia, baixarItem, reabrirItem, vincularItens, type ResolverState } from "../../../actions-conciliacao-manual";
 import { SubmitButton } from "@/components/SubmitButton";
+import { Notice } from "@/components/ui";
 
 type Opcao = { id: string; label: string };
 type Acao = "vincular" | "aceitar" | "baixar" | "reabrir";
@@ -30,7 +31,7 @@ function Formulario({ acao, itemId, opcoes, onCancel }: { acao: Acao; itemId: st
         placeholder="Justificativa (fica registrada para auditoria)" value={txt} onChange={(e) => setTxt(e.target.value)}
       />
       <span className={`text-xs ${n < MIN ? "text-ink-500" : "text-emerald-700"}`}>{n}/{MIN} caracteres mínimos</span>
-      {state.error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">{state.error}</p>}
+      {state.error && <Notice tone="danger" role="alert" className="mb-0 text-xs">{state.error}</Notice>}
       <div className="flex gap-2">
         <SubmitButton pending="Gravando...">{ROTULO[acao]}</SubmitButton>
         <button type="button" className="btn-ghost" onClick={onCancel}>Cancelar</button>

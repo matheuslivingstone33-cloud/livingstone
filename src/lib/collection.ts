@@ -12,12 +12,8 @@ export type PixCfg = Settings["pix"];
 // Vencimento é data de calendário (meia-noite UTC); "hoje" é o dia corrente em Brasília
 export const daysBetween = (from: Date, to = new Date()) => diasEntreSP(from, to);
 
-export const debtStatus: Record<string, [string, string]> = {
-  EM_ABERTO: ["Em aberto", "bg-red-100 text-red-800"],
-  NEGOCIANDO: ["Proposta enviada", "bg-amber-100 text-amber-800"],
-  ACORDO: ["Acordo fechado", "bg-blue-100 text-blue-800"],
-  QUITADO: ["Recuperado", "bg-emerald-100 text-emerald-800"],
-};
+// Situações da dívida, na ordem do funil. Rótulo e cor ficam na interface (StatusBadge).
+export const DEBT_STATUSES = ["EM_ABERTO", "NEGOCIANDO", "ACORDO", "QUITADO"] as const;
 
 const r2 =(n: number) => Math.round(n * 100) / 100;
 

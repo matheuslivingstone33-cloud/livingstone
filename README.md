@@ -1,16 +1,16 @@
-# FinOps AI
+# Livingstone
 
-Plataforma de operações bancárias com IA para cooperativas de crédito, financeiras e fintechs.
+Plataforma de operações bancárias com regras auditáveis e IA conferida, para cooperativas de crédito, financeiras e fintechs.
 
 ## Módulos
 
 | Módulo | O que faz |
 |---|---|
-| **Conciliação bancária** | Lê retorno CNAB 400, extrato OFX ou CSV e cruza com os títulos esperados: conciliados, divergentes (juros/desconto), não pagos e créditos não esperados. Exporta CSV. |
+| **Conciliação bancária** | Lê retorno CNAB 400 ou CNAB 240, extrato OFX ou CSV e cruza com os títulos esperados: conciliados, divergentes (juros/desconto), não pagos e créditos não esperados. Exporta CSV. |
 | **Análise de crédito** | Lê holerite e extrato, extrai renda, despesas, CPF e empregador, aponta riscos (cheque devolvido, apostas, CPF divergente) e aplica regras de comprometimento de renda (limite 35%). Gera score, sugestão e parecer. |
-| **Cobrança e renegociação** | Importa a carteira de inadimplentes, atualiza a dívida (multa 2% + juros de 1% a.m.), gera propostas por faixa de atraso (à vista com desconto ou parcelado), mensagem pronta para WhatsApp e link público onde o devedor escolhe a condição, aceita e paga por Pix (QR Code e copia e cola). Acompanha parcelas pagas e valor recuperado. |
+| **Cobrança e renegociação** | Importa a carteira de inadimplentes, atualiza a dívida (multa 2% + juros de 1% a.m.), gera propostas por faixa de atraso (à vista com desconto ou parcelado), mensagem pronta para enviar no WhatsApp (envio manual pelo wa.me) e link público onde o devedor escolhe a condição, aceita e paga por Pix (QR Code e copia e cola). Acompanha parcelas pagas e valor recuperado. |
 | **PLD / COAF** | Analisa transações e abre casos por cliente com 8 regras (espécie ≥ R$ 50 mil, fracionamento, incompatibilidade com a renda, conta de passagem, muitos remetentes, valores redondos, lista restritiva, PEP), com pontuação de risco e prazo de análise de 45 dias. Gera dossiê com evidências e enquadramento normativo, e registra a decisão (arquivar ou comunicar ao COAF) com justificativa obrigatória e protocolo do SISCOAF. Casos de comunicação obrigatória não podem ser arquivados; casos de PEP exigem Administrador. |
-| **Código legado** | Recebe COBOL, Delphi ou VB6, explica o programa, extrai as regras de negócio e gera a versão moderna. |
+| **Código legado** | Recebe COBOL, Delphi ou VB6, explica o programa, extrai as regras de negócio e propõe a versão moderna para revisão do time. |
 | **Base comum** | Login, perfis (Administrador, Analista, Auditor), separação por organização e trilha de auditoria de todas as ações. |
 
 ## IA
@@ -22,6 +22,10 @@ Plataforma de operações bancárias com IA para cooperativas de crédito, finan
 - **Legado:** arquivos acima de 1500 linhas úteis são analisados sem IA (conversão local), com aviso.
 
 As regras de decisão de crédito são sempre determinísticas (iguais nos dois modos), para o resultado ser auditável.
+
+## API v1
+
+Sistemas da instituição (ERP, core bancário) enviam e consultam conciliações por HTTP, sem passar pela tela. Cada chave é criada em Configurações → Chaves da API (Administrador), tem escopos (`conciliacao:write`, `conciliacao:read`), pode ser revogada a qualquer momento e é mostrada uma única vez. Todo POST exige o header `Idempotency-Key`. Referência completa em `/docs/api`.
 
 ## Como rodar
 
@@ -48,7 +52,7 @@ Deploy na Vercel: veja [docs/DEPLOY.md](docs/DEPLOY.md).
 ## Estrutura
 
 ```
-src/lib/reconcile.ts   leitura de CNAB 400 / OFX / CSV e conciliação
+src/lib/reconcile.ts   leitura de CNAB 400 / CNAB 240 / OFX / CSV e conciliação
 src/lib/credit.ts      extração de documentos e regras de crédito
 src/lib/legacy.ts      análise e conversão de código legado
 src/lib/ai.ts          integração com o Claude

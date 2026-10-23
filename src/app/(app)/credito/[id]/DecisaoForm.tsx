@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import { decidirCredito, type DecisaoState } from "../../../actions-credito-decisao";
 import { SubmitButton } from "@/components/SubmitButton";
+import { Notice } from "@/components/ui";
 
 const MIN = 30;
 
@@ -31,7 +32,7 @@ export function DecisaoForm({ analysisId, atual, revisao }: { analysisId: string
         <textarea className="input min-h-28" id="justification" name="justification" required minLength={MIN} value={txt} onChange={(e) => setTxt(e.target.value)} />
         <p className={`hint ${n >= MIN ? "text-emerald-700" : ""}`}>{n}/{MIN} caracteres mínimos</p>
       </div>
-      {state.error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{state.error}</p>}
+      {state.error && <Notice tone="danger" role="alert" className="mb-0 text-sm">{state.error}</Notice>}
       <SubmitButton pending="Registrando...">{revisao ? "Registrar revisão" : "Registrar decisão"}</SubmitButton>
     </form>
   );

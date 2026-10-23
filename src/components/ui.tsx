@@ -116,74 +116,94 @@ export function Stat({
   );
 }
 
-const statusTone: Record<string, string> = {
-  CONCILIADO: "bg-emerald-50 text-emerald-800",
-  APROVAR: "bg-emerald-50 text-emerald-800",
-  DIVERGENTE: "bg-amber-50 text-amber-800",
-  ANALISAR: "bg-amber-50 text-amber-800",
-  PENDENTE: "bg-red-50 text-red-800",
-  RECUSAR: "bg-red-50 text-red-800",
-  NAO_ESPERADO: "bg-violet-50 text-violet-800",
-  VINCULADO: "bg-sky-50 text-sky-800",
-  BAIXADO: "bg-slate-100 text-slate-700",
-  APROVADO: "bg-emerald-50 text-emerald-800",
-  RECUSADO: "bg-red-50 text-red-800",
-  IA_USADA: "bg-emerald-50 text-emerald-800",
-  IA_REJEITADA: "bg-amber-50 text-amber-800",
-  IA_FALHOU: "bg-amber-50 text-amber-800",
-  IA_LIMITE: "bg-slate-100 text-slate-700",
-  LOTE_PROCESSANDO: "bg-sky-50 text-sky-800",
-  LOTE_CONCLUIDO: "bg-emerald-50 text-emerald-800",
-  LOTE_FALHOU: "bg-red-50 text-red-800",
+/** Tons de selo: a cor vem daqui, nunca solta nas páginas. */
+export type BadgeTone = "success" | "warning" | "danger" | "critical" | "info" | "accent" | "brand" | "neutral" | "muted";
+const toneCls: Record<BadgeTone, string> = {
+  success: "bg-emerald-50 text-emerald-800",
+  warning: "bg-amber-50 text-amber-800",
+  danger: "bg-red-50 text-red-800",
+  critical: "bg-red-700 text-white",
+  info: "bg-sky-50 text-sky-800",
+  accent: "bg-violet-50 text-violet-800",
+  brand: "bg-brand-50 text-brand-800",
+  neutral: "bg-slate-100 text-slate-700",
+  muted: "bg-slate-100 text-slate-500",
 };
-const statusDot: Record<string, string> = {
-  CONCILIADO: "bg-emerald-500",
-  APROVAR: "bg-emerald-500",
-  DIVERGENTE: "bg-amber-500",
-  ANALISAR: "bg-amber-500",
-  PENDENTE: "bg-red-500",
-  RECUSAR: "bg-red-500",
-  NAO_ESPERADO: "bg-violet-500",
-  VINCULADO: "bg-sky-500",
-  BAIXADO: "bg-slate-400",
-  APROVADO: "bg-emerald-500",
-  RECUSADO: "bg-red-500",
-  IA_USADA: "bg-emerald-500",
-  IA_REJEITADA: "bg-amber-500",
-  IA_FALHOU: "bg-amber-500",
-  IA_LIMITE: "bg-slate-400",
-  LOTE_PROCESSANDO: "bg-sky-500",
-  LOTE_CONCLUIDO: "bg-emerald-500",
-  LOTE_FALHOU: "bg-red-500",
-};
-const statusLabel: Record<string, string> = {
-  CONCILIADO: "Conciliado",
-  DIVERGENTE: "Divergente",
-  PENDENTE: "Não pago",
-  NAO_ESPERADO: "Não esperado",
-  VINCULADO: "Vinculado",
-  BAIXADO: "Baixado",
-  APROVADO: "Aprovado",
-  RECUSADO: "Recusado",
-  APROVAR: "Aprovar",
-  ANALISAR: "Análise humana",
-  RECUSAR: "Recusar",
-  IA_USADA: "Versão exibida: IA (conferida)",
-  IA_REJEITADA: "Versão padrão (IA rejeitada)",
-  IA_FALHOU: "Versão padrão (IA falhou)",
-  IA_LIMITE: "Versão padrão (teto diário de IA atingido)",
-  LOTE_PROCESSANDO: "Processando",
-  LOTE_CONCLUIDO: "Concluído",
-  LOTE_FALHOU: "Falhou / interrompido",
+const toneDot: Record<BadgeTone, string> = {
+  success: "bg-emerald-500",
+  warning: "bg-amber-500",
+  danger: "bg-red-500",
+  critical: "bg-white",
+  info: "bg-sky-500",
+  accent: "bg-violet-500",
+  brand: "bg-brand-500",
+  neutral: "bg-slate-400",
+  muted: "bg-slate-300",
 };
 
-export function StatusBadge({ status }: { status: string }) {
+/** Selo genérico por tom. `dot` mostra o marcador, que reforça o tom sem depender só da cor. */
+export function Badge({ tone = "neutral", dot = true, className = "", title, children }: { tone?: BadgeTone; dot?: boolean; className?: string; title?: string; children: React.ReactNode }) {
   return (
-    <span className={`badge ${statusTone[status] ?? "bg-slate-100 text-slate-700"}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${statusDot[status] ?? "bg-slate-400"}`} aria-hidden="true" />
-      {statusLabel[status] ?? status}
+    <span className={`badge ${toneCls[tone]} ${className}`} title={title}>
+      {dot && <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${toneDot[tone]}`} aria-hidden="true" />}
+      {children}
     </span>
   );
+}
+
+// Situação → [tom, rótulo]. Chaves iguais em domínios diferentes têm o mesmo sentido visual.
+const STATUS: Record<string, [BadgeTone, string]> = {
+  // Conciliação
+  CONCILIADO: ["success", "Conciliado"],
+  DIVERGENTE: ["warning", "Divergente"],
+  PENDENTE: ["danger", "Não pago"],
+  NAO_ESPERADO: ["accent", "Não esperado"],
+  VINCULADO: ["info", "Vinculado"],
+  BAIXADO: ["neutral", "Baixado"],
+  // Crédito
+  APROVAR: ["success", "Aprovar"],
+  ANALISAR: ["warning", "Análise humana"],
+  RECUSAR: ["danger", "Recusar"],
+  APROVADO: ["success", "Aprovado"],
+  RECUSADO: ["danger", "Recusado"],
+  // Cobrança: carteira
+  EM_ABERTO: ["danger", "Em aberto"],
+  NEGOCIANDO: ["warning", "Proposta gerada"],
+  ACORDO: ["brand", "Acordo fechado"],
+  QUITADO: ["success", "Recuperado"],
+  // Cobrança: acordos
+  PROPOSTO: ["warning", "Proposto"],
+  ACEITO: ["brand", "Aceito"],
+  PAGO: ["success", "Pago"],
+  CANCELADO: ["muted", "Cancelado"],
+  // PLD
+  EM_ANALISE: ["warning", "Em análise"],
+  COMUNICADO: ["brand", "Comunicado ao COAF"],
+  ARQUIVADO: ["neutral", "Arquivado"],
+  // Chaves de API
+  ATIVA: ["success", "Ativa"],
+  REVOGADA: ["neutral", "Revogada"],
+  // Usuários
+  ATIVO: ["success", "Ativo"],
+  BLOQUEADO: ["danger", "Bloqueado"],
+  DESATIVADO: ["neutral", "Desativado"],
+  // Versão do texto da IA
+  IA_USADA: ["success", "Versão exibida: IA (conferida)"],
+  IA_REJEITADA: ["warning", "Versão padrão (IA rejeitada)"],
+  IA_FALHOU: ["warning", "Versão padrão (IA falhou)"],
+  IA_LIMITE: ["neutral", "Versão padrão (teto diário de IA atingido)"],
+  // Lotes
+  LOTE_PROCESSANDO: ["info", "Processando"],
+  LOTE_CONCLUIDO: ["success", "Concluído"],
+  LOTE_FALHOU: ["danger", "Falhou / interrompido"],
+};
+
+/** Rótulo padrão de uma situação (para filtros e listas). */
+export const statusLabel = (status: string) => STATUS[status]?.[1] ?? status;
+
+export function StatusBadge({ status, label }: { status: string; label?: React.ReactNode }) {
+  const [tone, text] = STATUS[status] ?? ["neutral", status];
+  return <Badge tone={tone}>{label ?? text}</Badge>;
 }
 
 export function Empty({ children }: { children: React.ReactNode }) {
@@ -200,11 +220,11 @@ export function Empty({ children }: { children: React.ReactNode }) {
 }
 
 /** Mensagem de confirmação após uma ação (substitui os "p" verdes soltos). */
-export function Notice({ tone = "success", children }: { tone?: "success" | "warning" | "danger" | "info"; children: React.ReactNode }) {
+export function Notice({ tone = "success", role = "status", className = "", children }: { tone?: "success" | "warning" | "danger" | "info"; role?: "status" | "alert"; className?: string; children: React.ReactNode }) {
   const cls = { success: "notice-success", warning: "notice-warning", danger: "notice-danger", info: "notice-info" }[tone];
   const icon = { success: "check", warning: "alert", danger: "alert", info: "info" }[tone];
   return (
-    <div role="status" className={`notice ${cls}`}>
+    <div role={role} className={`notice ${cls} ${className}`}>
       <Icon name={icon} className="mt-px shrink-0" />
       <div className="min-w-0 flex-1">{children}</div>
     </div>
