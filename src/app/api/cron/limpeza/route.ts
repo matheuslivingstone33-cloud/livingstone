@@ -1,23 +1,15 @@
 // Cron diário (vercel.json): apaga registros de ApiRequest com mais de 24 h (idempotência e rate limit já expirados).
 // A Vercel chama com Authorization: Bearer {CRON_SECRET}. Sem CRON_SECRET configurado, a rota fica fechada (401).
-import { timingSafeEqual } from "node:crypto";
 import { db } from "@/lib/db";
 import { auditRaw } from "@/lib/auth";
 import { cutoffApiRequests } from "@/lib/retencao";
+import { cronAutorizado } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const safeEqual = (a: string, b: string) => {
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && timingSafeEqual(x, y);
-};
-
 export async function GET(req: Request) {
-  const secret = process.env.CRON_SECRET ?? "";
-  const auth = req.headers.get("authorization") ?? "";
-  if (!secret || !safeEqual(auth, `Bearer ${secret}`)) return new Response("Não autorizado", { status: 401 });
+  if (!cronAutorizado(req.headers)) return new Response("Não autorizado", { status: 401 });
 
   const cutoff = cutoffApiRequests(new Date());
   const where = { createdAt: { lt: cutoff } };

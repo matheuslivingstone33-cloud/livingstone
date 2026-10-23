@@ -41,3 +41,15 @@ export function diasEntreSP(vencimentoCalendario: Date, agora: D = new Date()): 
 const fHora = new Intl.DateTimeFormat("pt-BR", { timeZone: TZ, hour: "2-digit", minute: "2-digit" });
 /** Instante → "HH:mm" no horário de Brasília. */
 export const fmtHora = (d: D) => fHora.format(toDate(d));
+
+const fHoraParts = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hourCycle: "h23", weekday: "short" });
+/** Instante → hora (0–23), minuto e dia da semana (0 = domingo) em Brasília. */
+export function horaSP(d: D): { hora: number; minuto: number; diaSemana: number } {
+  const p = fHoraParts.formatToParts(toDate(d));
+  const g = (t: string) => p.find((x) => x.type === t)?.value ?? "";
+  const dias = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  return { hora: Number(g("hour")), minuto: Number(g("minute")), diaSemana: dias.indexOf(g("weekday")) };
+}
+
+/** Instante → meia-noite do dia 1º do mês corrente em Brasília. */
+export const inicioDoMesSP = (d: D) => inicioDoDiaSP(`${diaSP(d).slice(0, 8)}01`);

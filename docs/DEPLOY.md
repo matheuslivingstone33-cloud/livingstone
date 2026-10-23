@@ -43,6 +43,7 @@ Cadastre em **Production** e **Preview** (valores diferentes por ambiente):
 | `AI_MODEL_COBRANCA`, `AI_MODEL_PLD`, `AI_MODEL_CREDITO`, `AI_MODEL_LEGADO`, `AI_MODEL_RESUMO` | não | troca o modelo de uma tarefa (só aceita id `claude-...`). Padrão: Haiku 5.5 para cobrança, PLD, crédito e resumo do painel; Sonnet 5.5 para legado. `ANTHROPIC_MODEL` não é mais lida |
 | `PIX_KEY`, `PIX_MERCHANT`, `PIX_CITY` | não | padrão do Pix |
 | `PIX_WEBHOOK_ALLOW_QUERY_SECRET` | não | deixe **desligado**. `1` aceita `?secret=` na URL do webhook, só para PSP que não envia header customizado (o segredo passa a aparecer em logs) |
+| `EVOLUTION_API_URL` / `EVOLUTION_API_KEY` / `EVOLUTION_INSTANCE` | não | WhatsApp da régua de cobrança pela Evolution API (URL **https**). Sem as três, a régua não envia nada. A chave nunca vai para logs nem auditoria |
 
 **Atenção ao preview:** a Vercel roda o preview com `NODE_ENV=production`, então o acesso demo da tela de login fica escondido. Para testar no preview, rode o seed no banco de preview e entre com os usuários criados por ele.
 
@@ -51,7 +52,8 @@ Cadastre em **Production** e **Preview** (valores diferentes por ambiente):
 1. Vercel → Add New → Project → importe o repositório do GitHub.
 2. Framework: Next.js (detectado). Build command: o padrão (`npm run build` = `prisma generate && next build`).
 3. Cadastre as variáveis (passo 3) antes do primeiro build.
-4. O `vercel.json` registra o cron diário `0 4 * * *` (04:00 UTC) em `/api/cron/limpeza`.
+4. O `vercel.json` registra o cron diário `0 4 * * *` (04:00 UTC) em `/api/cron/limpeza` e o cron da régua de cobrança `0 12 * * 1-5` (12:00 UTC = 9h em Brasília, dias úteis) em `/api/cron/regua`. No plano Hobby a Vercel só garante crons diários e o horário pode variar dentro da hora; para mais execuções no dia, use o botão "Executar régua agora" na Cobrança.
+5. Régua de cobrança (opcional): defina `EVOLUTION_API_URL` (https), `EVOLUTION_API_KEY` e `EVOLUTION_INSTANCE`. Sem as três, a régua aparece como "Envio desligado" e não envia nada. Ela também começa desligada em cada instituição (Configurações > Régua de cobrança).
 
 ## 5. Checklist de validação do preview
 
@@ -66,6 +68,7 @@ Cadastre em **Production** e **Preview** (valores diferentes por ambiente):
 - [ ] `/docs/api` abre sem login.
 - [ ] API v1: `POST /api/v1/conciliacoes` com `Authorization: Bearer <chave>` e `Idempotency-Key`; repetir a mesma chave devolve a mesma resposta.
 - [ ] Cron: `curl -i $APP_URL/api/cron/limpeza` → 401; com `-H "Authorization: Bearer $CRON_SECRET"` → 200 com `removidos`.
+- [ ] Cron da régua: `curl -i $APP_URL/api/cron/regua` → 401; com `-H "Authorization: Bearer $CRON_SECRET"` → 200 com `canal` (`whatsapp` ou `desligado`), `organizacoes`, `enviados` e `falhas`. Fora da janela (dias úteis, 8h–20h de Brasília) nada é enviado. Teste primeiro com uma instituição de homologação e um celular próprio.
 - [ ] Logs da Vercel (Runtime Logs) sem segredos: nenhuma URL com `?secret=`, nenhum token ou chave.
 
 ## 6. Limites conhecidos

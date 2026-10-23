@@ -36,7 +36,7 @@ export default async function Dashboard() {
   const now = new Date();
   // Visitar a página nunca chama a IA: só lê o resumo salvo
   const [painel, salvo] = await Promise.all([carregarPainel(s.orgId, now), db.dailySummary.findUnique({ where: { orgId: s.orgId } })]);
-  const { recs, credits, recAgg, decisions, payments, debts, pldOpen, pldByRisk, recent, mandatory, problems, openDebt, fatos } = painel;
+  const { recs, credits, recAgg, decisions, payments, debts, pldOpen, pldByRisk, recent, mandatory, problems, openDebt, fatos, regua } = painel;
   const resumoIa = resumoSalvoValido(salvo, fatosHash(fatos), now) ? salvo : null;
   const resumo = resumoIa?.text || resumoBase(fatos);
   const canEdit = s.role !== "AUDITOR";
@@ -187,6 +187,17 @@ export default async function Dashboard() {
             />
           ) : (
             <Empty>Nenhuma dívida importada.</Empty>
+          )}
+          {(regua.ativa || regua.itens > 0 || regua.excecoes > 0) && (
+            <div className="mt-5 border-t border-line pt-4 text-sm">
+              <h3 className="eyebrow mb-2">Régua de cobrança este mês</h3>
+              <p className="text-ink-700">
+                {plural(regua.itens, "item automático", "itens automáticos")} · ~{regua.horas.toLocaleString("pt-BR")} h poupadas este mês (estimativa)
+              </p>
+              <p className={regua.excecoes ? "mt-1 text-ink-800" : "mt-1 text-ink-500"}>
+                <Link href="/cobranca#regua" className="link-action">{plural(regua.excecoes, "exceção", "exceções")}</Link> para olhar
+              </p>
+            </div>
           )}
           {decTotal > 0 && (
             <div className="mt-5 border-t border-line pt-4">

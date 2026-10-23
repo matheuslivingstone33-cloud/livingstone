@@ -23,6 +23,11 @@ import { decideIdempotency, generateKey, hasScope, hashKey, idempotencyFingerpri
 import { API_LIMITS, validateReconciliationBody } from "../src/lib/api-payload";
 import { API_MAX_BODY_BYTES } from "../src/lib/api-http";
 import { MAX_UPLOAD_BYTES, checkUploadSizes, formatBytes, uploadSizeError } from "../src/lib/upload-limits";
+import { debtorKey, decidir, dentroDaJanela, ehExcecao, etapaConcluida, etapaDevida, feriadosNacionais, normalizarTelefoneBR, proximaEtapa, textoEtapa, validarRegua } from "../src/lib/regua";
+import { evolutionConfig, evolutionSender } from "../src/lib/evolution";
+import { MINUTOS_PADRAO, calcularTempoPoupado } from "../src/lib/tempo-poupado";
+import { cronAutorizado } from "../src/lib/cron-auth";
+import { horaSP, inicioDoMesSP } from "../src/lib/tz";
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1451,4 +1456,212 @@ test("Resumo: tarefa da IA barata (Haiku, esforço baixo, saída curta) e overri
   assert.equal(modelFor("resumo", { AI_MODEL_RESUMO: "claude-sonnet-5-5" }), "claude-sonnet-5-5");
   assert.equal(modelFor("resumo", { AI_MODEL_RESUMO: "gpt-4" }), "claude-haiku-5-5");
   assert.ok(reserveCost("resumo", 3000, {}) < reserveCost("cobranca", 3000, {}));
+});
+
+// ---------- Régua de cobrança ----------
+test("Régua: telefone celular brasileiro normalizado para 55DDDNUMERO", () => {
+  for (const t of ["(11) 98765-4321", "+55 11 98765-4321", "011987654321", "11987654321", "5511987654321"]) assert.equal(normalizarTelefoneBR(t), "5511987654321", t);
+  for (const t of ["(11) 3456-7890", "1134567890", "(00) 98765-4321", "9876-5432", "", null, undefined, "(11) 88765-4321", "+1 415 555 0100"])
+    assert.equal(normalizarTelefoneBR(t), null, String(t));
+  // Carteira de demonstração: os celulares saem normalizados e a chave do devedor não expõe o documento
+  const rows = parseDebtsCsv(demo("carteira_inadimplentes.csv").toString());
+  assert.equal(normalizarTelefoneBR(rows[0].phone), "5511987654321");
+  const validos = rows.map((r) => normalizarTelefoneBR(r.phone)).filter(Boolean);
+  assert.ok(validos.length > 0 && validos.every((n) => /^55\d{2}9\d{8}$/.test(n!)));
+  const k = debtorKey("org1", rows[0].document);
+  assert.match(k, /^[0-9a-f]{64}$/);
+  assert.equal(k, debtorKey("org1", rows[0].document.replace(/\D/g, "")));
+  assert.notEqual(k, debtorKey("org2", rows[0].document));
+  assert.ok(!k.includes(rows[0].document.replace(/\D/g, "")));
+});
+
+test("Régua: feriados nacionais de 2026 (fixos e Sexta-feira Santa)", () => {
+  const f = feriadosNacionais(2026);
+  assert.equal(f.size, 10);
+  for (const d of ["2026-01-01", "2026-04-03", "2026-04-21", "2026-11-20", "2026-12-25"]) assert.ok(f.has(d), d);
+  assert.ok(!f.has("2026-04-05"));
+  assert.ok(feriadosNacionais(2025).has("2025-04-18"));
+});
+
+test("Régua: janela de envio em dias úteis de Brasília", () => {
+  const cfg = { horaInicio: 8, horaFim: 20, feriados: true };
+  // 23/10/2026 é sexta-feira; Brasília = UTC−3
+  assert.equal(dentroDaJanela(new Date("2026-10-23T10:59:00Z"), cfg), false); // 07:59
+  assert.equal(dentroDaJanela(new Date("2026-10-23T11:00:00Z"), cfg), true); // 08:00
+  assert.equal(dentroDaJanela(new Date("2026-10-23T22:59:00Z"), cfg), true); // 19:59
+  assert.equal(dentroDaJanela(new Date("2026-10-23T23:00:00Z"), cfg), false); // 20:00 (23h UTC)
+  assert.equal(dentroDaJanela(new Date("2026-10-24T15:00:00Z"), cfg), false); // sábado
+  assert.equal(dentroDaJanela(new Date("2026-10-25T15:00:00Z"), cfg), false); // domingo
+  assert.equal(dentroDaJanela(new Date("2026-11-20T15:00:00Z"), cfg), false); // Consciência Negra
+  assert.equal(dentroDaJanela(new Date("2026-04-03T15:00:00Z"), cfg), false); // Sexta-feira Santa
+  assert.equal(dentroDaJanela(new Date("2026-11-20T15:00:00Z"), { ...cfg, feriados: false }), true);
+  // 01:00 UTC de sábado ainda é sexta 22h em Brasília
+  assert.equal(dentroDaJanela(new Date("2026-10-24T01:00:00Z"), cfg), false);
+});
+
+test("Régua: etapa devida em ordem, sem repetição e só a mais recente", () => {
+  const etapas = DEFAULTS.regua.etapas;
+  const a = { createdAt: new Date("2026-10-19T12:00:00Z") };
+  const dia = (n: number) => new Date(Date.UTC(2026, 9, 19 + n, 15));
+  assert.equal(etapaDevida(a, etapas, [], dia(0)).etapa?.id, "proposta");
+  assert.equal(etapaDevida(a, etapas, ["proposta"], dia(0)).etapa, null);
+  assert.equal(etapaDevida(a, etapas, ["proposta"], dia(2)).etapa, null);
+  const d3 = etapaDevida(a, etapas, ["proposta"], dia(3));
+  assert.equal(d3.etapa?.id, "lembrete");
+  assert.deepEqual(d3.superadas, []);
+  assert.equal(etapaDevida(a, etapas, ["proposta", "lembrete"], dia(4)).etapa, null);
+  const d6 = etapaDevida(a, etapas, [], dia(6));
+  assert.equal(d6.etapa?.id, "ultima");
+  assert.deepEqual(d6.superadas.map((e) => e.id), ["proposta", "lembrete"]);
+  assert.equal(etapaDevida(a, etapas, ["proposta", "lembrete", "ultima"], dia(9)).etapa, null);
+  // Falha temporária volta à fila até 3 tentativas; envio incerto e falha definitiva nunca
+  assert.equal(etapaConcluida({ etapa: "proposta", status: "FALHOU", motivo: "falha_temporaria:http_503", tentativas: 1 }), false);
+  assert.equal(etapaConcluida({ etapa: "proposta", status: "FALHOU", motivo: "falha_temporaria:http_503", tentativas: 3 }), true);
+  assert.equal(etapaConcluida({ etapa: "proposta", status: "FALHOU", motivo: "falha_definitiva:http_400", tentativas: 1 }), true);
+  assert.equal(etapaConcluida({ etapa: "proposta", status: "FALHOU", motivo: "envio_incerto", tentativas: 0 }), true);
+  assert.equal(etapaConcluida({ etapa: "proposta", status: "DESLIGADO" }), false);
+  assert.ok(ehExcecao({ etapa: "proposta", status: "FALHOU", motivo: "envio_incerto" }));
+  assert.ok(ehExcecao({ etapa: "proposta", status: "IGNORADO", motivo: "telefone_invalido" }));
+  assert.ok(!ehExcecao({ etapa: "proposta", status: "IGNORADO", motivo: "superada" }));
+  assert.ok(!ehExcecao({ etapa: "proposta", status: "FALHOU", motivo: "falha_temporaria:timeout", tentativas: 1 }));
+  assert.deepEqual(proximaEtapa(a, etapas, ["proposta"], dia(1)), { etapa: { id: "lembrete", dias: 3 }, emDias: 2 });
+});
+
+test("Régua: decidir devolve cada motivo na ordem certa", () => {
+  const now = new Date("2026-10-23T15:00:00Z");
+  const base = {
+    cfg: { ativa: true, horaInicio: 8, horaFim: 20, feriados: true },
+    debt: { status: "NEGOCIANDO", reguaPausedAt: null as Date | null, reguaPauseReason: null as string | null },
+    agreement: { status: "PROPOSTO", expiresAt: new Date("2026-10-30T00:00:00Z") },
+    telefone: "5511987654321" as string | null,
+    now,
+    enviouHoje: false,
+    temCanal: true,
+  };
+  const m = (o: Partial<typeof base>) => {
+    const r = decidir({ ...base, ...o });
+    return r.ok ? "ok" : r.motivo;
+  };
+  assert.equal(m({}), "ok");
+  assert.equal(m({ cfg: { ...base.cfg, ativa: false } }), "regua_desligada");
+  assert.equal(m({ debt: { ...base.debt, reguaPausedAt: now, reguaPauseReason: "pausa" } }), "pausado");
+  assert.equal(m({ debt: { ...base.debt, reguaPausedAt: now, reguaPauseReason: "opt_out" } }), "opt_out");
+  assert.equal(m({ debt: { ...base.debt, status: "ACORDO" } }), "fechado");
+  assert.equal(m({ debt: { ...base.debt, status: "QUITADO" } }), "fechado");
+  assert.equal(m({ agreement: { ...base.agreement, status: "ACEITO" } }), "acordo_nao_proposto");
+  assert.equal(m({ agreement: { ...base.agreement, expiresAt: now } }), "expirado");
+  assert.equal(m({ telefone: null }), "telefone_invalido");
+  assert.equal(m({ now: new Date("2026-10-24T15:00:00Z") }), "fora_da_janela");
+  assert.equal(m({ enviouHoje: true }), "limite_diario");
+  assert.equal(m({ temCanal: false }), "desligado");
+  // Ordem: régua desligada vence tudo; pausa vence telefone inválido
+  assert.equal(m({ cfg: { ...base.cfg, ativa: false }, telefone: null, temCanal: false }), "regua_desligada");
+  assert.equal(m({ debt: { ...base.debt, reguaPausedAt: now, reguaPauseReason: "pausa" }, telefone: null }), "pausado");
+  const tel = decidir({ ...base, telefone: null });
+  assert.ok(!tel.ok && tel.registrar === "IGNORADO");
+  const des = decidir({ ...base, temCanal: false });
+  assert.ok(!des.ok && des.registrar === "DESLIGADO");
+});
+
+test("Régua: textos das etapas (D+0 usa a proposta; lembretes fixos, sem IA)", () => {
+  const d = { mensagemProposta: "MENSAGEM CONFERIDA", devedor: "Roberto Carlos Mendes", credor: "Banco Exemplo", valor: "R$ 1.234,00", link: "https://x/acordo/abc", validade: "30/10/2026" };
+  assert.equal(textoEtapa("proposta", d), "MENSAGEM CONFERIDA");
+  for (const e of ["lembrete", "ultima"]) {
+    const t = textoEtapa(e, d);
+    for (const parte of ["Roberto", "Banco Exemplo", "R$ 1.234,00", "https://x/acordo/abc", "Se já pagou, desconsidere"]) assert.ok(t.includes(parte), `${e}: ${parte}`);
+    assert.ok(!t.includes("Carlos"));
+  }
+  assert.ok(textoEtapa("ultima", d).includes("30/10/2026"));
+});
+
+test("Régua: validação das configurações", () => {
+  const r = DEFAULTS.regua;
+  assert.equal(validarRegua(r, 7), null);
+  assert.equal(validateSettings(DEFAULTS), null);
+  assert.equal(r.ativa, false);
+  assert.match(validarRegua({ ...r, etapas: [] }, 7) ?? "", /1 a 5/);
+  assert.match(validarRegua({ ...r, etapas: Array.from({ length: 6 }, (_, i) => ({ id: "lembrete" as const, dias: i })) }, 30) ?? "", /1 a 5/);
+  assert.match(validarRegua({ ...r, etapas: [{ id: "proposta", dias: 1 }] }, 7) ?? "", /dia 0/);
+  assert.match(validarRegua({ ...r, etapas: [{ id: "proposta", dias: 0 }, { id: "lembrete", dias: 3 }, { id: "ultima", dias: 3 }] }, 7) ?? "", /crescentes/);
+  assert.match(validarRegua(r, 6) ?? "", /validade/);
+  assert.match(validarRegua({ ...r, horaInicio: 7 }, 7) ?? "", /8h e 20h/);
+  assert.match(validarRegua({ ...r, horaFim: 21 }, 7) ?? "", /8h e 20h/);
+  assert.match(validarRegua({ ...r, horaInicio: 12, horaFim: 12 }, 7) ?? "", /8h e 20h/);
+  assert.match(validateSettings({ ...DEFAULTS, regua: { ...r, horaFim: 22 } }) ?? "", /Régua/);
+});
+
+test("Evolution: pedido, respostas e erros sem vazar a chave", async () => {
+  const cfg = { url: "https://evo.exemplo.com", apiKey: "CHAVE-SECRETA-123", instance: "cobrança 1" };
+  let pedido: { url: string; init: RequestInit } | null = null;
+  const resp = (status: number, body: unknown = {}) => async (url: string, init: RequestInit) => {
+    pedido = { url, init };
+    return new Response(JSON.stringify(body), { status });
+  };
+  const ok = await evolutionSender(cfg, resp(201, { key: { id: "MSG-1" } })).enviar("5511987654321", "Olá");
+  assert.deepEqual(ok, { ok: true, providerId: "MSG-1" });
+  assert.equal(pedido!.url, "https://evo.exemplo.com/message/sendText/cobran%C3%A7a%201");
+  assert.equal(pedido!.init.method, "POST");
+  assert.equal((pedido!.init.headers as Record<string, string>).apikey, "CHAVE-SECRETA-123");
+  assert.deepEqual(JSON.parse(String(pedido!.init.body)), { number: "5511987654321", text: "Olá" });
+  assert.ok(pedido!.init.signal instanceof AbortSignal);
+
+  assert.deepEqual(await evolutionSender(cfg, resp(400)).enviar("5511987654321", "x"), { ok: false, motivo: "http_400", transitorio: false });
+  assert.deepEqual(await evolutionSender(cfg, resp(503)).enviar("5511987654321", "x"), { ok: false, motivo: "http_503", transitorio: true });
+  const timeout = await evolutionSender(cfg, async () => {
+    throw new DOMException("The operation timed out. CHAVE-SECRETA-123", "TimeoutError");
+  }).enviar("5511987654321", "x");
+  assert.deepEqual(timeout, { ok: false, motivo: "timeout", transitorio: true });
+  const rede = await evolutionSender(cfg, async () => {
+    throw new Error("fetch failed https://evo.exemplo.com apikey=CHAVE-SECRETA-123 5511987654321");
+  }).enviar("5511987654321", "x");
+  assert.deepEqual(rede, { ok: false, motivo: "rede", transitorio: true });
+  assert.ok(!JSON.stringify([timeout, rede]).includes("CHAVE"));
+  // Timeout real do AbortSignal
+  const lento = await evolutionSender(
+    cfg,
+    (_u, init) => new Promise<Response>((_res, rej) => init.signal!.addEventListener("abort", () => rej(init.signal!.reason))),
+    20,
+  ).enviar("5511987654321", "x");
+  assert.deepEqual(lento, { ok: false, motivo: "timeout", transitorio: true });
+});
+
+test("Evolution: configuração pelo ambiente exige https e as três variáveis", () => {
+  assert.equal(evolutionConfig({}), null);
+  const env = { EVOLUTION_API_URL: "https://evo.exemplo.com/", EVOLUTION_API_KEY: "k", EVOLUTION_INSTANCE: "i" };
+  assert.deepEqual(evolutionConfig(env), { url: "https://evo.exemplo.com", apiKey: "k", instance: "i" });
+  assert.equal(evolutionConfig({ ...env, EVOLUTION_API_URL: "http://evo.exemplo.com" }), null);
+  assert.equal(evolutionConfig({ ...env, EVOLUTION_API_KEY: "" }), null);
+  assert.equal(evolutionConfig({ ...env, EVOLUTION_INSTANCE: undefined }), null);
+  assert.equal(evolutionConfig({ ...env, EVOLUTION_API_URL: "nao-e-url" }), null);
+});
+
+test("Tempo poupado: só conta o que foi enviado", () => {
+  const r = calcularTempoPoupado([
+    { etapa: "proposta", status: "ENVIADO", count: 10 },
+    { etapa: "lembrete", status: "ENVIADO", count: 20 },
+    { etapa: "proposta", status: "FALHOU", count: 5 },
+    { etapa: "ultima", status: "IGNORADO", count: 7 },
+    { etapa: "lembrete", status: "DESLIGADO", count: 3 },
+  ]);
+  assert.deepEqual(r, { itens: 30, minutos: 100, horas: 1.7 });
+  assert.equal(calcularTempoPoupado([{ etapa: "proposta", status: "ENVIADO", count: 10 }], { proposta: 3 }).minutos, 30);
+  assert.deepEqual(MINUTOS_PADRAO, { proposta: 6, lembrete: 2, ultima: 2 });
+});
+
+test("Cron da régua: rota pública só no caminho exato e protegida por segredo", () => {
+  assert.ok(isPublic("/api/cron/regua"));
+  assert.ok(isPublic("/api/cron/limpeza"));
+  assert.ok(!isPublic("/api/cron/regua/x"));
+  assert.ok(!isPublic("/api/cron/outra"));
+  const h = (v?: string) => new Headers(v ? { authorization: v } : {});
+  assert.equal(cronAutorizado(h("Bearer s3cr3t"), { CRON_SECRET: "s3cr3t" }), true);
+  assert.equal(cronAutorizado(h("Bearer errado"), { CRON_SECRET: "s3cr3t" }), false);
+  assert.equal(cronAutorizado(h(), { CRON_SECRET: "s3cr3t" }), false);
+  assert.equal(cronAutorizado(h("Bearer "), {}), false);
+});
+
+test("Fuso: hora e início do mês em Brasília", () => {
+  assert.deepEqual(horaSP(new Date("2026-10-24T01:30:00Z")), { hora: 22, minuto: 30, diaSemana: 5 });
+  assert.equal(inicioDoMesSP(new Date("2026-11-01T02:00:00Z")).toISOString(), "2026-10-01T03:00:00.000Z");
+  assert.equal(inicioDoMesSP(new Date("2026-11-01T03:00:00Z")).toISOString(), "2026-11-01T03:00:00.000Z");
 });

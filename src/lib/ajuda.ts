@@ -49,8 +49,9 @@ export const AJUDA: Record<Aba, Ajuda> = {
     frases: [
       "Atualiza cada dívida com multa e juros, monta opções de acordo pela faixa de atraso e gera a mensagem com o link de pagamento por Pix.",
       "O devedor escolhe a condição no link; o pagamento é registrado pelo Pix ou à mão.",
+      "Com a régua ligada em Configurações, a proposta e os lembretes saem sozinhos por WhatsApp em dias úteis; você pode pausar a régua de qualquer contrato.",
     ],
-    passos: ["Importe a carteira de inadimplentes (CSV).", "Gere a proposta de um contrato ou de todos em aberto.", "Envie a mensagem ao devedor e acompanhe o pagamento."],
+    passos: ["Importe a carteira de inadimplentes (CSV).", "Gere as propostas ou deixe a régua gerar e enviar.", "Acompanhe envios, exceções e pagamentos."],
     exemplos: [CARTEIRA],
     vazio: { texto: "Nenhum contrato ainda. Importe a carteira de inadimplentes para começar.", exemplo: CARTEIRA },
   },

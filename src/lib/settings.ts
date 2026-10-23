@@ -2,6 +2,7 @@
 import { db } from "./db";
 
 import { DEFAULTS, type Settings } from "./settings-defaults";
+import { validarRegua } from "./regua";
 
 export { DEFAULTS, type Band, type Settings } from "./settings-defaults";
 
@@ -44,5 +45,7 @@ export function validateSettings(s: Settings): string | null {
     return "IA: teto diário inválido (0 a 1000 USD e 0 a 10000 chamadas; 0 desliga a IA).";
   if (s.pix.key && !/^([^@\s]+@[^@\s]+\.[^@\s]+|\+55\d{10,11}|\d{11}|\d{14}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(s.pix.key))
     return "Pix: chave inválida (use e-mail, +55 telefone, CPF, CNPJ ou chave aleatória).";
+  const regua = validarRegua(s.regua, s.collection.validityDays);
+  if (regua) return regua;
   return null;
 }

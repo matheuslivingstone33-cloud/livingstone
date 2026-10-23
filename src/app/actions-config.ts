@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { audit, requireSession } from "@/lib/auth";
-import { getSettings, validateSettings, type Settings } from "@/lib/settings";
+import { DEFAULTS, getSettings, validateSettings, type Settings } from "@/lib/settings";
 import { fail } from "@/lib/errors";
 
 const num = (form: FormData, k: string) => Number(String(form.get(k) ?? "").replace(",", "."));
@@ -72,6 +72,19 @@ export async function saveSettings(form: FormData) {
       dailyLimitUsd: num(form, "ai_usd"),
       dailyLimitCalls: num(form, "ai_calls"),
     },
+    regua: {
+      ativa: form.get("rg_ativa") === "on",
+      horaInicio: num(form, "rg_ini"),
+      horaFim: num(form, "rg_fim"),
+      feriados: form.get("rg_feriados") === "on",
+      // Etapa com dias em branco sai da régua (a proposta, dia 0, é obrigatória)
+      etapas: DEFAULTS.regua.etapas
+        .map((e) => ({ id: e.id, raw: String(form.get(`rg_dias_${e.id}`) ?? "").trim() }))
+        .filter((e) => e.id === "proposta" || e.raw !== "")
+        .map((e) => ({ id: e.id, dias: e.id === "proposta" ? 0 : Number(e.raw) })),
+      minutos: Object.fromEntries(Object.keys(DEFAULTS.regua.minutos).map((k) => [k, num(form, `rg_min_${k}`)])),
+      maxPorExecucao: num(form, "rg_max"),
+    },
   };
   if (!next.cnab400.codigosLiquidacao.length) fail(back, "CNAB 400: informe ao menos um código de liquidação (ex.: 06).");
   const problem = validateSettings(next);
@@ -81,7 +94,7 @@ export async function saveSettings(form: FormData) {
   await audit(
     s,
     "config.salvar",
-    `Configurações da instituição atualizadas${cur.ai.dailyLimitUsd !== next.ai.dailyLimitUsd || cur.ai.dailyLimitCalls !== next.ai.dailyLimitCalls ? ` · teto de IA: US$ ${next.ai.dailyLimitUsd}/dia e ${next.ai.dailyLimitCalls} chamadas/dia` : ""}`,
+    `Configurações da instituição atualizadas${cur.ai.dailyLimitUsd !== next.ai.dailyLimitUsd || cur.ai.dailyLimitCalls !== next.ai.dailyLimitCalls ? ` · teto de IA: US$ ${next.ai.dailyLimitUsd}/dia e ${next.ai.dailyLimitCalls} chamadas/dia` : ""}${cur.regua.ativa !== next.regua.ativa ? ` · régua de cobrança ${next.regua.ativa ? "ligada" : "desligada"}` : ""}`,
   );
   revalidatePath("/", "layout");
   redirect(`${back}?salvo=1`);

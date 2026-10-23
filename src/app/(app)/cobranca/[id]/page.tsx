@@ -6,11 +6,14 @@ import { brl, day, dt } from "@/lib/format";
 import { nextInstallment, updateDebt, type Option } from "@/lib/collection";
 import { getSettings } from "@/lib/settings";
 import { generateProposal, registerPayment } from "../../../actions-cobranca";
-import { PageTitle, Stat, StatusBadge, Notice } from "@/components/ui";
+import { PageTitle, Stat, StatusBadge, Notice, Badge } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { AI_PENDING, SubmitButton } from "@/components/SubmitButton";
 import { CopyButton } from "@/components/CopyButton";
 import { AiVersion } from "@/components/AiVersion";
+import { ETAPA_LABEL } from "@/lib/regua";
+import { MSG_LABEL, MSG_TONE, motivoLabel } from "@/lib/regua-rotulos";
+import { pausarRegua, retomarRegua } from "../../../actions-regua";
 
 // Tempo máximo da função na Vercel (actions e exportações longas)
 export const maxDuration = 60;
@@ -18,7 +21,7 @@ export const maxDuration = 60;
 export default async function DebtDetail({ params }: { params: Promise<{ id: string }> }) {
   const s = await requireSession();
   const { id } = await params;
-  const d = await db.debt.findFirst({ where: { id, orgId: s.orgId }, include: { agreements: { orderBy: { createdAt: "desc" } } } });
+  const d = await db.debt.findFirst({ where: { id, orgId: s.orgId }, include: { agreements: { orderBy: { createdAt: "desc" } }, collectionMessages: { orderBy: { createdAt: "desc" }, take: 30 } } });
   if (!d) notFound();
   const upd = updateDebt(Number(d.principal), d.dueDate, new Date(), (await getSettings(s.orgId)).collection);
   const h = await headers();
@@ -47,6 +50,64 @@ export default async function DebtDetail({ params }: { params: Promise<{ id: str
           <SubmitButton pending="Gerando..." hint={AI_PENDING}>{d.agreements.length ? "Gerar nova proposta" : "Gerar proposta"}</SubmitButton>
         </form>
       )}
+
+      <section className="card mb-6 space-y-3" aria-labelledby="regua-contrato">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 id="regua-contrato" className="card-title flex flex-wrap items-center gap-2">
+              Régua de cobrança
+              {d.reguaPausedAt ? (
+                <Badge tone="warning">{d.reguaPauseReason === "opt_out" ? "Devedor pediu para não receber" : "Pausada"}</Badge>
+              ) : (
+                <Badge tone="success">Ativa para este contrato</Badge>
+              )}
+            </h2>
+            {d.reguaPausedAt && (
+              <p className="mt-1 text-xs text-ink-500">
+                Desde {dt(d.reguaPausedAt)}{d.reguaPausedBy ? ` por ${d.reguaPausedBy}` : ""}. Nenhuma mensagem automática sai para este contrato.
+              </p>
+            )}
+          </div>
+          {canEdit && (
+            <div className="flex flex-wrap gap-2">
+              {d.reguaPausedAt ? (
+                <form action={retomarRegua.bind(null, d.id)}>
+                  <SubmitButton pending="Retomando...">Retomar régua</SubmitButton>
+                </form>
+              ) : (
+                <>
+                  <form action={pausarRegua.bind(null, d.id, "pausa")}>
+                    <SubmitButton pending="Pausando...">Pausar régua</SubmitButton>
+                  </form>
+                  <form action={pausarRegua.bind(null, d.id, "opt_out")}>
+                    <SubmitButton pending="Salvando...">Devedor pediu para não receber</SubmitButton>
+                  </form>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+        {d.collectionMessages.length ? (
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead><tr><th>Quando</th><th>Etapa</th><th>Situação</th><th className="num">Tentativas</th><th>Detalhe</th></tr></thead>
+              <tbody>
+                {d.collectionMessages.map((m) => (
+                  <tr key={m.id}>
+                    <td className="whitespace-nowrap text-ink-500">{dt(m.sentAt ?? m.updatedAt)}</td>
+                    <td>{ETAPA_LABEL[m.etapa] ?? m.etapa}</td>
+                    <td><Badge tone={MSG_TONE[m.status] ?? "neutral"}>{MSG_LABEL[m.status] ?? m.status}</Badge></td>
+                    <td className="num">{m.tentativas}</td>
+                    <td className="text-xs text-ink-500">{motivoLabel(m.motivo)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-sm text-ink-500">Nenhum envio automático para este contrato ainda.</p>
+        )}
+      </section>
 
       <div className="space-y-4">
         {d.agreements.map((a) => {

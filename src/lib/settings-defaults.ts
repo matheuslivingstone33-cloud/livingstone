@@ -52,6 +52,21 @@ export const DEFAULTS = {
   },
   // Teto diário de IA da instituição (dia em Brasília). 0 em qualquer um desliga a IA.
   ai: { dailyLimitUsd: 2, dailyLimitCalls: 300 },
+  // Régua de cobrança por WhatsApp: desligada por padrão. Etapas em dias corridos desde a proposta (horário de Brasília).
+  // minutos: estimativa do tempo que cada envio levaria à mão (painel "horas poupadas").
+  regua: {
+    ativa: false,
+    horaInicio: 8,
+    horaFim: 20,
+    feriados: true,
+    etapas: [
+      { id: "proposta", dias: 0 },
+      { id: "lembrete", dias: 3 },
+      { id: "ultima", dias: 6 },
+    ] as { id: "proposta" | "lembrete" | "ultima"; dias: number }[],
+    minutos: { proposta: 6, lembrete: 2, ultima: 2 } as Record<string, number>,
+    maxPorExecucao: 100,
+  },
 };
 
 export type Settings = typeof DEFAULTS;

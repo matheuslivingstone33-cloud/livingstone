@@ -14,6 +14,8 @@ import { dt } from "@/lib/format";
 import { TASKS, modelFor, type AiTask } from "@/lib/ai-config";
 import { diaSP, inicioDoDiaSP } from "@/lib/tz";
 import { AjudaAba } from "@/components/AjudaAba";
+import { evolutionConfig } from "@/lib/evolution";
+import { ETAPA_LABEL } from "@/lib/regua";
 
 // Tempo máximo da função na Vercel (actions e exportações longas)
 export const maxDuration = 60;
@@ -92,7 +94,7 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
       {q.lista && <Notice>Lista {q.lista} importada: {q.n} registros.</Notice>}
 
       <nav aria-label="Seções das configurações" className="mb-6 flex flex-wrap gap-2">
-        {[["#pix", "Pix"], ["#cnab", "CNAB 400"], ["#credito", "Crédito"], ["#cobranca", "Cobrança"], ["#pld", "PLD"], ["#ia", "IA"], ["#webhook", "Webhook"], ["#listas", "Listas"], ["#api", "API"]].map(([h, l]) => (
+        {[["#pix", "Pix"], ["#cnab", "CNAB 400"], ["#credito", "Crédito"], ["#cobranca", "Cobrança"], ["#pld", "PLD"], ["#ia", "IA"], ["#regua", "Régua"], ["#webhook", "Webhook"], ["#listas", "Listas"], ["#api", "API"]].map(([h, l]) => (
           <a key={h} href={h} className="chip">{l}</a>
         ))}
       </nav>
@@ -220,6 +222,49 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
           </p>
         </section>
 
+        <section className="card space-y-5" id="regua">
+          <SectionHead n="07" title="Régua de cobrança (WhatsApp)">
+            Em dias úteis, dentro do horário abaixo (Brasília), a régua gera a proposta dos contratos em aberto e envia a mensagem com o link do acordo por WhatsApp. Depois, manda os lembretes nos dias escolhidos, contados desde a proposta. Cada devedor recebe no máximo uma mensagem por dia, e nada sai para contratos pausados ou com acordo fechado. Começa desligada.
+          </SectionHead>
+          {!evolutionConfig(process.env) && (
+            <p className="notice notice-warning mb-0">Envio desligado: o servidor não tem o WhatsApp configurado (EVOLUTION_API_URL, EVOLUTION_API_KEY e EVOLUTION_INSTANCE). Mesmo ligada, a régua não envia nada.</p>
+          )}
+          <div className="flex flex-wrap gap-6">
+            <label className="flex items-center gap-2 text-sm font-medium text-ink-800">
+              <input type="checkbox" name="rg_ativa" defaultChecked={c.regua.ativa} /> Régua ligada
+            </label>
+            <label className="flex items-center gap-2 text-sm text-ink-800">
+              <input type="checkbox" name="rg_feriados" defaultChecked={c.regua.feriados} /> Não enviar em feriados nacionais
+            </label>
+          </div>
+          <div className="grid gap-4 md:grid-cols-3">
+            <Field label="Envia a partir de" name="rg_ini" value={c.regua.horaInicio} suffix="h" hint="Entre 8h e 20h" />
+            <Field label="Para de enviar às" name="rg_fim" value={c.regua.horaFim} suffix="h" hint="Até 20h" />
+            <Field label="Máximo de envios por execução" name="rg_max" value={c.regua.maxPorExecucao} hint="1 a 500" />
+          </div>
+          <div className="grid gap-4 md:grid-cols-3">
+            <div>
+              <div className="label">Proposta</div>
+              <p className="text-sm text-ink-600">Dia 0 (no dia em que a proposta é gerada)</p>
+            </div>
+            {(["lembrete", "ultima"] as const).map((id) => (
+              <Field
+                key={id}
+                label={`${ETAPA_LABEL[id]}: dia`}
+                name={`rg_dias_${id}`}
+                value={c.regua.etapas.find((e) => e.id === id)?.dias ?? ""}
+                suffix="após a proposta"
+                hint={`Deixe em branco para não enviar. Precisa ser antes do fim da validade (${c.collection.validityDays} dias).`}
+              />
+            ))}
+          </div>
+          <div className="grid gap-4 md:grid-cols-3">
+            {Object.entries(c.regua.minutos).map(([k, v]) => (
+              <Field key={k} label={`Tempo à mão: ${(ETAPA_LABEL[k] ?? k).toLowerCase()}`} name={`rg_min_${k}`} value={v} suffix="min" hint="Usado na estimativa de horas poupadas do painel" />
+            ))}
+          </div>
+        </section>
+
         <div className="sticky bottom-4 z-10 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-white/90 px-5 py-3 shadow-lift backdrop-blur-md">
           <p className="text-xs text-ink-500">As alterações valem para todos os usuários e ficam registradas na auditoria.</p>
           <SubmitButton pending="Salvando...">Salvar configurações</SubmitButton>
@@ -227,7 +272,7 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
       </form>
 
       <section className="card mt-6 space-y-4" id="webhook">
-        <SectionHead n="07" title="Baixa automática do Pix (webhook)">
+        <SectionHead n="08" title="Baixa automática do Pix (webhook)">
           Cadastre esta URL no seu banco/PSP como webhook da chave Pix e configure o segredo no header x-webhook-secret. Cada Pix recebido de um acordo é baixado automaticamente, sem digitação. O mesmo Pix nunca é baixado duas vezes. Cada chamada aceita até 100 eventos; lotes maiores são recusados (413) e devem ser divididos.
         </SectionHead>
         {webhookUrl ? (
@@ -246,7 +291,7 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
       </section>
 
       <section className="card mt-6 space-y-5" id="listas">
-        <SectionHead n="08" title="Listas restritivas e PEP" />
+        <SectionHead n="09" title="Listas restritivas e PEP" />
         <div className="overflow-x-auto rounded-xl border border-line">
           <table className="table">
             <thead><tr><th>Lista</th><th>Onde obter</th><th className="num">Registros</th><th>Atualizada em</th></tr></thead>
@@ -292,7 +337,7 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
       </section>
 
       <section className="card mt-6 space-y-5" id="api">
-        <SectionHead n="09" title="Chaves da API">
+        <SectionHead n="10" title="Chaves da API">
           Para o ERP ou outro sistema da instituição enviar conciliações sem passar pela tela. A chave é da instituição: desativar quem a criou não a revoga. Veja a <a href="/docs/api" className="font-medium text-brand-700 underline">documentação da API</a>.
         </SectionHead>
         <ApiKeyForm />

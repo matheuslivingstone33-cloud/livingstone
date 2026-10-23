@@ -36,6 +36,9 @@ model Organization {
   aiUsages   AiUsage[]
   // Trava do lote de propostas com IA (um lote por vez na instituição)
   aiBatchLockUntil DateTime?
+  // Trava da execução da régua de cobrança (uma por vez na instituição)
+  collectionRunLockUntil DateTime?
+  collectionMessages CollectionMessage[]
 }
 
 model User {
@@ -228,7 +231,12 @@ model Debt {
   importedFrom String?
   createdAt    DateTime     @default(now())
   proposalLockUntil DateTime? // trava curta contra clique repetido em "Gerar proposta"
+  // Régua de cobrança pausada para este contrato (motivo: pausa | opt_out)
+  reguaPausedAt     DateTime?
+  reguaPauseReason  String?
+  reguaPausedBy     String?
   agreements   Agreement[]
+  collectionMessages CollectionMessage[]
 
   @@unique([orgId, contract])
 }
@@ -255,7 +263,34 @@ model Agreement {
   paidAmount    Decimal?  @db.Decimal(14, 2)
   expiresAt     DateTime
   payments      Payment[]
+  collectionMessages CollectionMessage[]
   createdAt     DateTime  @default(now())
+}
+
+// Envio da régua de cobrança: uma linha por (acordo, etapa). Sem texto nem telefone gravados.
+model CollectionMessage {
+  id          String       @id @default(cuid())
+  orgId       String
+  org         Organization @relation(fields: [orgId], references: [id])
+  debtId      String
+  debt        Debt         @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  agreementId String
+  agreement   Agreement    @relation(fields: [agreementId], references: [id], onDelete: Cascade)
+  etapa       String       // proposta | lembrete | ultima
+  canal       String       // whatsapp
+  status      String       // PROCESSANDO | ENVIADO | FALHOU | IGNORADO | DESLIGADO
+  motivo      String?
+  providerId  String?
+  debtorKey   String       // sha256(orgId + documento)
+  tentativas  Int          @default(0)
+  sentAt      DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@unique([agreementId, etapa])
+  @@index([orgId, createdAt])
+  @@index([orgId, debtorKey, sentAt])
+  @@index([orgId, status])
 }
 
 // Prevenção à lavagem de dinheiro (PLD)

@@ -5,15 +5,16 @@
 //   DIRECT_URL     conexão direta (migrações). Localmente, igual a DATABASE_URL.
 //   AUTH_SECRET    assinatura da sessão (mínimo 32 caracteres)
 //   APP_URL        URL pública do ambiente (links de acordo, webhook)
-//   CRON_SECRET    protege /api/cron/limpeza (sem ele a rota responde 401)
+//   CRON_SECRET    protege /api/cron/limpeza e /api/cron/regua (sem ele as rotas respondem 401)
 // Opcionais:
 //   AUDIT_RECEIPT_SECRET            segredo próprio do recibo (≥32); sem ele, derivado do AUTH_SECRET
 //   ANTHROPIC_API_KEY               IA; sem chave, os módulos seguem sem a parte de IA
 //   AI_MODEL_COBRANCA / AI_MODEL_PLD / AI_MODEL_CREDITO / AI_MODEL_LEGADO   troca o modelo de uma tarefa (id claude-...)
 //   PIX_KEY / PIX_MERCHANT / PIX_CITY     padrão do Pix
 //   PIX_WEBHOOK_ALLOW_QUERY_SECRET  "1" aceita ?secret= no webhook Pix (só para PSP sem header customizado)
+//   EVOLUTION_API_URL / EVOLUTION_API_KEY / EVOLUTION_INSTANCE   envio de WhatsApp da régua (URL https); sem os três, o envio fica desligado
 export const ENV_REQUIRED = ["DATABASE_URL", "DIRECT_URL", "AUTH_SECRET", "APP_URL", "CRON_SECRET"] as const;
-export const ENV_OPTIONAL = ["AUDIT_RECEIPT_SECRET", "ANTHROPIC_API_KEY", "AI_MODEL_COBRANCA", "AI_MODEL_PLD", "AI_MODEL_CREDITO", "AI_MODEL_LEGADO", "PIX_KEY", "PIX_MERCHANT", "PIX_CITY", "PIX_WEBHOOK_ALLOW_QUERY_SECRET"] as const;
+export const ENV_OPTIONAL = ["AUDIT_RECEIPT_SECRET", "ANTHROPIC_API_KEY", "AI_MODEL_COBRANCA", "AI_MODEL_PLD", "AI_MODEL_CREDITO", "AI_MODEL_LEGADO", "PIX_KEY", "PIX_MERCHANT", "PIX_CITY", "PIX_WEBHOOK_ALLOW_QUERY_SECRET", "EVOLUTION_API_URL", "EVOLUTION_API_KEY", "EVOLUTION_INSTANCE"] as const;
 
 /** Lê uma variável obrigatória; ausente, vazia ou curta demais lança erro (sem expor o valor). */
 export function requiredEnv(name: string, opts: { minLength?: number } = {}, env: Record<string, string | undefined> = process.env): string {
