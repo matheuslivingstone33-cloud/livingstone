@@ -3,9 +3,11 @@ import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, dt } from "@/lib/format";
 import { createReconciliation } from "../../actions-conciliacao";
-import { PageTitle, Empty, CardHeader } from "@/components/ui";
+import { PageTitle, EmptyHelp, CardHeader } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 import { FileSizeGuard } from "@/components/FileSizeGuard";
+import { AjudaAba } from "@/components/AjudaAba";
+import { AJUDA } from "@/lib/ajuda";
 
 // Tempo máximo da função na Vercel (actions e exportações longas)
 export const maxDuration = 60;
@@ -18,6 +20,7 @@ export default async function ConciliacaoPage() {
   return (
     <>
       <PageTitle eyebrow="Conciliação" title="Conciliação bancária" subtitle="Cruze o arquivo do banco (CNAB 400 ou 240, OFX ou CSV) com os títulos esperados" />
+      <AjudaAba aba="conciliacao" />
       {canEdit && (
         <form action={createReconciliation} className="card mb-8 grid gap-4 md:grid-cols-3">
           <div className="md:col-span-3">
@@ -92,7 +95,7 @@ export default async function ConciliacaoPage() {
             </tbody>
           </table>
         ) : (
-          <Empty>Nenhuma conciliação ainda. Envie o retorno do banco e a lista de títulos esperados para começar.</Empty>
+          <EmptyHelp {...AJUDA.conciliacao.vazio} />
         )}
         </div>
       </section>

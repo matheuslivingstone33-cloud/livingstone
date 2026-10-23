@@ -5,9 +5,11 @@ import { brl, day } from "@/lib/format";
 import { bandOf, DEBT_STATUSES, updateDebt } from "@/lib/collection";
 import { getSettings } from "@/lib/settings";
 import { importDebts, generateAllProposals, generateProposal } from "../../actions-cobranca";
-import { PageTitle, Stat, Empty, Notice, CardHeader, TableCard, FilterBar, StatusBadge, statusLabel } from "@/components/ui";
-import { SubmitButton } from "@/components/SubmitButton";
+import { PageTitle, Stat, EmptyHelp, Notice, CardHeader, TableCard, FilterBar, StatusBadge, statusLabel } from "@/components/ui";
+import { AI_PENDING, SubmitButton } from "@/components/SubmitButton";
 import { FileSizeGuard } from "@/components/FileSizeGuard";
+import { AjudaAba } from "@/components/AjudaAba";
+import { AJUDA } from "@/lib/ajuda";
 
 // Tempo máximo da função na Vercel (actions e exportações longas)
 export const maxDuration = 60;
@@ -56,11 +58,12 @@ export default async function CobrancaPage({
         action={
           canEdit && rows.some((d) => d.status === "EM_ABERTO") ? (
             <form action={generateAllProposals}>
-              <SubmitButton pending="Gerando propostas...">Gerar propostas para todos em aberto</SubmitButton>
+              <SubmitButton pending="Gerando propostas..." hint={AI_PENDING}>Gerar propostas para todos em aberto</SubmitButton>
             </form>
           ) : undefined
         }
       />
+      <AjudaAba aba="cobranca" />
       {(importados || propostas) && (
         <Notice>{importados ? `${importados} contrato(s) importado(s).` : `${propostas} proposta(s) gerada(s).`}</Notice>
       )}
@@ -82,7 +85,7 @@ export default async function CobrancaPage({
               {nRestantes} contrato(s) ainda sem proposta. A geração para em cerca de 45 segundos por vez para não estourar o tempo do servidor.
             </span>
             <form action={generateAllProposals}>
-              <SubmitButton pending="Gerando propostas...">Continuar gerando</SubmitButton>
+              <SubmitButton pending="Gerando propostas..." hint={AI_PENDING}>Continuar gerando</SubmitButton>
             </form>
           </div>
         </Notice>
@@ -154,7 +157,7 @@ export default async function CobrancaPage({
                   <td>
                     {canEdit && d.status === "EM_ABERTO" && (
                       <form action={generateProposal.bind(null, d.id)}>
-                        <button className="link-action whitespace-nowrap">Gerar proposta</button>
+                        <SubmitButton variant="link" pending="Gerando..." hint={AI_PENDING}>Gerar proposta</SubmitButton>
                       </form>
                     )}
                   </td>
@@ -163,7 +166,7 @@ export default async function CobrancaPage({
             </tbody>
           </table>
         ) : (
-          <Empty>Nenhum contrato ainda. Importe a carteira de inadimplentes para começar.</Empty>
+          <EmptyHelp {...AJUDA.cobranca.vazio} />
         )}
       </TableCard>
     </>

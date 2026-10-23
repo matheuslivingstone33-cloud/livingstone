@@ -10,6 +10,7 @@ import { getSettings } from "@/lib/settings";
 import { appUrl, applyPayment, newAgreementToken } from "@/lib/payments";
 import { decodeText, readUpload } from "@/lib/upload";
 import { fail } from "@/lib/errors";
+import { PROPOSAL_DEDUP_MS } from "@/lib/idempotencia";
 
 export async function importDebts(form: FormData) {
   const s = await requireSession(["ADMIN", "ANALISTA"]);
@@ -33,14 +34,21 @@ export async function importDebts(form: FormData) {
   redirect(`/cobranca?importados=${rows.length}`);
 }
 
-type ProposalOutcome = { created: false } | { created: true; aiStatus: AiStatus };
+type ProposalOutcome = { created: false; reason: "fechado" | "recente" } | { created: true; aiStatus: AiStatus };
 type ProposalAi = { useAi?: boolean; timeoutMs?: number };
 
 // Grava a proposta e audita a IA quando ela foi rejeitada, falhou ou foi barrada pelo teto (só contrato e motivo, nunca o texto)
 async function createProposal(s: Session, debtId: string, ai: ProposalAi = {}): Promise<ProposalOutcome> {
   const orgId = s.orgId;
   const d = await db.debt.findFirstOrThrow({ where: { id: debtId, orgId } });
-  if (d.status === "ACORDO" || d.status === "QUITADO") return { created: false };
+  if (d.status === "ACORDO" || d.status === "QUITADO") return { created: false, reason: "fechado" };
+  // Trava curta e atômica antes da IA: um segundo clique (ou o lote) no mesmo contrato não gera outra proposta
+  const now = new Date();
+  const lock = await db.debt.updateMany({
+    where: { id: debtId, orgId, OR: [{ proposalLockUntil: null }, { proposalLockUntil: { lt: now } }] },
+    data: { proposalLockUntil: new Date(now.getTime() + PROPOSAL_DEDUP_MS) },
+  });
+  if (!lock.count) return { created: false, reason: "recente" };
   const cfg = await getSettings(orgId);
   const token = newAgreementToken();
   const useAi = ai.useAi !== false;
@@ -86,6 +94,11 @@ export async function generateProposal(debtId: string) {
   const d = await db.debt.findFirst({ where: { id: debtId, orgId: s.orgId } });
   if (!d) fail("/cobranca", "Contrato não encontrado.");
   const r = await createProposal(s, debtId);
+  if (!r.created && r.reason === "recente") {
+    // Clique repetido: a proposta já está sendo (ou acabou de ser) gerada; leva ao detalhe sem chamar a IA
+    await audit(s, "cobranca.proposta.ignorada", `Contrato ${d.contract}: pedido repetido em menos de ${PROPOSAL_DEDUP_MS / 1000} s`);
+    redirect(`/cobranca/${debtId}`);
+  }
   if (!r.created) fail(`/cobranca/${debtId}`, "Este contrato já tem acordo fechado.");
   if (r.aiStatus === "bloqueada_limite") await audit(s, "ia.limite", `Cobrança, contrato ${d.contract}: teto diário de IA atingido`);
   await audit(s, "cobranca.proposta", `Contrato ${d.contract} (IA: ${r.aiStatus})`);

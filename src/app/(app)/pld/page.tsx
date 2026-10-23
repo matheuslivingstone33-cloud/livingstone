@@ -3,10 +3,12 @@ import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, day, dayInst, dt } from "@/lib/format";
 import { importPld } from "../../actions-pld";
-import { PageTitle, Stat, Empty, Notice, StatusBadge, Badge, CardHeader, TableCard, FilterBar } from "@/components/ui";
-import { SubmitButton } from "@/components/SubmitButton";
+import { PageTitle, Stat, EmptyHelp, Notice, StatusBadge, Badge, CardHeader, TableCard, FilterBar } from "@/components/ui";
+import { AI_PENDING, SubmitButton } from "@/components/SubmitButton";
 import { FileSizeGuard } from "@/components/FileSizeGuard";
 import { RiskBadge, DueBadge } from "./badges";
+import { AjudaAba } from "@/components/AjudaAba";
+import { AJUDA } from "@/lib/ajuda";
 
 // Importação grande roda dentro da server action desta página (vale em todos os planos da Vercel)
 export const maxDuration = 60;
@@ -38,6 +40,7 @@ export default async function PldPage({ searchParams }: { searchParams: Promise<
   return (
     <>
       <PageTitle eyebrow="PLD / COAF" title="Prevenção à lavagem de dinheiro" subtitle="Monitoramento de transações, análise de casos e comunicação ao COAF (Circular BCB 3.978/2020)" />
+      <AjudaAba aba="pld" />
       {lastBatch && statusLote(lastBatch, agora) === "CONCLUIDO" && (
         <Notice>
           {lastBatch.fileName}: {lastBatch.transactions} transações de {lastBatch.clients} clientes analisadas, {lastBatch.alerts} alerta(s) gerado(s).
@@ -63,7 +66,7 @@ export default async function PldPage({ searchParams }: { searchParams: Promise<
             <p className="hint mt-1">Até 4 MB por envio.</p>
             <FileSizeGuard inputIds={["pld-file"]} />
             <p className="hint mt-0">CSV: data; cliente; cpf_cnpj; renda_mensal; pep; tipo; valor; contraparte; doc_contraparte</p>
-            <SubmitButton pending="Analisando...">Analisar</SubmitButton>
+            <SubmitButton pending="Analisando..." hint={AI_PENDING}>Analisar</SubmitButton>
           </form>
         )}
         <section className={`card ${s.role !== "AUDITOR" ? "lg:col-span-2" : "lg:col-span-3"}`}>
@@ -130,7 +133,7 @@ export default async function PldPage({ searchParams }: { searchParams: Promise<
             </tbody>
           </table>
         ) : (
-          <Empty>Nenhum caso nesta situação.</Empty>
+          <EmptyHelp {...AJUDA.pld.vazio} />
         )}
       </TableCard>
     </>

@@ -8,7 +8,7 @@ import { getSettings } from "@/lib/settings";
 import { generateProposal, registerPayment } from "../../../actions-cobranca";
 import { PageTitle, Stat, StatusBadge, Notice } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { SubmitButton } from "@/components/SubmitButton";
+import { AI_PENDING, SubmitButton } from "@/components/SubmitButton";
 import { CopyButton } from "@/components/CopyButton";
 import { AiVersion } from "@/components/AiVersion";
 
@@ -44,7 +44,7 @@ export default async function DebtDetail({ params }: { params: Promise<{ id: str
 
       {canEdit && (d.status === "EM_ABERTO" || d.status === "NEGOCIANDO") && (
         <form action={generateProposal.bind(null, d.id)} className="mb-6">
-          <SubmitButton pending="Gerando...">{d.agreements.length ? "Gerar nova proposta" : "Gerar proposta"}</SubmitButton>
+          <SubmitButton pending="Gerando..." hint={AI_PENDING}>{d.agreements.length ? "Gerar nova proposta" : "Gerar proposta"}</SubmitButton>
         </form>
       )}
 

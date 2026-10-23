@@ -3,9 +3,11 @@ import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { dt } from "@/lib/format";
 import { createLegacyAnalysis } from "../../actions";
-import { PageTitle, Empty, CardHeader, TableCard } from "@/components/ui";
-import { SubmitButton } from "@/components/SubmitButton";
+import { PageTitle, EmptyHelp, CardHeader, TableCard } from "@/components/ui";
+import { AI_PENDING, SubmitButton } from "@/components/SubmitButton";
 import { FileSizeGuard } from "@/components/FileSizeGuard";
+import { AjudaAba } from "@/components/AjudaAba";
+import { AJUDA } from "@/lib/ajuda";
 
 // Tempo máximo da função na Vercel (actions e exportações longas)
 export const maxDuration = 60;
@@ -17,6 +19,7 @@ export default async function LegadoPage() {
   return (
     <>
       <PageTitle eyebrow="Código legado" title="Modernização de código legado" subtitle="Envie COBOL, Delphi ou VB6: a IA explica, extrai as regras de negócio e gera a versão moderna" />
+      <AjudaAba aba="legado" />
       {s.role !== "AUDITOR" && (
         <form action={createLegacyAnalysis} className="card mb-8 grid gap-4 md:grid-cols-3">
           <div className="md:col-span-3">
@@ -38,7 +41,7 @@ export default async function LegadoPage() {
             </select>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-3 border-t border-line pt-4 md:col-span-3">
-            <SubmitButton pending="Analisando código...">Analisar</SubmitButton>
+            <SubmitButton pending="Analisando código..." hint={AI_PENDING}>Analisar</SubmitButton>
           </div>
         </form>
       )}
@@ -63,7 +66,7 @@ export default async function LegadoPage() {
             </tbody>
           </table>
         ) : (
-          <Empty>Nenhum programa analisado ainda. Envie um arquivo de código legado para começar.</Empty>
+          <EmptyHelp {...AJUDA.legado.vazio} />
         )}
       </TableCard>
     </>

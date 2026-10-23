@@ -32,6 +32,7 @@ model Organization {
   pldCases   PldCase[]
   apiKeys    ApiKey[]
   apiRequests ApiRequest[]
+  dailySummary DailySummary?
   aiUsages   AiUsage[]
   // Trava do lote de propostas com IA (um lote por vez na instituição)
   aiBatchLockUntil DateTime?
@@ -226,6 +227,7 @@ model Debt {
   status       String       @default("EM_ABERTO") // EM_ABERTO | NEGOCIANDO | ACORDO | QUITADO
   importedFrom String?
   createdAt    DateTime     @default(now())
+  proposalLockUntil DateTime? // trava curta contra clique repetido em "Gerar proposta"
   agreements   Agreement[]
 
   @@unique([orgId, contract])
@@ -394,4 +396,15 @@ model AiUsage {
   createdAt    DateTime     @default(now())
 
   @@index([orgId, createdAt])
+}
+
+// Resumo do dia do painel: uma linha por instituição; o texto da IA só vale se os fatos não mudaram
+model DailySummary {
+  orgId       String       @id
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  text        String
+  source      String // ia | base
+  factsHash   String
+  generatedAt DateTime
+  lockUntil   DateTime?
 }

@@ -13,6 +13,7 @@ import { CopyButton } from "@/components/CopyButton";
 import { dt } from "@/lib/format";
 import { TASKS, modelFor, type AiTask } from "@/lib/ai-config";
 import { diaSP, inicioDoDiaSP } from "@/lib/tz";
+import { AjudaAba } from "@/components/AjudaAba";
 
 // Tempo máximo da função na Vercel (actions e exportações longas)
 export const maxDuration = 60;
@@ -44,7 +45,7 @@ function SectionHead({ n, title, children }: { n: string; title: string; childre
 
 const P = (n: number) => +(n * 100).toFixed(2);
 
-const TASK_LABEL: Record<AiTask, string> = { cobranca: "Cobrança", pld: "PLD", credito: "Crédito", legado: "Legado" };
+const TASK_LABEL: Record<AiTask, string> = { cobranca: "Cobrança", pld: "PLD", credito: "Crédito", legado: "Legado", resumo: "Resumo do painel" };
 const usd = (n: number) => `US$ ${n.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`;
 
 // Consumo de IA da instituição desde um instante (custo inclui reservas em andamento)
@@ -86,6 +87,7 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
   return (
     <>
       <PageTitle eyebrow="Administração" title="Configurações" subtitle="Ajustes da instituição: valem para todos os usuários e ficam registrados na auditoria" />
+      <AjudaAba aba="configuracoes" />
       {q.salvo && <Notice>Configurações salvas.</Notice>}
       {q.lista && <Notice>Lista {q.lista} importada: {q.n} registros.</Notice>}
 

@@ -3,10 +3,12 @@ import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, dt } from "@/lib/format";
 import { createCreditAnalysis } from "../../actions";
-import { PageTitle, Empty, StatusBadge, CardHeader, TableCard } from "@/components/ui";
-import { SubmitButton } from "@/components/SubmitButton";
+import { PageTitle, EmptyHelp, StatusBadge, CardHeader, TableCard } from "@/components/ui";
+import { AI_PENDING, SubmitButton } from "@/components/SubmitButton";
 import { FileSizeGuard } from "@/components/FileSizeGuard";
 import { rotuloSugestaoXDecisao } from "@/lib/credito-decisao";
+import { AjudaAba } from "@/components/AjudaAba";
+import { AJUDA } from "@/lib/ajuda";
 
 // Tempo máximo da função na Vercel (actions e exportações longas)
 export const maxDuration = 60;
@@ -18,6 +20,7 @@ export default async function CreditoPage() {
   return (
     <>
       <PageTitle eyebrow="Crédito" title="Análise de crédito" subtitle="A IA lê os documentos, extrai os dados e aplica as regras de crédito da instituição" />
+      <AjudaAba aba="credito" />
       {s.role !== "AUDITOR" && (
         <form action={createCreditAnalysis} className="card mb-8 grid gap-4 md:grid-cols-3">
           <div className="md:col-span-3">
@@ -50,7 +53,7 @@ export default async function CreditoPage() {
             <FileSizeGuard inputIds={["docs"]} />
           </div>
           <div className="flex flex-wrap items-center justify-end gap-3 border-t border-line pt-4 md:col-span-3">
-            <SubmitButton pending="Analisando documentos...">Analisar</SubmitButton>
+            <SubmitButton pending="Analisando documentos..." hint={AI_PENDING}>Analisar</SubmitButton>
           </div>
         </form>
       )}
@@ -76,7 +79,7 @@ export default async function CreditoPage() {
             </tbody>
           </table>
         ) : (
-          <Empty>Nenhuma análise ainda. Preencha a proposta e anexe os documentos do solicitante para começar.</Empty>
+          <EmptyHelp {...AJUDA.credito.vazio} />
         )}
       </TableCard>
     </>

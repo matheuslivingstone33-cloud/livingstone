@@ -5,6 +5,7 @@ import { changeUserRole, createUser, revokeUserSessions, setUserActive } from ".
 import { PageTitle, CardHeader, TableCard, StatusBadge } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 import { PasswordField } from "@/components/PasswordField";
+import { AjudaAba } from "@/components/AjudaAba";
 
 const roleLabel: Record<string, string> = { ADMIN: "Administrador", ANALISTA: "Analista", AUDITOR: "Auditor" };
 
@@ -16,6 +17,7 @@ export default async function UsuariosPage() {
   return (
     <>
       <PageTitle eyebrow="Acesso" title="Usuários" subtitle="Analistas operam os módulos; auditores apenas consultam e veem a trilha de auditoria" />
+      <AjudaAba aba="usuarios" />
       <form action={createUser} className="card mb-8 grid items-start gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1.3fr_auto_auto]">
         <div className="sm:col-span-2 lg:col-span-5">
           <CardHeader title="Adicionar usuário" />

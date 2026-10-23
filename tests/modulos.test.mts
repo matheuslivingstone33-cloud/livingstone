@@ -1320,3 +1320,135 @@ test("Marca: tagline nova em pt e en", () => {
   assert.equal(LANDING.pt.foot, BRAND.tagline);
   assert.equal(LANDING.en.foot, BRAND.taglineEn);
 });
+
+// ---------- Idempotência, ajuda das abas e resumo do dia ----------
+import { existsSync } from "node:fs";
+import { PROPOSAL_DEDUP_MS, isRecentProposal } from "../src/lib/idempotencia";
+import { AJUDA } from "../src/lib/ajuda";
+import { contarFrases, fatosHash, gerarResumo, montarFatos, resumoBase, resumoSalvoValido, type ResumoFatos } from "../src/lib/resumo";
+
+test("Idempotência: janela de 10 s para nova proposta", () => {
+  const now = new Date("2026-10-23T12:00:00Z");
+  const antes = (ms: number) => new Date(now.getTime() - ms);
+  assert.equal(PROPOSAL_DEDUP_MS, 10_000);
+  assert.equal(isRecentProposal(null, now, PROPOSAL_DEDUP_MS), false);
+  assert.equal(isRecentProposal(antes(9_999), now, PROPOSAL_DEDUP_MS), true);
+  assert.equal(isRecentProposal(antes(10_000), now, PROPOSAL_DEDUP_MS), false);
+  assert.equal(isRecentProposal(new Date(now.getTime() + 5_000), now, PROPOSAL_DEDUP_MS), true);
+});
+
+test("Ajuda das abas: 2–3 frases, 3 passos, exemplos existentes e sem texto vazio", () => {
+  const abas = ["dashboard", "conciliacao", "cobranca", "pld", "credito", "legado", "auditoria", "configuracoes", "usuarios"] as const;
+  assert.deepEqual(Object.keys(AJUDA).sort(), [...abas].sort());
+  for (const aba of abas) {
+    const a = AJUDA[aba];
+    assert.ok(a.frases.length >= 2 && a.frases.length <= 3, `${aba}: frases`);
+    assert.equal(a.passos.length, 3, `${aba}: passos`);
+    const textos = [a.titulo, ...a.frases, ...a.passos, a.vazio.texto, ...(a.exemplos ?? []).map((e) => e.rotulo)];
+    for (const t of textos) assert.ok(t.trim().length > 0, `${aba}: texto vazio`);
+    for (const e of [...(a.exemplos ?? []), ...(a.vazio.exemplo ? [a.vazio.exemplo] : [])]) {
+      assert.ok(e.href.startsWith("/demo/"), `${aba}: ${e.href}`);
+      assert.ok(existsSync(new URL(`../public${e.href}`, import.meta.url)), `${aba}: ${e.href} não existe`);
+    }
+  }
+  const hrefs = (aba: keyof typeof AJUDA) => (AJUDA[aba].exemplos ?? []).map((e) => e.href);
+  assert.deepEqual(hrefs("cobranca"), ["/demo/carteira_inadimplentes.csv"]);
+  assert.deepEqual(hrefs("credito"), ["/demo/extrato_joao.csv", "/demo/holerite_joao.txt"]);
+  assert.deepEqual(hrefs("conciliacao"), ["/demo/retorno_cnab400.ret", "/demo/titulos_esperados.csv", "/demo/extrato.ofx"]);
+});
+
+const NOW_RES = new Date("2026-10-23T12:00:00Z");
+const h = (n: number) => new Date(NOW_RES.getTime() + n * 3_600_000);
+const FATOS: ResumoFatos = montarFatos(
+  {
+    pldAbertos: [
+      { dueAt: h(24), mandatory: true },
+      { dueAt: h(24 * 20), mandatory: false },
+      { dueAt: h(-5), mandatory: false },
+    ],
+    acordosPropostos: [{ expiresAt: h(10) }, { expiresAt: h(47) }, { expiresAt: h(49) }, { expiresAt: h(-1) }],
+    conciliacaoProblemas: 4,
+    dividaAberta: 12_345.4,
+    pagamentos: [
+      { amount: 100, paidAt: h(-24) },
+      { amount: "250.5", paidAt: h(-24 * 6) },
+      { amount: 999, paidAt: h(-24 * 8) },
+    ],
+  },
+  NOW_RES,
+);
+
+test("Resumo: montarFatos com now fixo", () => {
+  assert.deepEqual(FATOS, { pldPendentes: 3, pldObrigatorios: 1, pldVencendo: 2, acordosVencendo: 2, conciliacaoProblemas: 4, dividaAberta: 12_345, recuperado7d: 351 });
+});
+
+const ZERO: ResumoFatos = { pldPendentes: 0, pldObrigatorios: 0, pldVencendo: 0, acordosVencendo: 0, conciliacaoProblemas: 0, dividaAberta: 0, recuperado7d: 0 };
+
+test("Resumo: texto base determinístico, 2–3 frases, e caso zerado próprio", () => {
+  const b = resumoBase(FATOS);
+  assert.equal(b, resumoBase({ ...FATOS }));
+  assert.match(b, /3 casos de PLD/);
+  assert.match(b, /R\$ 12\.345,00/);
+  const n = contarFrases(b);
+  assert.ok(n >= 2 && n <= 3, `${n} frases`);
+  const z = resumoBase(ZERO);
+  assert.match(z, /Nada pendente/);
+  assert.ok(contarFrases(z) >= 2 && contarFrases(z) <= 3);
+  assert.doesNotMatch(z, /\d/);
+});
+
+test("Resumo: fatosHash muda quando um número muda", () => {
+  assert.equal(fatosHash(FATOS), fatosHash({ ...FATOS }));
+  assert.notEqual(fatosHash(FATOS), fatosHash({ ...FATOS, acordosVencendo: 3 }));
+  assert.notEqual(fatosHash(FATOS), fatosHash(ZERO));
+  const salvo = { source: "ia", factsHash: fatosHash(FATOS), generatedAt: h(-5) };
+  assert.equal(resumoSalvoValido(salvo, fatosHash(FATOS), NOW_RES), true);
+  assert.equal(resumoSalvoValido({ ...salvo, generatedAt: h(-6) }, fatosHash(FATOS), NOW_RES), false);
+  assert.equal(resumoSalvoValido(salvo, fatosHash(ZERO), NOW_RES), false);
+  assert.equal(resumoSalvoValido({ ...salvo, source: "base" }, fatosHash(FATOS), NOW_RES), false);
+});
+
+test("Resumo: gerarResumo aceita reescrita fiel e cai no texto base em qualquer problema", async () => {
+  const base = resumoBase(FATOS);
+  const fake = (texto: unknown): AiCall => (async () => ({ ok: true, data: { texto } })) as unknown as AiCall;
+  const ok = "Atenção a 3 casos de PLD, 1 com comunicação obrigatória e 2 com prazo nos próximos 7 dias. Há 2 propostas vencendo em 48 horas e 4 itens na conciliação. Carteira em aberto: R$ 12.345,00; entraram R$ 351,00.";
+  const r = await gerarResumo(FATOS, { call: fake(ok), now: NOW_RES });
+  assert.equal(r.origem, "ia");
+  assert.equal(r.texto, ok);
+
+  const inventado = await gerarResumo(FATOS, { call: fake("Há 5 casos de PLD em análise e a carteira soma R$ 12.345,00."), now: NOW_RES });
+  assert.deepEqual([inventado.origem, inventado.texto, inventado.status], ["base", base, "rejeitada"]);
+  assert.match(inventado.motivo ?? "", /número não permitido: 5/);
+
+  const data = await gerarResumo(FATOS, { call: fake("Em 23/10/2026 há 3 casos de PLD."), now: NOW_RES });
+  assert.equal(data.origem, "base");
+
+  const quatro = await gerarResumo(FATOS, { call: fake("Há 3 casos. Há 2 propostas. Há 4 itens. Fim."), now: NOW_RES });
+  assert.equal(quatro.origem, "base");
+  assert.match(quatro.motivo ?? "", /frases/);
+
+  const longo = await gerarResumo(FATOS, { call: fake(`Há 3 casos de PLD ${"em análise ".repeat(50)}.`), now: NOW_RES });
+  assert.equal(longo.origem, "base");
+  assert.match(longo.motivo ?? "", /caracteres/);
+
+  const erro = await gerarResumo(FATOS, { call: (async () => ({ ok: false, reason: "timeout", detail: "10 s" })) as unknown as AiCall, now: NOW_RES });
+  assert.deepEqual([erro.origem, erro.status, erro.texto], ["base", "falhou", base]);
+
+  const lanca = await gerarResumo(FATOS, { call: (async () => { throw new Error("rede"); }) as unknown as AiCall, now: NOW_RES });
+  assert.equal(lanca.origem, "base");
+
+  const limite = await gerarResumo(FATOS, { call: (async () => ({ ok: false, reason: "limite", detail: "teto" })) as unknown as AiCall, now: NOW_RES });
+  assert.equal(limite.status, "bloqueada_limite");
+
+  const sem = await gerarResumo(FATOS, { now: NOW_RES });
+  assert.deepEqual([sem.origem, sem.texto], ["base", base]);
+});
+
+test("Resumo: tarefa da IA barata (Haiku, esforço baixo, saída curta) e override próprio", () => {
+  assert.deepEqual([TASKS.resumo.model, TASKS.resumo.effort], ["claude-haiku-5-5", "low"]);
+  assert.ok(TASKS.resumo.max_tokens <= 512);
+  assert.equal(modelFor("resumo", {}), "claude-haiku-5-5");
+  assert.equal(modelFor("resumo", { AI_MODEL_RESUMO: "claude-sonnet-5-5" }), "claude-sonnet-5-5");
+  assert.equal(modelFor("resumo", { AI_MODEL_RESUMO: "gpt-4" }), "claude-haiku-5-5");
+  assert.ok(reserveCost("resumo", 3000, {}) < reserveCost("cobranca", 3000, {}));
+});

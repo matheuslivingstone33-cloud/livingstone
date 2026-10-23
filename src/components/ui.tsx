@@ -219,6 +219,26 @@ export function Empty({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** Estado vazio com o texto de ajuda da aba e, quando houver, um arquivo de exemplo para baixar. */
+export function EmptyHelp({ texto, exemplo }: { texto: React.ReactNode; exemplo?: { href: string; rotulo: string } }) {
+  return (
+    <Empty>
+      {texto}
+      {exemplo && (
+        <>
+          {" "}
+          <span className="mt-2 block">
+            Sem um arquivo à mão? Baixe o exemplo:{" "}
+            <a className="link-action" href={exemplo.href} download>
+              {exemplo.rotulo}
+            </a>
+          </span>
+        </>
+      )}
+    </Empty>
+  );
+}
+
 /** Mensagem de confirmação após uma ação (substitui os "p" verdes soltos). */
 export function Notice({ tone = "success", role = "status", className = "", children }: { tone?: "success" | "warning" | "danger" | "info"; role?: "status" | "alert"; className?: string; children: React.ReactNode }) {
   const cls = { success: "notice-success", warning: "notice-warning", danger: "notice-danger", info: "notice-info" }[tone];

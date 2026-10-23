@@ -6,7 +6,7 @@ import { TYPE_LABEL, dossierAiAvailableAt, type Alert } from "@/lib/pld";
 import { aiProvider } from "@/lib/ai";
 import { generateDossier, regenerateDossierAi } from "../../../actions-pld";
 import { PageTitle, Stat, CardHeader, Notice, Badge, StatusBadge, statusLabel } from "@/components/ui";
-import { SubmitButton } from "@/components/SubmitButton";
+import { AI_PENDING, SubmitButton } from "@/components/SubmitButton";
 import { CopyButton } from "@/components/CopyButton";
 import { AiVersion } from "@/components/AiVersion";
 import { RiskBadge, DueBadge } from "../badges";
@@ -137,11 +137,11 @@ export default async function PldCasePage({ params }: { params: Promise<{ id: st
             {canEdit && (
               <div className="flex flex-wrap gap-2">
                 <form action={generateDossier.bind(null, c.id)}>
-                  <SubmitButton pending="Gerando dossiê...">{c.dossier ? "Gerar novamente" : "Gerar dossiê"}</SubmitButton>
+                  <SubmitButton pending="Gerando dossiê..." hint={AI_PENDING}>{c.dossier ? "Gerar novamente" : "Gerar dossiê"}</SubmitButton>
                 </form>
                 {aiOn && s.role === "ADMIN" && c.dossier && (
                   <form action={regenerateDossierAi.bind(null, c.id)}>
-                    <SubmitButton pending="Regenerando com IA...">Regenerar com IA</SubmitButton>
+                    <SubmitButton pending="Regenerando com IA..." hint={AI_PENDING}>Regenerar com IA</SubmitButton>
                   </form>
                 )}
               </div>

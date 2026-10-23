@@ -6,6 +6,7 @@ import { PageTitle, Empty, TableCard, Notice, CardHeader } from "@/components/ui
 import { Icon } from "@/components/Icon";
 import { ChainIllustration } from "@/components/Illustrations";
 import { ConferirRecibo } from "@/components/ConferirRecibo";
+import { AjudaAba } from "@/components/AjudaAba";
 
 // Tempo máximo da função na Vercel (actions e exportações longas)
 export const maxDuration = 60;
@@ -34,6 +35,7 @@ export default async function AuditoriaPage({ searchParams }: { searchParams: Pr
   return (
     <>
       <PageTitle eyebrow="Auditoria" title="Trilha de auditoria" subtitle="Registro de todas as ações realizadas na plataforma" />
+      <AjudaAba aba="auditoria" />
       <div
         role={chain.ok ? "status" : "alert"}
         className={`notice ${chain.ok ? "notice-success" : "notice-danger"} mb-6 flex-col gap-4 rounded-2xl p-5 sm:flex-row sm:items-center`}

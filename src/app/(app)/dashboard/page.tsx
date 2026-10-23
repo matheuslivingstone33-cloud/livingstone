@@ -2,10 +2,15 @@ import Link from "next/link";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, dt } from "@/lib/format";
-import { TZ } from "@/lib/tz";
+import { TZ, fmtHora } from "@/lib/tz";
+import { carregarPainel } from "@/lib/painel-dados";
+import { fatosHash, resumoBase, resumoSalvoValido } from "@/lib/resumo";
+import { atualizarResumo } from "@/app/actions-resumo";
+import { AI_PENDING, SubmitButton } from "@/components/SubmitButton";
 import { PageTitle, Stat, Empty, CardHeader, MoreLink, Badge, statusLabel } from "@/components/ui";
 import { AreaTrend, Bars, CHART, StackBar } from "@/components/charts";
 import { DueBadge, RiskBadge } from "../pld/badges";
+import { AjudaAba } from "@/components/AjudaAba";
 
 const WEEKS = 8;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -28,28 +33,20 @@ function weekly(payments: { amount: unknown; paidAt: Date }[]) {
 
 export default async function Dashboard() {
   const s = await requireSession();
-  const where = { orgId: s.orgId };
-  const [recs, credits, recAgg, decisions, payments, debts, pldOpen, pldByRisk, recent] = await Promise.all([
-    db.reconciliation.count({ where }),
-    db.creditAnalysis.count({ where }),
-    db.reconciliation.aggregate({ where, _sum: { totalReceived: true, divergent: true, missing: true } }),
-    db.creditAnalysis.groupBy({ by: ["decision"], where, _count: true }),
-    db.payment.findMany({ where: { agreement: { debt: where } }, select: { amount: true, paidAt: true } }),
-    db.debt.groupBy({ by: ["status"], where, _count: true, _sum: { principal: true } }),
-    db.pldCase.findMany({ where: { ...where, batch: { status: "CONCLUIDO" }, status: "EM_ANALISE" }, orderBy: { dueAt: "asc" }, take: 4 }),
-    db.pldCase.groupBy({ by: ["risk"], where: { ...where, batch: { status: "CONCLUIDO" }, status: "EM_ANALISE" }, _count: true }),
-    db.auditLog.findMany({ where, orderBy: { createdAt: "desc" }, take: 7, include: { user: true } }),
-  ]);
+  const now = new Date();
+  // Visitar a página nunca chama a IA: só lê o resumo salvo
+  const [painel, salvo] = await Promise.all([carregarPainel(s.orgId, now), db.dailySummary.findUnique({ where: { orgId: s.orgId } })]);
+  const { recs, credits, recAgg, decisions, payments, debts, pldOpen, pldByRisk, recent, mandatory, problems, openDebt, fatos } = painel;
+  const resumoIa = resumoSalvoValido(salvo, fatosHash(fatos), now) ? salvo : null;
+  const resumo = resumoIa?.text || resumoBase(fatos);
+  const canEdit = s.role !== "AUDITOR";
 
   const dec = Object.fromEntries(decisions.map((d) => [d.decision, d._count]));
   const risk = Object.fromEntries(pldByRisk.map((r) => [r.risk, r._count]));
   const series = weekly(payments);
   const recovered = payments.reduce((a, p) => a + Number(p.amount), 0);
-  const openDebt = debts.filter((d) => d.status !== "QUITADO").reduce((a, d) => a + Number(d._sum.principal ?? 0), 0);
   const settledDebt = Number(debts.find((d) => d.status === "QUITADO")?._sum.principal ?? 0);
   const pldTotal = pldByRisk.reduce((a, r) => a + r._count, 0);
-  const mandatory = await db.pldCase.count({ where: { ...where, batch: { status: "CONCLUIDO" }, status: "EM_ANALISE", mandatory: true } });
-  const problems = (recAgg._sum.divergent ?? 0) + (recAgg._sum.missing ?? 0);
   const decTotal = (dec.APROVAR ?? 0) + (dec.ANALISAR ?? 0) + (dec.RECUSAR ?? 0);
 
   const today = new Date().toLocaleDateString("pt-BR", { timeZone: TZ, weekday: "long", day: "numeric", month: "long" });
@@ -57,6 +54,26 @@ export default async function Dashboard() {
   return (
     <>
       <PageTitle eyebrow={today} title={`Olá, ${s.name.split(" ")[0]}`} subtitle="O que a operação recuperou, o que precisa de atenção e o que vence primeiro" />
+      <AjudaAba aba="dashboard" />
+
+      <section aria-labelledby="resumo-dia" className="card rise mb-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h2 id="resumo-dia" className="card-title">Resumo do dia</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-ink-700">{resumo}</p>
+            <p className="mt-2 text-xs text-ink-500">
+              {resumoIa
+                ? `Texto escrito pela IA e conferido com os números do painel · gerado às ${fmtHora(resumoIa.generatedAt)}`
+                : "Calculado agora com os números do painel."}
+            </p>
+          </div>
+          {canEdit && (
+            <form action={atualizarResumo}>
+              <SubmitButton pending="Atualizando..." hint={AI_PENDING}>Atualizar resumo</SubmitButton>
+            </form>
+          )}
+        </div>
+      </section>
 
       <section aria-labelledby="hero-recuperado" className="on-ink surface-ink rise rounded-3xl p-6 md:p-8">
         <div className="bg-grid pointer-events-none absolute inset-0 opacity-70 [mask-image:linear-gradient(to_right,black,transparent_80%)]" aria-hidden="true" />

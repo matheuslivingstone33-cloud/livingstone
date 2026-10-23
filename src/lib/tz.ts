@@ -37,3 +37,7 @@ export function diasEntreSP(vencimentoCalendario: Date, agora: D = new Date()): 
   const venc = Date.UTC(v.getUTCFullYear(), v.getUTCMonth(), v.getUTCDate());
   return Math.max(0, Math.floor((Date.UTC(y, m - 1, d) - venc) / 86_400_000));
 }
+
+const fHora = new Intl.DateTimeFormat("pt-BR", { timeZone: TZ, hour: "2-digit", minute: "2-digit" });
+/** Instante → "HH:mm" no horário de Brasília. */
+export const fmtHora = (d: D) => fHora.format(toDate(d));
