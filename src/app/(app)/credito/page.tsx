@@ -6,6 +6,7 @@ import { createCreditAnalysis } from "../../actions";
 import { PageTitle, Empty, StatusBadge, CardHeader, TableCard } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
 import { FileSizeGuard } from "@/components/FileSizeGuard";
+import { rotuloSugestaoXDecisao } from "@/lib/credito-decisao";
 
 // Tempo máximo da função na Vercel (actions e exportações longas)
 export const maxDuration = 60;
@@ -58,7 +59,7 @@ export default async function CreditoPage() {
         {list.length ? (
           <table className="table">
             <thead>
-              <tr><th>Solicitante</th><th className="num">Valor</th><th className="num">Score</th><th>Sugestão</th><th>IA</th><th>Data</th></tr>
+              <tr><th>Solicitante</th><th className="num">Valor</th><th className="num">Score</th><th>Sugestão</th><th>Sugestão × Decisão</th><th>IA</th><th>Data</th></tr>
             </thead>
             <tbody>
               {list.map((c) => (
@@ -67,6 +68,7 @@ export default async function CreditoPage() {
                   <td className="num">{brl(c.requested)}</td>
                   <td className="num font-semibold">{c.score}</td>
                   <td><StatusBadge status={c.decision} /></td>
+                  <td className="text-ink-600">{c.finalDecision && <StatusBadge status={c.finalDecision} />} <span className="text-xs">{rotuloSugestaoXDecisao(c.decision, c.finalDecision)}</span></td>
                   <td className="text-ink-500">{c.aiProvider === "claude" ? "Claude" : "Regras locais"}</td>
                   <td className="whitespace-nowrap text-ink-500">{dt(c.createdAt)}</td>
                 </tr>

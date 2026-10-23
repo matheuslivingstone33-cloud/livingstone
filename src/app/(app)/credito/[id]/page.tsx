@@ -5,6 +5,8 @@ import { brl, dt } from "@/lib/format";
 import type { CreditResult, Flag } from "@/lib/credit";
 import { PageTitle, Stat, StatusBadge, CardHeader } from "@/components/ui";
 import { AiVersion } from "@/components/AiVersion";
+import { rotuloSugestaoXDecisao } from "@/lib/credito-decisao";
+import { DecisaoForm } from "./DecisaoForm";
 
 const flagTone = { alto: "border-red-200 bg-red-50 text-red-900", medio: "border-amber-200 bg-amber-50 text-amber-900", baixo: "border-line bg-paper text-ink-700" };
 const flagDot = { alto: "bg-red-500", medio: "bg-amber-500", baixo: "bg-slate-400" };
@@ -15,6 +17,7 @@ export default async function CreditoDetalhe({ params }: { params: Promise<{ id:
   const { id } = await params;
   const c = await db.creditAnalysis.findFirst({ where: { id, orgId: s.orgId } });
   if (!c) notFound();
+  const eventos = await db.creditDecisionEvent.findMany({ where: { analysisId: c.id, orgId: s.orgId }, orderBy: { createdAt: "asc" } });
   const x = c.extracted as unknown as CreditResult["extracted"];
   const flags = c.flags as unknown as Flag[];
   const scoreTone = c.score >= 700 ? "green" : c.score >= 450 ? "amber" : "red";
@@ -101,6 +104,31 @@ export default async function CreditoDetalhe({ params }: { params: Promise<{ id:
           </section>
         </div>
       </div>
+
+      <section className="card mt-4">
+        <CardHeader title="Decisão humana">{rotuloSugestaoXDecisao(c.decision, c.finalDecision)}</CardHeader>
+        <p className="mb-3 text-xs text-ink-500">A sugestão automática acima não decide sozinha: a decisão final é de uma pessoa e fica registrada na auditoria.</p>
+        {c.finalDecision ? (
+          <div className="mb-4 space-y-1 text-sm">
+            <p><StatusBadge status={c.finalDecision} /> por <b>{c.decidedByName}</b> em {dt(c.decidedAt)}</p>
+            <p className="text-ink-700">{c.justification}</p>
+          </div>
+        ) : null}
+        {s.role !== "AUDITOR" && (!c.finalDecision || s.role === "ADMIN") && (
+          <DecisaoForm analysisId={c.id} atual={c.finalDecision} revisao={!!c.finalDecision} />
+        )}
+        {!c.finalDecision && s.role === "AUDITOR" && <p className="text-sm text-ink-500">Aguardando decisão de um analista.</p>}
+        {eventos.length > 0 && (
+          <details className="mt-4 text-sm">
+            <summary className="cursor-pointer text-ink-500">Histórico ({eventos.length})</summary>
+            <ul className="mt-2 space-y-1">
+              {eventos.map((e) => (
+                <li key={e.id}>{dt(e.createdAt)} · {e.userName} · {e.fromDecision ? `${e.fromDecision} → ` : ""}{e.toDecision} · {e.justification}</li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </section>
     </>
   );
 }

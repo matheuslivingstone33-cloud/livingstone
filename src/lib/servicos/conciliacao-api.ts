@@ -23,7 +23,8 @@ export function reconciliationJson(r: Reconciliation) {
   };
 }
 
-export function itemJson(i: ReconciliationItem) {
+export function itemJson(i: ReconciliationItem, todos: ReconciliationItem[] = []) {
+  const vinculado = i.linkedItemId ? todos.find((t) => t.id === i.linkedItemId) : undefined;
   return {
     referencia: i.reference,
     pagador: i.payer,
@@ -35,5 +36,11 @@ export function itemJson(i: ReconciliationItem) {
     regra: i.rule,
     excedente: n(i.excess),
     observacao: i.note,
+    situacaoOriginal: i.originalStatus,
+    resolucao: i.resolution,
+    justificativa: i.resolutionNote,
+    resolvidoPor: i.resolvedByName,
+    resolvidoEm: i.resolvedAt ? i.resolvedAt.toISOString() : null,
+    itemVinculado: vinculado?.reference ?? null,
   };
 }

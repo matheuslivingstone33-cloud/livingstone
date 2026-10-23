@@ -148,7 +148,7 @@ export default function ApiDocs() {
         </Sec>
 
         <Sec id="consultar" title="GET /api/v1/conciliacoes e /api/v1/conciliacoes/{id}">
-          <p>A lista é paginada (<C>pagina</C>, <C>limite</C> até 100) e traz o resumo de cada conciliação. O detalhe inclui os itens, com situação (CONCILIADO, DIVERGENTE, PENDENTE, NAO_ESPERADO), regra de casamento e observação.</p>
+          <p>A lista é paginada (<C>pagina</C>, <C>limite</C> até 100) e traz o resumo de cada conciliação. O detalhe inclui os itens, com situação (CONCILIADO, DIVERGENTE, PENDENTE, NAO_ESPERADO, VINCULADO, BAIXADO), regra de casamento (REFERENCIA, REFERENCIA_DV, VALOR_DATA ou MANUAL) e observação. Itens fechados por uma pessoa trazem também <C>situacaoOriginal</C>, <C>resolucao</C> (MANUAL_VINCULO, ACEITE_DIVERGENCIA ou BAIXA), <C>justificativa</C>, <C>resolvidoPor</C>, <C>resolvidoEm</C> e <C>itemVinculado</C> (referência do outro item do vínculo); nos demais esses campos vêm nulos. VINCULADO é o crédito não esperado que foi unido a um título; BAIXADO é o item encerrado sem conciliação. Nenhum dos dois conta como pendente ou não esperado no resumo.</p>
           <Code>{CURL_GET}</Code>
         </Sec>
 

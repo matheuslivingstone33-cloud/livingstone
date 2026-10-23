@@ -11,6 +11,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   return withApiKey(req, "conciliacao:read", async ({ orgId }) => {
     const rec = await db.reconciliation.findFirst({ where: { id: id.slice(0, 64), orgId }, include: { items: { orderBy: { id: "asc" } } } });
     if (!rec) return { status: 404, json: errBody("not_found", "Conciliação não encontrada.") };
-    return { status: 200, json: { ...reconciliationJson(rec), itens: rec.items.map(itemJson) }, resourceType: "Reconciliation", resourceId: rec.id };
+    return { status: 200, json: { ...reconciliationJson(rec), itens: rec.items.map((i) => itemJson(i, rec.items)) }, resourceType: "Reconciliation", resourceId: rec.id };
   });
 }

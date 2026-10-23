@@ -1145,3 +1145,120 @@ test("Listas: sanção sem documento casa pelo nome; documento diferente vira po
   assert.ok(!PLD_MANDATORY.includes("POSSIVEL_HOMONIMO"));
   assert.ok(prepararLote(txs, DEFAULTS.pld, idx, new Date(0)).casos.every((c) => !c.mandatory));
 });
+
+// ---- Etapa 3: fechamentos humanos ----
+import { aplicar, planejarAceite, planejarBaixa, planejarReabertura, planejarVinculo, resumir, validarJustificativa, type ItemManual } from "../src/lib/conciliacao-manual";
+import { rotuloSugestaoXDecisao, validarDecisao } from "../src/lib/credito-decisao";
+
+const itensDemo = (): ItemManual[] => {
+  const expected = parseExpectedCsv(demo("titulos_esperados.csv").toString());
+  const { entries } = parseBankFile("r.ret", demo("retorno_cnab400.ret").toString());
+  return reconcile(expected, entries).map((i, k) => ({ ...i, id: `i${k}` }));
+};
+const MOTIVO = "Conferido com o extrato e o cliente por telefone";
+
+test("Conciliação manual: resumir sem resolução bate com summarize", () => {
+  const items = itensDemo();
+  assert.deepEqual(resumir(items), summarize(items));
+});
+
+test("Conciliação manual: vínculo funde PENDENTE e NAO_ESPERADO", () => {
+  const items = itensDemo();
+  const antes = resumir(items);
+  const p = items.find((i) => i.status === "PENDENTE")!;
+  const u = items.find((i) => i.status === "NAO_ESPERADO")!;
+  const alts = planejarVinculo(p, u);
+  const depois = aplicar(items, alts);
+  const r = resumir(depois);
+  const menor = Math.round(u.receivedAmount! * 100) < Math.round(p.expectedAmount! * 100);
+  assert.equal(r.missing, antes.missing - 1);
+  assert.equal(r.unexpected, antes.unexpected - 1);
+  assert.equal(r.matched + r.divergent, antes.matched + antes.divergent + 1);
+  assert.equal(menor ? r.divergent : r.matched, (menor ? antes.divergent : antes.matched) + 1);
+  const np = depois.find((i) => i.id === p.id)!;
+  assert.equal(np.rule, "MANUAL");
+  assert.equal(np.receivedAmount, u.receivedAmount);
+  const nu = depois.find((i) => i.id === u.id)!;
+  assert.equal(nu.status, "VINCULADO");
+  assert.equal(nu.linkedItemId, p.id);
+  // Reabrir devolve exatamente o resumo original
+  const reab = aplicar(depois, planejarReabertura(np, nu));
+  assert.deepEqual(resumir(reab), antes);
+  assert.equal(reab.find((i) => i.id === p.id)!.receivedAmount, null);
+  assert.equal(reab.find((i) => i.id === u.id)!.status, "NAO_ESPERADO");
+});
+
+test("Conciliação manual: valores do vínculo (igual, maior, menor) e excesso em centavos", () => {
+  const p = (v: number, id = "p"): ItemManual => ({ id, reference: id, status: "PENDENTE", expectedAmount: v });
+  const u = (v: number, id = "u"): ItemManual => ({ id, reference: id, status: "NAO_ESPERADO", receivedAmount: v });
+  assert.equal(planejarVinculo(p(100), u(100))[0].data.status, "CONCILIADO");
+  const maior = planejarVinculo(p(100), u(100.1))[0].data;
+  assert.equal(maior.status, "CONCILIADO");
+  assert.equal(maior.excess, 0.1);
+  assert.equal(planejarVinculo(p(100), u(99.99))[0].data.status, "DIVERGENTE");
+  const a = aplicar([p(1, "p1"), u(1.1, "u1"), p(1, "p2"), u(1.2, "u2")], [
+    ...planejarVinculo(p(1, "p1"), u(1.1, "u1")),
+    ...planejarVinculo(p(1, "p2"), u(1.2, "u2")),
+  ]);
+  assert.equal(resumir(a).excess, 0.3);
+});
+
+test("Conciliação manual: erros de regra", () => {
+  const items = itensDemo();
+  const [p1, p2] = items.filter((i) => i.status === "PENDENTE");
+  const u = items.find((i) => i.status === "NAO_ESPERADO")!;
+  const c = items.find((i) => i.status === "CONCILIADO")!;
+  const d = items.find((i) => i.status === "DIVERGENTE")!;
+  assert.throws(() => planejarVinculo(c, u), /PENDENTE/);
+  assert.throws(() => planejarVinculo(p1, p2), /NAO_ESPERADO/);
+  assert.throws(() => planejarAceite(c), /DIVERGENTE/);
+  assert.throws(() => planejarBaixa(c), /baixados/);
+  assert.throws(() => validarJustificativa("curta demais"), /20 caracteres/);
+  assert.throws(() => validarJustificativa(" ".repeat(40)), /20 caracteres/);
+  assert.equal(validarJustificativa(`  ${MOTIVO}  `), MOTIVO);
+  const resolvido = { ...d, ...planejarAceite(d).data };
+  assert.throws(() => planejarAceite(resolvido), /já foi resolvido/);
+  assert.throws(() => planejarBaixa(resolvido), /já foi resolvido/);
+  assert.throws(() => planejarReabertura(c), /reabrir/);
+});
+
+test("Conciliação manual: aceite mantém valores e baixa tira só a pendência", () => {
+  const items = itensDemo();
+  const antes = resumir(items);
+  const d = items.find((i) => i.status === "DIVERGENTE")!;
+  const ac = aplicar(items, [planejarAceite(d)]);
+  const nd = ac.find((i) => i.id === d.id)!;
+  assert.equal(nd.status, "CONCILIADO");
+  assert.equal(nd.receivedAmount, d.receivedAmount);
+  assert.equal(nd.expectedAmount, d.expectedAmount);
+  assert.equal(resumir(ac).matched, antes.matched + 1);
+  assert.equal(resumir(ac).divergent, antes.divergent - 1);
+  const p = items.find((i) => i.status === "PENDENTE")!;
+  const bx = resumir(aplicar(items, [planejarBaixa(p)]));
+  assert.equal(bx.missing, antes.missing - 1);
+  assert.equal(bx.matched, antes.matched);
+  assert.deepEqual(resumir(aplicar(aplicar(items, [planejarBaixa(p)]), planejarReabertura({ ...p, ...planejarBaixa(p).data }))), antes);
+});
+
+test("Crédito: decisão humana e revisão", () => {
+  const J = "Renda comprovada e comprometimento dentro da política";
+  assert.ok(validarDecisao({ atual: null, nova: "APROVADO", justificativa: J, role: "ANALISTA" }).ok);
+  assert.ok(!validarDecisao({ atual: "APROVADO", nova: "RECUSADO", justificativa: J, role: "ANALISTA" }).ok);
+  assert.ok(!validarDecisao({ atual: "APROVADO", nova: "APROVADO", justificativa: J, role: "ADMIN" }).ok);
+  const rev = validarDecisao({ atual: "APROVADO", nova: "RECUSADO", justificativa: J, role: "ADMIN" });
+  assert.ok(rev.ok && rev.revisao);
+  assert.ok(!validarDecisao({ atual: null, nova: "TALVEZ", justificativa: J, role: "ADMIN" }).ok);
+  assert.ok(!validarDecisao({ atual: null, nova: "APROVADO", justificativa: "x".repeat(29), role: "ADMIN" }).ok);
+  assert.ok(validarDecisao({ atual: null, nova: "APROVADO", justificativa: "x".repeat(30), role: "ADMIN" }).ok);
+  assert.equal(rotuloSugestaoXDecisao("APROVAR", "APROVADO"), "Confirmou sugestão");
+  assert.equal(rotuloSugestaoXDecisao("RECUSAR", "APROVADO"), "Divergiu da sugestão");
+  assert.equal(rotuloSugestaoXDecisao("ANALISAR", null), "Aguardando decisão");
+  assert.equal(rotuloSugestaoXDecisao("ANALISAR", "RECUSADO"), "Decidido após análise");
+});
+
+test("Etapa 3 pureza: libs de fechamento não importam banco, Next, auth nem IA", () => {
+  for (const f of ["conciliacao-manual", "credito-decisao"]) {
+    const src = readFileSync(new URL(`../src/lib/${f}.ts`, import.meta.url), "utf8");
+    assert.ok(!/^import /m.test(src), f);
+  }
+});

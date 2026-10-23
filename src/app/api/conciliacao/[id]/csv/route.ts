@@ -13,11 +13,12 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
   if (!r) return new Response("Não encontrado", { status: 404 });
 
   const rows = [
-    ["referencia", "pagador", "valor_esperado", "valor_recebido", "excedente", "vencimento", "pago_em", "status", "regra", "observacao"].join(";"),
+    ["referencia", "pagador", "valor_esperado", "valor_recebido", "excedente", "vencimento", "pago_em", "status", "regra", "observacao", "situacao_original", "resolucao", "justificativa", "resolvido_por", "resolvido_em"].join(";"),
     ...r.items.map((i) =>
       [
         cell(i.reference), cell(i.payer), num(i.expectedAmount), num(i.receivedAmount), num(i.excess),
         i.dueAt?.toISOString().slice(0, 10) ?? "", i.paidAt?.toISOString().slice(0, 10) ?? "", i.status, i.rule ?? "", cell(i.note),
+        i.originalStatus ?? "", i.resolution ?? "", cell(i.resolutionNote), cell(i.resolvedByName), i.resolvedAt?.toISOString() ?? "",
       ].join(";"),
     ),
   ];

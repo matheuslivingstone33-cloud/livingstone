@@ -111,6 +111,8 @@ model Reconciliation {
   totalExcess   Decimal      @default(0) @db.Decimal(14, 2)
   options       Json         @default("{}") // regras usadas: tolerâncias e casamento por valor+data
   createdAt     DateTime     @default(now())
+  manualCount   Int          @default(0) // itens resolvidos manualmente (vínculo, aceite, baixa)
+  updatedAt     DateTime?
   items         ReconciliationItem[]
 }
 
@@ -123,11 +125,35 @@ model ReconciliationItem {
   expectedAmount   Decimal?       @db.Decimal(14, 2)
   receivedAmount   Decimal?       @db.Decimal(14, 2)
   paidAt           DateTime?
-  status           String // CONCILIADO | DIVERGENTE | PENDENTE | NAO_ESPERADO
-  rule             String? // REFERENCIA | REFERENCIA_DV | VALOR_DATA (nulo em conciliações antigas)
+  status           String // CONCILIADO | DIVERGENTE | PENDENTE | NAO_ESPERADO | VINCULADO | BAIXADO
+  rule             String? // REFERENCIA | REFERENCIA_DV | VALOR_DATA | MANUAL (nulo em conciliações antigas)
   dueAt            DateTime?
   excess           Decimal?       @db.Decimal(14, 2)
   note             String?
+  originalStatus   String? // status antes da resolução manual
+  resolution       String? // MANUAL_VINCULO | ACEITE_DIVERGENCIA | BAIXA
+  resolutionNote   String?
+  resolvedById     String?
+  resolvedByName   String?
+  resolvedAt       DateTime?
+  linkedItemId     String?
+  version          Int            @default(0)
+}
+
+model ReconciliationItemEvent {
+  id               String   @id @default(cuid())
+  orgId            String
+  itemId           String
+  reconciliationId String
+  action           String // VINCULAR | ACEITAR_DIVERGENCIA | BAIXAR | REABRIR
+  fromStatus       String
+  toStatus         String
+  note             String
+  userId           String
+  userName         String
+  createdAt        DateTime @default(now())
+
+  @@index([itemId])
 }
 
 model CreditAnalysis {
@@ -147,6 +173,25 @@ model CreditAnalysis {
   aiProvider  String
   fileNames   String[]
   createdAt   DateTime     @default(now())
+  finalDecision String? // APROVADO | RECUSADO (decisão humana)
+  decidedById   String?
+  decidedByName String?
+  decidedAt     DateTime?
+  justification String?
+}
+
+model CreditDecisionEvent {
+  id            String   @id @default(cuid())
+  orgId         String
+  analysisId    String
+  fromDecision  String?
+  toDecision    String
+  justification String
+  userId        String
+  userName      String
+  createdAt     DateTime @default(now())
+
+  @@index([analysisId])
 }
 
 model LegacyAnalysis {
