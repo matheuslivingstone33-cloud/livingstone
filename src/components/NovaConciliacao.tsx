@@ -27,7 +27,7 @@ const CAMPOS: Record<TipoLayout, { k: string; rotulo: string; obrigatorio?: bool
     { k: "sinal", rotulo: "Débito/crédito (D/C)" },
   ],
 };
-const TITULO: Record<TipoLayout, string> = { esperados: "Títulos esperados", extrato: "Arquivo do banco" };
+const TITULO: Record<TipoLayout, string> = { esperados: "1. O que você esperava receber", extrato: "2. O que caiu no banco" };
 const LAYOUT_CAMPO: Record<TipoLayout, string> = { esperados: "layoutEsperados", extrato: "layoutExtrato" };
 
 const escolhaDe = (p: PreviaArquivo): Escolha => ({
@@ -83,19 +83,26 @@ export function NovaConciliacao({ preview, confirm }: { preview: Acao; confirm: 
     <div className="mb-8 grid gap-4">
       <form action={enviar} className="card grid gap-4 md:grid-cols-3">
         <div className="md:col-span-3">
-          <CardHeader title="Nova conciliação">Arquivo do banco × títulos esperados</CardHeader>
+          <CardHeader title="Nova conciliação">Compare o que você esperava receber com o que caiu no banco</CardHeader>
+          <p className="hint mt-1">
+            São dois arquivos, um em cada campo. O sistema confere os dois e mostra o que foi pago, o que veio com valor diferente e o que não chegou.
+          </p>
         </div>
         <div>
-          <label className="label" htmlFor="name">Nome</label>
+          <label className="label" htmlFor="name">Nome (opcional)</label>
           <input className="input" id="name" name="name" placeholder="Ex.: Retorno Sicoob 14/10" />
         </div>
         <div>
-          <label className="label" htmlFor="bankFile">Arquivo do banco (retorno, extrato ou planilha)</label>
-          <input className="input" id="bankFile" name="bankFile" type="file" accept=".ret,.txt,.ofx,.csv,.rem,.xlsx" required />
+          <label className="label" htmlFor="expectedFile">1. O que você esperava receber</label>
+          <p className="hint mb-1">Sua lista de cobranças: boletos ou títulos emitidos, com valor e vencimento.</p>
+          <input className="input" id="expectedFile" name="expectedFile" type="file" accept=".csv,.txt,.xlsx" required />
+          <a className="link-action mt-1 inline-block text-xs" href="/demo/esperados_layout_alt.csv" download>Baixar exemplo</a>
         </div>
         <div>
-          <label className="label" htmlFor="expectedFile">Títulos esperados (CSV ou planilha .xlsx)</label>
-          <input className="input" id="expectedFile" name="expectedFile" type="file" accept=".csv,.txt,.xlsx" required />
+          <label className="label" htmlFor="bankFile">2. O que caiu no banco</label>
+          <p className="hint mb-1">O extrato ou o arquivo de retorno que o banco envia.</p>
+          <input className="input" id="bankFile" name="bankFile" type="file" accept=".ret,.txt,.ofx,.csv,.rem,.xlsx" required />
+          <a className="link-action mt-1 inline-block text-xs" href="/demo/extrato_planilha.xlsx" download>Baixar exemplo</a>
           <p className="hint mt-1">Até 4 MB por envio.</p>
           <FileSizeGuard inputIds={["bankFile", "expectedFile"]} />
         </div>
