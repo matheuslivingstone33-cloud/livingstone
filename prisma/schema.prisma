@@ -34,6 +34,7 @@ model Organization {
   apiRequests ApiRequest[]
   dailySummary DailySummary?
   aiUsages   AiUsage[]
+  assistantPlans AssistantPlan[]
   // Trava do lote de propostas com IA (um lote por vez na instituição)
   aiBatchLockUntil DateTime?
   // Trava da execução da régua de cobrança (uma por vez na instituição)
@@ -424,6 +425,8 @@ model AiUsage {
   id           String       @id @default(cuid())
   orgId        String
   org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  // Quem pediu (só no assistente; nulo nas demais tarefas e na régua automática)
+  userId       String?
   task         String
   model        String
   inputTokens  Int          @default(0)
@@ -435,6 +438,7 @@ model AiUsage {
   createdAt    DateTime     @default(now())
 
   @@index([orgId, createdAt])
+  @@index([orgId, userId, createdAt])
 }
 
 // Resumo do dia do painel: uma linha por instituição; o texto da IA só vale se os fatos não mudaram
@@ -463,4 +467,19 @@ model ReconLayout {
   updatedAt  DateTime     @updatedAt
 
   @@unique([orgId, assinatura])
+}
+
+// Plano de ação proposto pelo assistente: só executa com confirmação da mesma pessoa, uma vez, em até 10 minutos
+model AssistantPlan {
+  id        String       @id @default(cuid())
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  userId    String
+  acao      String // gerar_proposta | pausar_regua | atualizar_resumo
+  payload   Json
+  status    String       @default("PENDENTE") // PENDENTE | EXECUTADO | EXPIRADO
+  expiresAt DateTime
+  createdAt DateTime     @default(now())
+
+  @@index([orgId, userId, status])
 }

@@ -1,6 +1,6 @@
 // Configuração da IA por tarefa, preços e teto de consumo. Puro: sem banco, sem Next, sem rede.
 
-export type AiTask = "cobranca" | "pld" | "credito" | "legado" | "resumo" | "mapeamento";
+export type AiTask = "cobranca" | "pld" | "credito" | "legado" | "resumo" | "mapeamento" | "assistente";
 export type AiEffort = "low" | "medium" | "high";
 export type TaskConfig = { model: string; effort: AiEffort; max_tokens: number; timeoutMs: number };
 
@@ -14,9 +14,26 @@ export const TASKS: Record<AiTask, TaskConfig> = {
   resumo: { model: "claude-haiku-5-5", effort: "low", max_tokens: 400, timeoutMs: 10_000 },
   // Mapeamento de colunas de planilha da conciliação: só nomes de coluna e amostra mascarada
   mapeamento: { model: "claude-haiku-5-5", effort: "low", max_tokens: 800, timeoutMs: 10_000 },
+  // Assistente da plataforma: respostas curtas; cada passo do laço de ferramentas é uma chamada
+  assistente: { model: "claude-haiku-5-5", effort: "low", max_tokens: 1024, timeoutMs: 20_000 },
 };
 
-const OVERRIDE: Record<AiTask, string> = { cobranca: "AI_MODEL_COBRANCA", pld: "AI_MODEL_PLD", credito: "AI_MODEL_CREDITO", legado: "AI_MODEL_LEGADO", resumo: "AI_MODEL_RESUMO", mapeamento: "AI_MODEL_MAPEAMENTO" };
+/** Limites do assistente. msgsPorUsuarioDia pode ser trocado por ASSISTENTE_MSGS_DIA (inteiro de 1 a 1000). */
+export const ASSISTENTE = {
+  passos: 5,
+  custoMaxUsdPorMensagem: 0.02,
+  msgsPorUsuarioDia: 40,
+  historicoMsgs: 12,
+  historicoChars: 12_000,
+  toolResultChars: 6_000,
+} as const;
+
+export function msgsPorUsuarioDia(env: Record<string, string | undefined> = process.env): number {
+  const v = Number(env.ASSISTENTE_MSGS_DIA?.trim());
+  return Number.isInteger(v) && v >= 1 && v <= 1000 ? v : ASSISTENTE.msgsPorUsuarioDia;
+}
+
+const OVERRIDE: Record<AiTask, string> = { cobranca: "AI_MODEL_COBRANCA", pld: "AI_MODEL_PLD", credito: "AI_MODEL_CREDITO", legado: "AI_MODEL_LEGADO", resumo: "AI_MODEL_RESUMO", mapeamento: "AI_MODEL_MAPEAMENTO", assistente: "AI_MODEL_ASSISTENTE" };
 const MODEL_RE = /^claude-[a-z0-9-]+$/;
 
 /** Modelo da tarefa: AI_MODEL_<TAREFA> só vale se tiver forma de id de modelo Claude. ANTHROPIC_MODEL é ignorada. */

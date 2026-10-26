@@ -8,19 +8,14 @@ import { fail } from "@/lib/errors";
 import { executarRegua } from "@/lib/regua-motor";
 import { evolutionConfig, evolutionSender } from "@/lib/evolution";
 import { WEBHOOK_BUDGET_MS } from "@/lib/pix-webhook";
-
-const MOTIVOS = { pausa: "pausa", opt_out: "opt_out" } as const;
+import { pausarReguaServico } from "@/lib/servicos/regua";
 
 /** Pausa a régua de um contrato. opt_out: o devedor pediu para não receber mensagens. */
 export async function pausarRegua(debtId: string, motivo: string) {
   const s = await requireSession(["ADMIN", "ANALISTA"]);
   const back = `/cobranca/${debtId}`;
-  const m = MOTIVOS[motivo as keyof typeof MOTIVOS];
-  if (!m) fail(back, "Motivo inválido.");
-  const d = await db.debt.findFirst({ where: { id: debtId, orgId: s.orgId }, select: { id: true, contract: true } });
-  if (!d) fail("/cobranca", "Contrato não encontrado.");
-  await db.debt.updateMany({ where: { id: d.id, orgId: s.orgId }, data: { reguaPausedAt: new Date(), reguaPauseReason: m, reguaPausedBy: s.name.slice(0, 120) } });
-  await audit(s, "cobranca.regua.pausa", `Contrato ${d.contract}: ${m === "opt_out" ? "devedor pediu para não receber mensagens" : "régua pausada"}`);
+  const r = await pausarReguaServico({ orgId: s.orgId, userId: s.userId, nome: s.name, ip: await clientIp() }, debtId, motivo);
+  if (!r.ok) fail(r.erro === "motivo" ? back : "/cobranca", r.erro === "motivo" ? "Motivo inválido." : "Contrato não encontrado.");
   revalidatePath(back);
   revalidatePath("/cobranca");
 }

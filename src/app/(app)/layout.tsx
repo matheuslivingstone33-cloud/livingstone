@@ -5,6 +5,7 @@ import { Logo } from "@/components/Logo";
 import { NavLinks } from "@/components/Nav";
 import { Icon } from "@/components/Icon";
 import { Badge } from "@/components/ui";
+import { Assistente } from "@/components/Assistente";
 import { requireSession } from "@/lib/auth";
 import { aiProvider } from "@/lib/ai";
 import { db } from "@/lib/db";
@@ -89,6 +90,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           {children}
         </main>
       </div>
+      <Assistente podeConfirmar={s.role === "ADMIN" || s.role === "ANALISTA"} comIa={!demo} />
     </div>
   );
 }

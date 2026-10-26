@@ -7,9 +7,9 @@ import { audit, auditRaw, clientIp, requireSession, type Session } from "@/lib/a
 import { PROPOSAL_BATCH_DEADLINE_MS, PROPOSAL_BATCH_LOCK_MS, batchAiTimeout, parseDebtsCsv, type Option } from "@/lib/collection";
 import { applyPayment } from "@/lib/payments";
 import { createProposal, type Ator } from "@/lib/cobranca-proposta";
+import { gerarPropostaServico } from "@/lib/servicos/cobranca";
 import { decodeText, readUpload } from "@/lib/upload";
 import { fail } from "@/lib/errors";
-import { PROPOSAL_DEDUP_MS } from "@/lib/idempotencia";
 
 export async function importDebts(form: FormData) {
   const s = await requireSession(["ADMIN", "ANALISTA"]);
@@ -40,17 +40,11 @@ async function atorDe(s: Session): Promise<Ator> {
 
 export async function generateProposal(debtId: string) {
   const s = await requireSession(["ADMIN", "ANALISTA"]);
-  const d = await db.debt.findFirst({ where: { id: debtId, orgId: s.orgId } });
-  if (!d) fail("/cobranca", "Contrato não encontrado.");
-  const r = await createProposal(await atorDe(s), debtId);
-  if (!r.created && r.reason === "recente") {
-    // Clique repetido: a proposta já está sendo (ou acabou de ser) gerada; leva ao detalhe sem chamar a IA
-    await audit(s, "cobranca.proposta.ignorada", `Contrato ${d.contract}: pedido repetido em menos de ${PROPOSAL_DEDUP_MS / 1000} s`);
-    redirect(`/cobranca/${debtId}`);
-  }
-  if (!r.created) fail(`/cobranca/${debtId}`, "Este contrato já tem acordo fechado.");
-  if (r.aiStatus === "bloqueada_limite") await audit(s, "ia.limite", `Cobrança, contrato ${d.contract}: teto diário de IA atingido`);
-  await audit(s, "cobranca.proposta", `Contrato ${d.contract} (IA: ${r.aiStatus})`);
+  const r = await gerarPropostaServico(await atorDe(s), debtId);
+  if (r.status === "nao_encontrado") fail("/cobranca", "Contrato não encontrado.");
+  // Clique repetido: leva ao detalhe sem chamar a IA
+  if (r.status === "recente") redirect(`/cobranca/${debtId}`);
+  if (r.status === "fechado") fail(`/cobranca/${debtId}`, "Este contrato já tem acordo fechado.");
   revalidatePath("/cobranca");
   redirect(`/cobranca/${debtId}`);
 }

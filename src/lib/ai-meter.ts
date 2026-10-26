@@ -2,8 +2,8 @@
 // Antes de cada chamada, reserva o custo máximo sob trava por instituição e confere o teto diário
 // (dia em Brasília); depois, grava o custo real. Nunca guarda prompt nem resposta.
 import { db } from "./db";
-import { aiProvider, promptChars, tryClaudeJson, type AiCall, type AiFile, type AiOptions, type AiResult } from "./ai";
-import { checkBudget, estimateCost, modelFor, reserveCost } from "./ai-config";
+import { aiProvider, claudeMessages, promptChars, tryClaudeJson, type AiCall, type AiFile, type AiOptions, type AiResult, type AiUsage, type MessagesCall, type MessagesResult } from "./ai";
+import { checkBudget, estimateCost, modelFor, reserveCost, type AiTask } from "./ai-config";
 import { getSettings } from "./settings";
 import { diaSP, inicioDoDiaSP } from "./tz";
 
@@ -25,6 +25,34 @@ export async function usageToday(orgId: string, now = new Date(), client: Pick<t
   return { spentUsd: Number(sum._sum.costUsd ?? 0), calls };
 }
 
+/** Reserva sob trava por instituição e confere o teto diário. Grava a linha "reservada" ou "bloqueada_limite". */
+async function reservar(orgId: string, userId: string | null, task: AiTask, model: string, reserve: number, clock: () => Date) {
+  const limits = (await getSettings(orgId)).ai;
+  return db.$transaction(async (tx) => {
+    // Serializa a conferência do teto por instituição (chave própria, separada da trava da auditoria)
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ai:${orgId}`}))`;
+    const cur = await usageToday(orgId, clock(), tx);
+    const verdict = checkBudget({ ...cur, reserve }, limits);
+    const status: UsageStatus = verdict === "ok" ? "reservada" : "bloqueada_limite";
+    const row = await tx.aiUsage.create({ data: { orgId, userId, task, model, costUsd: verdict === "ok" ? reserve : 0, status }, select: { id: true } });
+    return { verdict, id: row.id };
+  });
+}
+
+/** Grava o custo real da chamada. Sem usage (rede, timeout): a reserva fica como custo, para o teto não subestimar. */
+async function fechar(id: string, ok: boolean, usedModel: string, u: AiUsage | undefined) {
+  await db.aiUsage
+    .update({
+      where: { id },
+      data: {
+        model: usedModel.slice(0, 80),
+        status: ok ? "usada" : "falhou",
+        ...(u ? { inputTokens: u.input, outputTokens: u.output, cacheTokens: u.cacheRead + u.cacheWrite, costUsd: estimateCost(usedModel, u) } : {}),
+      },
+    })
+    .catch(() => undefined);
+}
+
 /**
  * Função de IA medida para a instituição. `opts.call` substitui a chamada real (testes/integração).
  * Reprovada no teto: grava "bloqueada_limite" com custo 0 e devolve { ok: false, reason: "limite" } sem chamar a IA.
@@ -35,19 +63,7 @@ export function meteredCall(orgId: string, opts: { now?: () => Date; call?: AiCa
   return async <T,>(system: string, prompt: string, files: AiFile[] | undefined, o: AiOptions<T>): Promise<AiResult<T>> => {
     const model = modelFor(o.task);
     const reserve = reserveCost(o.task, promptChars(system, prompt, files ?? []));
-    const limits = (await getSettings(orgId)).ai;
-    const gate = await db.$transaction(async (tx) => {
-      // Serializa a conferência do teto por instituição (chave própria, separada da trava da auditoria)
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ai:${orgId}`}))`;
-      const cur = await usageToday(orgId, clock(), tx);
-      const verdict = checkBudget({ ...cur, reserve }, limits);
-      if (verdict !== "ok") {
-        const row = await tx.aiUsage.create({ data: { orgId, task: o.task, model, costUsd: 0, status: "bloqueada_limite" }, select: { id: true } });
-        return { verdict, id: row.id };
-      }
-      const row = await tx.aiUsage.create({ data: { orgId, task: o.task, model, costUsd: reserve, status: "reservada" }, select: { id: true } });
-      return { verdict, id: row.id };
-    });
+    const gate = await reservar(orgId, null, o.task, model, reserve, clock);
     if (gate.verdict !== "ok") return { ok: false, reason: "limite", detail: LIMIT_TEXT[gate.verdict] ?? "Teto de IA atingido", model, usageId: gate.id };
 
     let r: AiResult<T>;
@@ -57,21 +73,7 @@ export function meteredCall(orgId: string, opts: { now?: () => Date; call?: AiCa
       // tryClaudeJson não lança; uma função injetada pode lançar: vira falha, a reserva fica como custo
       r = { ok: false, reason: "http", detail: String((e as Error)?.message ?? e).slice(0, 300) };
     }
-    const u = r.usage;
-    const usedModel = r.model ?? model;
-    await db.aiUsage
-      .update({
-        where: { id: gate.id },
-        data: {
-          model: usedModel.slice(0, 80),
-          status: r.ok ? "usada" : "falhou",
-          // Sem usage (rede, timeout): a reserva fica como custo, para o teto não subestimar
-          ...(u
-            ? { inputTokens: u.input, outputTokens: u.output, cacheTokens: u.cacheRead + u.cacheWrite, costUsd: estimateCost(usedModel, u) }
-            : {}),
-        },
-      })
-      .catch(() => undefined);
+    await fechar(gate.id, r.ok, r.model ?? model, r.usage);
     return { ...r, usageId: gate.id };
   };
 }
@@ -83,4 +85,27 @@ export const aiCallFor = (orgId: string): AiCall | undefined => (aiProvider() ==
 export async function markUsageRejected(orgId: string, usageId: string | undefined) {
   if (!usageId) return;
   await db.aiUsage.updateMany({ where: { id: usageId, orgId }, data: { status: "rejeitada" } }).catch(() => undefined);
+}
+
+/**
+ * Chamada de mensagens do assistente, medida por passo: mesma trava e mesmo teto diário da instituição,
+ * com o usuário registrado na linha de consumo. Nunca guarda texto. `opts.call` substitui a chamada real.
+ */
+export function meteredMessages(orgId: string, userId: string, opts: { now?: () => Date; call?: MessagesCall } = {}): MessagesCall {
+  const inner = opts.call ?? ((b) => claudeMessages(b));
+  const clock = opts.now ?? (() => new Date());
+  return async (body): Promise<MessagesResult> => {
+    const model = modelFor("assistente");
+    const reserve = reserveCost("assistente", JSON.stringify(body).length);
+    const gate = await reservar(orgId, userId, "assistente", model, reserve, clock);
+    if (gate.verdict !== "ok") return { ok: false, reason: "limite", detail: LIMIT_TEXT[gate.verdict] ?? "Teto de IA atingido", model, usageId: gate.id };
+    let r: MessagesResult;
+    try {
+      r = await inner(body);
+    } catch (e) {
+      r = { ok: false, reason: "http", detail: String((e as Error)?.message ?? e).slice(0, 300) };
+    }
+    await fechar(gate.id, r.ok, r.model ?? model, r.usage);
+    return { ...r, usageId: gate.id };
+  };
 }

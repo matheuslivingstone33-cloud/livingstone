@@ -131,3 +131,73 @@ export const pickAi = (call?: AiCall): AiCall | undefined => call ?? (aiProvider
 export const aiMeta = (r: Meta | undefined): Meta => (r ? { usage: r.usage, model: r.model, usageId: r.usageId } : {});
 
 export type { Usage };
+
+// ---------- Mensagens com ferramentas (assistente) ----------
+
+/** Bloco de conteúdo da API (texto, tool_use, tool_result, raciocínio...). Guardado inteiro, sem alteração. */
+export type MsgBlock = { type: string; [k: string]: unknown };
+export type ApiMessage = { role: "user" | "assistant"; content: string | MsgBlock[] };
+export type ToolDef = { name: string; description: string; input_schema: Record<string, unknown> };
+export type MessagesBody = ReturnType<typeof requestBodyAssistente>;
+export type MessagesResult =
+  | ({ ok: true; content: MsgBlock[]; stop_reason: string } & Meta)
+  | ({ ok: false; reason: AiFailReason; detail: string } & Meta);
+/** Assinatura injetável do laço do assistente (testes passam uma função falsa). */
+export type MessagesCall = (body: MessagesBody) => Promise<MessagesResult>;
+
+/**
+ * Corpo da requisição do assistente. O system é estático (instruções + guia + regra de dados não confiáveis)
+ * e leva cache_control no último bloco: ferramentas + system formam um prefixo estável para o cache.
+ * Nada variável (nome, data, perfil) entra aqui; isso vai na primeira mensagem do usuário. Sem prefill.
+ */
+export function requestBodyAssistente(system: string[], tools: ToolDef[], messages: ApiMessage[]) {
+  const t = TASKS.assistente;
+  const blocos = [...system, UNTRUSTED_RULE].map((text) => ({ type: "text" as const, text }));
+  return {
+    model: modelFor("assistente"),
+    max_tokens: t.max_tokens,
+    output_config: { effort: t.effort },
+    system: blocos.map((b, i) => (i === blocos.length - 1 ? { ...b, cache_control: { type: "ephemeral" as const } } : b)),
+    tools,
+    messages,
+  };
+}
+
+/** Chamada à API de mensagens: nunca lança. Devolve os blocos de conteúdo inteiros, o motivo de parada e o consumo. */
+export async function claudeMessages(body: MessagesBody, timeoutMs: number = TASKS.assistente.timeoutMs): Promise<MessagesResult> {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) return { ok: false, reason: "sem_chave", detail: "ANTHROPIC_API_KEY não definida" };
+  let model = body.model;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      signal: ctrl.signal,
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const b = await res.text().catch(() => "");
+      return { ok: false, reason: "http", detail: clip(`HTTP ${res.status}: ${b}`), model };
+    }
+    const raw = await res.text();
+    let parsed: ApiBody & { content?: MsgBlock[] };
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { ok: false, reason: "json", detail: clip(`Resposta da API não é JSON: ${raw}`), model };
+    }
+    const usage = usageOf(parsed.usage);
+    if (typeof parsed.model === "string") model = parsed.model.slice(0, 80);
+    if (parsed.stop_reason === "refusal") return { ok: false, reason: "recusa", detail: "A IA recusou a tarefa", usage, model };
+    const content = Array.isArray(parsed.content) ? parsed.content.filter((c) => c && typeof c === "object" && typeof c.type === "string") : [];
+    return { ok: true, content, stop_reason: String(parsed.stop_reason ?? ""), usage, model };
+  } catch (e) {
+    const err = e as Error;
+    if (ctrl.signal.aborted || err?.name === "AbortError") return { ok: false, reason: "timeout", detail: `Sem resposta em ${timeoutMs} ms`, model };
+    return { ok: false, reason: "http", detail: clip(`Falha de rede: ${err?.message ?? String(e)}`), model };
+  } finally {
+    clearTimeout(timer);
+  }
+}
