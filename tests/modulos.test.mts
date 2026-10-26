@@ -33,6 +33,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const demo = (f: string) => readFileSync(new URL(`../public/demo/${f}`, import.meta.url));
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const semOrigem = <T extends { origem?: unknown }>(xs: T[]) => xs.map(({ origem, ...x }) => x);
 
 // Nenhum teste chama a IA real: sem chave, pickAi() não devolve a função de rede; onde a IA entra, ela é falsa (injetada)
 delete process.env.ANTHROPIC_API_KEY;
@@ -1359,7 +1361,7 @@ test("Ajuda das abas: 2–3 frases, 3 passos, exemplos existentes e sem texto va
   const hrefs = (aba: keyof typeof AJUDA) => (AJUDA[aba].exemplos ?? []).map((e) => e.href);
   assert.deepEqual(hrefs("cobranca"), ["/demo/carteira_inadimplentes.csv"]);
   assert.deepEqual(hrefs("credito"), ["/demo/extrato_joao.csv", "/demo/holerite_joao.txt"]);
-  assert.deepEqual(hrefs("conciliacao"), ["/demo/retorno_cnab400.ret", "/demo/titulos_esperados.csv", "/demo/extrato.ofx"]);
+  assert.deepEqual(hrefs("conciliacao"), ["/demo/esperados_cooperativa.csv", "/demo/extrato_cooperativa.xlsx", "/demo/retorno_cnab400.ret", "/demo/extrato.ofx"]);
 });
 
 const NOW_RES = new Date("2026-10-23T12:00:00Z");
@@ -1779,7 +1781,8 @@ test("Layout: conversão igual à do CSV padrão; linha inválida e referência 
   assert.equal(t.separador, ",");
   assert.ok(!isLegacyCsv("esperados", demo("esperados_layout_alt.csv").toString()));
   assert.ok(isLegacyCsv("esperados", demo("titulos_esperados.csv").toString()));
-  assert.deepEqual(convertWithLayout(t, layoutAlt), parseExpectedCsv(demo("titulos_esperados.csv").toString()));
+  // Mesmos lançamentos; só a origem (linha e células de cada arquivo) é diferente
+  assert.deepEqual(semOrigem(convertWithLayout(t, layoutAlt)), semOrigem(parseExpectedCsv(demo("titulos_esperados.csv").toString())));
 
   const r = await tab("esperados_ruim.csv");
   const lr: Layout = { tipo: "esperados", colunas: { referencia: "Codigo", valor: "Quantia", data: "Quando" }, formatoData: "dd/mm/aaaa", formatoValor: "br", linhaCabecalho: 0 };
@@ -1804,7 +1807,8 @@ test("Planilha .xlsx: primeira aba, título acima do cabeçalho, data serial, n�
   assert.deepEqual(g.layout, layoutExtrato.colunas);
   const e = convertWithLayout(t, layoutExtrato);
   assert.equal(e.length, 5);
-  assert.deepEqual(e[0], { reference: "10000101", payer: "Crédito boleto", amount: 1250, paidAt: new Date("2026-10-05T00:00:00Z") });
+  assert.deepEqual(semOrigem(e)[0], { reference: "10000101", payer: "Crédito boleto", amount: 1250, paidAt: new Date("2026-10-05T00:00:00Z") });
+  assert.deepEqual(e[0].origem, { linha: 4, celulas: ["2026-10-05", "Crédito boleto", "10000101", "1250"] });
   assert.ok(previewRows(t, layoutExtrato).some((l) => l.ignorada === "débito"));
   // Só a 1ª aba
   const duas = await readXlsx(buildXlsx([{ name: "A", rows: [["a", "b"]] }, { name: "B", rows: [["c", "d"]] }]));
@@ -1909,4 +1913,217 @@ test("API: planilha com layout salvo concilia; sem layout dá 422 com o campo", 
     { tables, layouts },
   );
   assert.ok(!big.ok && big.errors.some((e) => e.campo === "arquivoEsperados.base64"));
+});
+
+// ---- Prova da conciliação ----
+import { csvHeader } from "../src/lib/reconcile";
+import { colunasDoLayout } from "../src/lib/layout-conciliacao";
+import { fraseItem, fraseRegra, grupoDe, jsonCanonico, limitarTotal, mascararDocs, montarProva, partesDestacadas, PROVA_LIMITES, sha256Hex, type FonteProva } from "../src/lib/prova-conciliacao";
+import { CENARIOS, COOP, gerarPlanilhas } from "../scripts/gerar-demo-planilhas.mjs";
+
+const OPC_COOP = { toleranciaCentavos: 5, casarPorValorData: true, toleranciaDias: 3 };
+async function demoCooperativa() {
+  const csv = demo("esperados_cooperativa.csv");
+  const expected = parseExpectedCsv(csv.toString());
+  const t = await tab("extrato_cooperativa.xlsx");
+  const lh = findHeaderLine(t.linhas);
+  const header = headerOf(t.linhas, lh);
+  const g = guessLayout("extrato", header, t, lh);
+  const v = validateLayout({ tipo: "extrato", colunas: g.layout, formatoData: g.formatoData, formatoValor: g.formatoValor, linhaCabecalho: lh }, header);
+  assert.ok(v.ok && g.confianca === "alta", g.motivos.join("; "));
+  const entries = convertWithLayout(t, v.layout) as ReturnType<typeof parseBankFile>["entries"];
+  const fe: FonteProva = { arquivo: "esperados_cooperativa.csv", formato: "CSV", sha256: sha256Hex(csv), cabecalho: csvHeader(csv.toString()) };
+  const fb: FonteProva = { arquivo: "extrato_cooperativa.xlsx", formato: "XLSX", sha256: sha256Hex(demo("extrato_cooperativa.xlsx")), cabecalho: header, colunas: colunasDoLayout(v.layout, header) };
+  return { expected, entries, fe, fb, items: reconcileWith(expected, entries, OPC_COOP) };
+}
+
+test("Prova: cada leitor guarda a origem certa (CSV, OFX, CNAB 400, CNAB 240, planilha e JSON da API)", async () => {
+  const csv = parseExpectedCsv(demo("titulos_esperados.csv").toString());
+  assert.deepEqual(csv[0].origem, { linha: 2, celulas: ["10000101", "Padaria Pão Quente Ltda", "1250,00", "05/10/2026"] });
+  assert.deepEqual(csvHeader(demo("titulos_esperados.csv").toString()), ["referencia", "pagador", "valor", "vencimento"]);
+
+  const ofxE = parseBankFile("e.ofx", demo("extrato.ofx").toString()).entries;
+  assert.equal(ofxE[0].origem?.linha, 1);
+  assert.match(ofxE[0].origem?.bruto ?? "", /^<STMTTRN>.*<REFNUM>10000101.*<\/STMTTRN>$/);
+  assert.ok(ofxE.every((e) => (e.origem?.bruto?.length ?? 0) <= 1000));
+
+  const ret = demo("retorno_cnab400.ret").toString();
+  const linhas = ret.split(/\r?\n/);
+  const c4 = parseBankFile("r.ret", ret).entries;
+  for (const e of c4) {
+    assert.equal(e.origem?.bruto, linhas[e.origem!.linha - 1]);
+    assert.equal(e.origem?.bruto?.slice(62, 70).trim(), e.reference);
+  }
+
+  const seg = (s: string) => s.padEnd(240, " ");
+  const t = seg("0010001" + "3" + "00001" + "T" + " " + "06" + " ".repeat(20) + "00000000000123457" + "   " + " ".repeat(24) + "000000000015000");
+  const u = seg("0010001" + "3" + "00002" + "U" + " " + "06" + " ".repeat(60) + "000000000015000" + " ".repeat(45) + "14102026");
+  const c2 = parseBankFile("r.ret", ["0".repeat(240), t, u, "9".repeat(240)].join("\n")).entries;
+  assert.deepEqual(c2[0].origem, { linha: 2, bruto: `${t}\n${u}` });
+
+  const x = await tab("extrato_planilha.xlsx");
+  const conv = convertWithLayout(x, layoutExtrato);
+  assert.deepEqual(conv.map((e) => e.origem?.linha), [4, 6, 7, 9, 10]);
+
+  const body = { ...demoBody(), banco: { lancamentos: [{ valor: 10, referencia: "A1", data: "2026-10-05" }] } };
+  const v = validateReconciliationBody(body);
+  assert.ok(v.ok);
+  assert.equal(v.value.expected[1].origem?.linha, 1);
+  assert.deepEqual(JSON.parse(v.value.entries[0].origem!.bruto!), body.banco.lancamentos[0]);
+  // Hash do corpo canônico: a ordem das chaves não muda o hash
+  const reordenado = { ...body, banco: { lancamentos: [{ data: "2026-10-05", referencia: "A1", valor: 10 }] } };
+  const v2 = validateReconciliationBody(reordenado);
+  assert.ok(v2.ok);
+  assert.equal(v2.value.fontes.banco.sha256, v.value.fontes.banco.sha256);
+  assert.equal(v.value.fontes.banco.sha256, sha256Hex(jsonCanonico(body.banco.lancamentos)));
+  assert.equal(v.value.fontes.esperados.formato, "JSON");
+});
+
+test("Prova: reconcileWith aponta os índices certos e o resultado não muda", () => {
+  const expected = parseExpectedCsv(demo("titulos_esperados.csv").toString());
+  const { entries } = parseBankFile("r.ret", demo("retorno_cnab400.ret").toString());
+  for (const opts of [{}, { toleranciaCentavos: 2, casarPorValorData: true, toleranciaDias: 3 }]) {
+    const items = reconcileWith(expected, entries, opts);
+    for (const i of items) {
+      if (i.expectedIndex !== undefined) assert.equal(expected[i.expectedIndex].reference, i.reference);
+      if (i.receivedIndex !== undefined) assert.equal(entries[i.receivedIndex].amount, i.receivedAmount);
+      assert.equal(i.expectedIndex !== undefined, i.status !== "NAO_ESPERADO");
+      assert.equal(i.receivedIndex !== undefined, i.status !== "PENDENTE");
+    }
+    // Só os dois campos novos; o resto do item é o de antes
+    const chaves = new Set(items.flatMap((i) => Object.keys(i)));
+    for (const k of chaves) assert.ok(["reference", "payer", "expectedAmount", "receivedAmount", "paidAt", "dueAt", "rule", "status", "excess", "note", "expectedIndex", "receivedIndex"].includes(k), k);
+  }
+  assert.deepEqual(counts(reconcile(expected, entries)), [7, 2, 3, 1]);
+});
+
+test("Prova: demo da cooperativa tem as contagens fixas de cada cenário", async () => {
+  const { expected, entries, items } = await demoCooperativa();
+  assert.equal(expected.length, 50);
+  assert.equal(entries.length, 47); // 3 débitos ignorados
+  assert.deepEqual(counts(items), [44, 1, 5, 2]);
+  const g: Record<string, number> = {};
+  for (const i of items) g[grupoDe(i.status)] = (g[grupoDe(i.status)] ?? 0) + 1;
+  assert.deepEqual(g, { pagos: 44, diferente: 1, nao_chegou: 5, sem_cobranca: 2 });
+  const por = (k: number) => items.find((i) => i.reference === COOP[k].ref)!;
+  assert.equal(por(CENARIOS.tarifa002).status, "CONCILIADO");
+  assert.match(por(CENARIOS.tarifa002).note ?? "", /dentro da tolerância/);
+  assert.equal(por(CENARIOS.tarifa040).status, "DIVERGENTE");
+  assert.equal(por(CENARIOS.valorData).rule, "VALOR_DATA");
+  assert.deepEqual(CENARIOS.naoPagos.map((k: number) => por(k).status), Array(5).fill("PENDENTE"));
+  assert.equal(items.filter((i) => i.status === "NAO_ESPERADO" && i.reference === COOP[CENARIOS.duplicado].ref).length, 1);
+  assert.equal(summarize(items).excess, 0);
+});
+
+test("Prova: destaque, tolerância, máscara de CPF/CNPJ e truncamento", async () => {
+  const { expected, entries, fe, fb, items } = await demoCooperativa();
+  const it = items.find((i) => i.reference === COOP[CENARIOS.tarifa002].ref)!;
+  const p = montarProva(it, { ...fe, entries: expected }, { ...fb, entries }, OPC_COOP);
+  assert.equal(p.v, 1);
+  assert.equal(p.esperado?.linha, CENARIOS.tarifa002 + 2);
+  assert.deepEqual(p.esperado?.destaque, { referencia: { coluna: 0 }, valor: { coluna: 3 }, data: { coluna: 4 } });
+  assert.deepEqual(p.banco?.destaque, { referencia: { coluna: 2 }, valor: { coluna: 5 }, data: { coluna: 0 } });
+  assert.deepEqual(p.banco?.cabecalho, ["Data", "Histórico", "Documento", "Pagador", "CPF/CNPJ", "Valor"]);
+  assert.deepEqual(p.regra, { rule: "REFERENCIA", toleranciaCentavos: 5, toleranciaDias: 3, casarPorValorData: true, diferencaCentavos: -2, atrasoDias: 0 });
+  assert.match(fraseRegra(p.regra).join(" "), /R\$ 0,02, dentro da tolerância de 5 centavo/);
+  assert.equal(p.esperado?.sha256, sha256Hex(demo("esperados_cooperativa.csv")));
+  // Documento mascarado na célula; nenhum CPF/CNPJ completo do arquivo sobra na prova
+  assert.match(p.esperado!.celulas![2], /^\*\*\.\d{3}\.\d{3}\/0001-\*\*$/);
+  const tudo = JSON.stringify(items.map((i) => montarProva(i, { ...fe, entries: expected }, { ...fb, entries }, OPC_COOP)));
+  for (const t of COOP) assert.ok(!tudo.includes(t.doc), t.doc);
+  assert.equal(mascararDocs("CPF 123.456.789-09 e CNPJ 12.345.678/0001-95"), "CPF ***.456.789-** e CNPJ **.345.678/0001-**");
+  assert.equal(mascararDocs("12345678909"), "***456789**");
+  assert.equal(mascararDocs("nosso número 12345678900"), "nosso número 12345678900"); // dígitos soltos sem DV válido ficam
+
+  const fora = montarProva(items.find((i) => i.reference === COOP[CENARIOS.tarifa040].ref)!, { ...fe, entries: expected }, { ...fb, entries }, OPC_COOP);
+  assert.equal(fora.regra.diferencaCentavos, -40);
+  assert.match(fraseRegra(fora.regra).join(" "), /a menos, acima da tolerância/);
+  const atr = montarProva(items.find((i) => i.reference === COOP[CENARIOS.atraso].ref)!, { ...fe, entries: expected }, { ...fb, entries }, OPC_COOP);
+  assert.equal(atr.regra.atrasoDias, 4);
+  const sem = montarProva(items.find((i) => i.status === "NAO_ESPERADO" && i.reference.startsWith("E"))!, { ...fe, entries: expected }, { ...fb, entries }, OPC_COOP);
+  assert.equal(sem.esperado, undefined);
+  assert.ok(sem.banco);
+
+  // Linha enorme: célula cortada em 200 e, acima de 8 KB, só as células destacadas
+  const largas = Array.from({ length: 60 }, (_, k) => (k === 0 ? "X1" : k === 1 ? "10,00" : "y".repeat(500)));
+  const grande = montarProva(
+    { reference: "X1", expectedAmount: 10, status: "PENDENTE", expectedIndex: 0 },
+    { arquivo: "a.csv", formato: "CSV", sha256: "0".repeat(64), cabecalho: largas.map((_, k) => `c${k}`), entries: [{ reference: "X1", amount: 10, origem: { linha: 2, celulas: largas } }] },
+    { arquivo: "b.csv", formato: "CSV", sha256: "1".repeat(64), entries: [] },
+  );
+  assert.equal(grande.esperado?.celulas?.length, PROVA_LIMITES.colunas);
+  assert.equal(grande.esperado?.truncada, true);
+  assert.deepEqual(grande.esperado?.celulas?.slice(0, 3), ["X1", "10,00", ""]);
+  assert.ok(Buffer.byteLength(JSON.stringify(grande)) <= PROVA_LIMITES.itemBytes);
+  const pequena = montarProva(
+    { reference: "X1", expectedAmount: 10, status: "PENDENTE", expectedIndex: 0 },
+    { arquivo: "a.csv", formato: "CSV", sha256: "0".repeat(64), entries: [{ reference: "X1", amount: 10, origem: { linha: 2, celulas: ["X1", "y".repeat(300)] } }] },
+    { arquivo: "b.csv", formato: "CSV", sha256: "1".repeat(64), entries: [] },
+  );
+  assert.equal(pequena.esperado?.celulas?.[1].length, PROVA_LIMITES.celula);
+  assert.equal(pequena.esperado?.truncada, undefined);
+  const limitadas = limitarTotal([grande, grande, grande], Buffer.byteLength(JSON.stringify(grande)) * 2);
+  assert.deepEqual(limitadas.map((x) => !!x.omitida), [false, false, true]);
+});
+
+test("Prova: destaque no bruto de OFX e CNAB", () => {
+  const ofxE = parseBankFile("e.ofx", demo("extrato.ofx").toString()).entries;
+  const expected = parseExpectedCsv(demo("titulos_esperados.csv").toString());
+  const items = reconcileWith(expected, ofxE);
+  const f = (formato: string) => ({ arquivo: "x", formato, sha256: "a".repeat(64) });
+  const p = montarProva(items[0], { ...f("CSV"), entries: expected }, { ...f("OFX"), entries: ofxE });
+  assert.deepEqual(p.banco?.destaque, { referencia: { tag: "REFNUM" }, valor: { tag: "TRNAMT" }, data: { tag: "DTPOSTED" } });
+  const marcadas = partesDestacadas(p.banco!.bruto!, p.banco!.destaque).filter((x) => x.campo).map((x) => [x.campo, x.texto]);
+  assert.deepEqual(marcadas, [["data", "20261005120000[-3:BRT]"], ["valor", "1250.00"], ["referencia", "10000101"]]);
+
+  const c4 = parseBankFile("r.ret", demo("retorno_cnab400.ret").toString()).entries;
+  const i4 = reconcileWith(expected, c4);
+  const p4 = montarProva(i4[0], { ...f("CSV"), entries: expected }, { ...f("CNAB400"), entries: c4 }, { cnab400: DEFAULT_CNAB400 });
+  assert.deepEqual(p4.regra.layoutCnab, DEFAULT_CNAB400);
+  const m4 = partesDestacadas(p4.banco!.bruto!, p4.banco!.destaque).filter((x) => x.campo);
+  assert.deepEqual(m4.map((x) => x.campo), ["referencia", "data", "valor"]);
+  assert.equal(m4[0].texto.trim(), "10000101");
+  assert.equal(partesDestacadas(p4.banco!.bruto!, p4.banco!.destaque).map((x) => x.texto).join(""), p4.banco!.bruto);
+});
+
+test("Prova: grupos da tela e frase de cada caso", () => {
+  assert.deepEqual(
+    [["CONCILIADO"], ["VINCULADO"], ["DIVERGENTE"], ["PENDENTE"], ["NAO_ESPERADO"], ["BAIXADO", "PENDENTE"], ["BAIXADO", "NAO_ESPERADO"], ["BAIXADO", "DIVERGENTE"]].map(([s, o]) => grupoDe(s, o)),
+    ["pagos", "pagos", "diferente", "nao_chegou", "sem_cobranca", "nao_chegou", "sem_cobranca", "diferente"],
+  );
+  const d = (s: string) => new Date(`${s}T00:00:00.000Z`);
+  const base = { reference: "1043", payer: "Maria Souza", expectedAmount: 350, dueAt: d("2026-10-14") };
+  assert.equal(fraseItem({ ...base, receivedAmount: 349.98, paidAt: d("2026-10-14"), status: "DIVERGENTE" }), "Boleto 1043, Maria Souza: esperado R$ 350,00, caiu R$ 349,98 em 14/10.");
+  assert.equal(fraseItem({ ...base, receivedAmount: 349.98, paidAt: d("2026-10-14"), status: "CONCILIADO" }), "Boleto 1043, Maria Souza: esperado R$ 350,00, caiu R$ 349,98 em 14/10 (diferença aceita).");
+  assert.equal(fraseItem({ ...base, receivedAmount: 350, paidAt: d("2026-10-17"), status: "CONCILIADO" }), "Boleto 1043, Maria Souza: pago R$ 350,00 em 17/10, com 3 dias de atraso.");
+  assert.equal(fraseItem({ ...base, receivedAmount: 350, paidAt: d("2026-10-01"), status: "CONCILIADO" }), "Boleto 1043, Maria Souza: pago R$ 350,00 em 01/10.");
+  assert.equal(fraseItem({ ...base, status: "PENDENTE" }), "Boleto 1043, Maria Souza: esperado R$ 350,00 com vencimento 14/10, não chegou.");
+  assert.equal(fraseItem({ ...base, status: "BAIXADO", originalStatus: "PENDENTE" }), "Boleto 1043, Maria Souza: esperado R$ 350,00 com vencimento 14/10, não chegou. Resolvido manualmente.");
+  const credito = { reference: "1043", receivedAmount: 350, paidAt: d("2026-10-16"), status: "NAO_ESPERADO" };
+  assert.equal(fraseItem(credito), "Crédito 1043: entrou R$ 350,00 em 16/10 sem cobrança correspondente.");
+  assert.equal(fraseItem(credito, { pagas: new Set(["1043"]) }), "Crédito 1043: entrou R$ 350,00 em 16/10, possível duplicidade do boleto 1043.");
+  assert.equal(fraseItem({ reference: "", receivedAmount: 10, status: "NAO_ESPERADO" }), "Crédito sem referência: entrou R$ 10,00 sem cobrança correspondente.");
+  // Meia-noite UTC não vira o dia anterior
+  assert.match(fraseItem({ ...base, status: "PENDENTE", dueAt: d("2026-11-01") }), /vencimento 01\/11/);
+});
+
+test("Prova: lib pura (sem banco nem Next) e gerador de demos determinístico", () => {
+  const src = readFileSync(new URL("../src/lib/prova-conciliacao.ts", import.meta.url), "utf8");
+  const imports = [...src.matchAll(/^import .* from "([^"]+)";$/gm)].map((m) => m[1]);
+  assert.deepEqual(imports.sort(), ["./reconcile", "./validators", "node:crypto"]);
+  assert.ok(!/@\/lib\/db|next\//.test(src));
+  const hashes = () => Object.fromEntries(Object.entries(gerarPlanilhas()).map(([k, v]) => [k, sha256Hex(v as Buffer | string)]));
+  const a = hashes();
+  assert.deepEqual(hashes(), a);
+  // Os arquivos em public/demo são exatamente os gerados (rode npm run demo:planilhas se mudar o gerador)
+  for (const [k, h] of Object.entries(a)) assert.equal(sha256Hex(demo(k)), h, k);
+  const gerador = readFileSync(new URL("../scripts/gerar-demo-planilhas.mjs", import.meta.url), "utf8");
+  assert.ok(!/new Date\(\)|Date\.now|Math\.random/.test(gerador));
+});
+
+test("Conciliação: links de exemplo da tela apontam para os arquivos da cooperativa", () => {
+  const tela = readFileSync(new URL("../src/components/NovaConciliacao.tsx", import.meta.url), "utf8");
+  const hrefs = [...tela.matchAll(/href="(\/demo\/[^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(hrefs, ["/demo/esperados_cooperativa.csv", "/demo/extrato_cooperativa.xlsx"]);
+  for (const h of hrefs) assert.ok(existsSync(new URL(`../public${h}`, import.meta.url)), h);
 });

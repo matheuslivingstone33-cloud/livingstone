@@ -96,13 +96,13 @@ export function NovaConciliacao({ preview, confirm }: { preview: Acao; confirm: 
           <label className="label" htmlFor="expectedFile">1. O que você esperava receber</label>
           <p className="hint mb-1">Sua lista de cobranças: boletos ou títulos emitidos, com valor e vencimento.</p>
           <input className="input" id="expectedFile" name="expectedFile" type="file" accept=".csv,.txt,.xlsx" required />
-          <a className="link-action mt-1 inline-block text-xs" href="/demo/esperados_layout_alt.csv" download>Baixar exemplo</a>
+          <a className="link-action mt-1 inline-block text-xs" href="/demo/esperados_cooperativa.csv" download>Baixar exemplo</a>
         </div>
         <div>
           <label className="label" htmlFor="bankFile">2. O que caiu no banco</label>
           <p className="hint mb-1">O extrato ou o arquivo de retorno que o banco envia.</p>
           <input className="input" id="bankFile" name="bankFile" type="file" accept=".ret,.txt,.ofx,.csv,.rem,.xlsx" required />
-          <a className="link-action mt-1 inline-block text-xs" href="/demo/extrato_planilha.xlsx" download>Baixar exemplo</a>
+          <a className="link-action mt-1 inline-block text-xs" href="/demo/extrato_cooperativa.xlsx" download>Baixar exemplo</a>
           <p className="hint mt-1">Até 4 MB por envio.</p>
           <FileSizeGuard inputIds={["bankFile", "expectedFile"]} />
         </div>

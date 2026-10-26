@@ -20,6 +20,9 @@ export function reconciliationJson(r: Reconciliation) {
       excedente: n(r.totalExcess),
     },
     opcoes: r.options,
+    // Campos de saída novos (opcionais): hash SHA-256 dos arquivos enviados; nulo em conciliações antigas
+    hashArquivoBanco: r.bankFileSha256 ?? null,
+    hashArquivoEsperados: r.expectedFileSha256 ?? null,
   };
 }
 
@@ -42,5 +45,7 @@ export function itemJson(i: ReconciliationItem, todos: ReconciliationItem[] = []
     resolvidoPor: i.resolvedByName,
     resolvidoEm: i.resolvedAt ? i.resolvedAt.toISOString() : null,
     itemVinculado: vinculado?.reference ?? null,
+    // Prova: linhas usadas dos dois arquivos (CPF/CNPJ mascarados) e a regra; nulo em conciliações antigas
+    prova: i.evidence ?? null,
   };
 }

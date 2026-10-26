@@ -3,54 +3,60 @@ import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, day, dt } from "@/lib/format";
-import { PageTitle, Stat, StatusBadge, TableCard, FilterBar } from "@/components/ui";
+import { PageTitle, Stat, StatusBadge, TableCard } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import type { ReconcileOptions } from "@/lib/reconcile";
+import { GRUPOS, ROTULO_GRUPO, fraseItem, grupoDe, lerProva, type Grupo } from "@/lib/prova-conciliacao";
 import { ResolverItem } from "./ResolverItem";
+import { ProvaView } from "./Prova";
+import { paraFrase, referenciasPagas } from "./itens";
 
-const ruleLabel: Record<string, string> = { REFERENCIA: "Referência", REFERENCIA_DV: "Referência + DV", VALOR_DATA: "Valor e data", MANUAL: "Manual" };
-const resolucaoLabel: Record<string, string> = { MANUAL_VINCULO: "Vínculo manual", ACEITE_DIVERGENCIA: "Divergência aceita", BAIXA: "Baixa" };
+const resolucaoLabel: Record<string, string> = { MANUAL_VINCULO: "Vínculo manual", ACEITE_DIVERGENCIA: "Divergência aceita", BAIXA: "Resolvido manualmente" };
 const acaoLabel: Record<string, string> = { VINCULAR: "Vinculou", ACEITAR_DIVERGENCIA: "Aceitou divergência", BAIXAR: "Baixou", REABRIR: "Reabriu" };
+const TOM: Record<Grupo, string> = { pagos: "green", diferente: "amber", nao_chegou: "red", sem_cobranca: "blue" };
 
-const filters = [
-  { key: "", label: "Todos" },
-  { key: "DIVERGENTE", label: "Divergentes" },
-  { key: "PENDENTE", label: "Não pagos" },
-  { key: "NAO_ESPERADO", label: "Não esperados" },
-  { key: "CONCILIADO", label: "Conciliados" },
-  { key: "VINCULADO", label: "Vinculados" },
-  { key: "BAIXADO", label: "Baixados" },
-];
 
 export default async function ConciliacaoDetalhe({
   params,
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ tipo?: string; item?: string }>;
 }) {
   const s = await requireSession();
   const { id } = await params;
-  const { status } = await searchParams;
+  const sp = await searchParams;
+  const tipo = GRUPOS.find((g) => g === sp.tipo);
   const r = await db.reconciliation.findFirst({ where: { id, orgId: s.orgId } });
   if (!r) notFound();
-  const items = await db.reconciliationItem.findMany({
-    where: { reconciliationId: id, ...(status ? { status } : {}) },
-    orderBy: [{ status: "asc" }, { reference: "asc" }],
-  });
+  const todos = await db.reconciliationItem.findMany({ where: { reconciliationId: r.id }, omit: { evidence: true }, orderBy: [{ status: "asc" }, { reference: "asc" }] });
+  const pagas = referenciasPagas(todos);
+  const contagem = Object.fromEntries(GRUPOS.map((g) => [g, 0])) as Record<Grupo, number>;
+  for (const i of todos) contagem[grupoDe(i.status, i.originalStatus)]++;
+  const items = tipo ? todos.filter((i) => grupoDe(i.status, i.originalStatus) === tipo) : todos;
+
+  // Prova: só depois de a conciliação ter sido validada pela instituição da sessão
+  const itemId = typeof sp.item === "string" ? sp.item.slice(0, 40) : "";
+  const aberto = itemId ? await db.reconciliationItem.findFirst({ where: { id: itemId, reconciliationId: r.id } }) : null;
+
   const podeEditar = s.role !== "AUDITOR";
-  const naoEsperados = podeEditar
-    ? await db.reconciliationItem.findMany({ where: { reconciliationId: id, status: "NAO_ESPERADO", resolution: null }, orderBy: { reference: "asc" } })
-    : [];
+  const naoEsperados = podeEditar ? todos.filter((u) => u.status === "NAO_ESPERADO" && !u.resolution) : [];
   const opcoes = naoEsperados.map((u) => ({ id: u.id, label: `${u.reference} · ${brl(u.receivedAmount)} · ${day(u.paidAt)}` }));
-  const eventos = await db.reconciliationItemEvent.findMany({ where: { reconciliationId: id, orgId: s.orgId }, orderBy: { createdAt: "asc" } });
-  const refPorId = new Map((await db.reconciliationItem.findMany({ where: { reconciliationId: id }, select: { id: true, reference: true } })).map((x) => [x.id, x.reference]));
+  const eventos = await db.reconciliationItemEvent.findMany({ where: { reconciliationId: r.id, orgId: s.orgId }, orderBy: { createdAt: "asc" } });
+  const refPorId = new Map(todos.map((x) => [x.id, x.reference]));
   const diff = Number(r.totalReceived) - Number(r.totalExpected);
   const opts = (r.options ?? {}) as Partial<ReconcileOptions>;
   const rules = [
     opts.toleranciaCentavos ? `tolerância de ${opts.toleranciaCentavos} centavo(s)` : "",
     opts.casarPorValorData ? `valor e data (±${opts.toleranciaDias ?? 0} dia(s))` : "",
   ].filter(Boolean).join(", ");
+  const link = (q: { tipo?: string; item?: string }) => {
+    const p = new URLSearchParams();
+    if (q.tipo) p.set("tipo", q.tipo);
+    if (q.item) p.set("item", q.item);
+    const t = p.toString();
+    return t ? `?${t}` : "?";
+  };
 
   return (
     <>
@@ -60,75 +66,72 @@ export default async function ConciliacaoDetalhe({
         subtitle={`${r.bankFileName} (${r.bankFormat}) × ${r.expectedFileName} · ${dt(r.createdAt)}`}
         action={<a className="btn-ghost" href={`/api/conciliacao/${r.id}/csv`}><Icon name="download" size={16} />Exportar CSV</a>}
       />
-      <div className="mb-6 grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 lg:grid-cols-4">
-        <Stat label="Esperado" value={brl(r.totalExpected)} />
-        <Stat label="Recebido" value={brl(r.totalReceived)} tone="green" />
-        <Stat label="Diferença" value={brl(diff)} tone={diff === 0 ? "green" : "amber"} />
-        <Stat label="Conciliados" value={`${r.matched} de ${r.matched + r.divergent + r.missing}`} tone="blue" />
-      </div>
-      {(Number(r.totalExcess) > 0 || rules) && (
-        <p className="notice notice-info block">
-          {Number(r.totalExcess) > 0 && <>Pago a maior (excedente): <strong>{brl(r.totalExcess)}</strong>. </>}
-          {rules && <>Regras usadas: {rules}.</>}
-        </p>
+      <nav aria-label="Filtrar itens por resultado" className="mb-4 grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 lg:grid-cols-4">
+        {GRUPOS.map((g) => (
+          <Stat
+            key={g}
+            label={ROTULO_GRUPO[g]}
+            value={contagem[g]}
+            tone={TOM[g]}
+            href={tipo === g ? link({}) : link({ tipo: g })}
+            hint={tipo === g ? "Filtro ativo: clique para ver todos" : undefined}
+          />
+        ))}
+      </nav>
+      <p className="mb-6 text-sm text-ink-600">
+        Esperado <b>{brl(r.totalExpected)}</b> · recebido <b>{brl(r.totalReceived)}</b> · diferença <b>{brl(diff)}</b>
+        {Number(r.totalExcess) > 0 && <> · pago a maior <b>{brl(r.totalExcess)}</b></>}
+        {rules && <> · regras: {rules}</>}
+      </p>
+
+      {aberto && (
+        <section id="prova" className="mb-6 rounded-2xl border border-line bg-white/60 p-4 md:p-5" aria-label="Prova do item">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-display text-lg font-semibold text-ink-900">Prova</h2>
+            <div className="flex gap-2">
+              <Link className="btn-ghost" href={`/conciliacao/${r.id}/prova/${aberto.id}`}><Icon name="file" size={16} />Imprimir / salvar PDF</Link>
+              <Link className="btn-ghost" href={link({ tipo })}><Icon name="close" size={16} />Fechar</Link>
+            </div>
+          </div>
+          <ProvaView prova={lerProva(aberto.evidence)} frase={fraseItem(paraFrase(aberto), { pagas })} />
+        </section>
       )}
 
-      <FilterBar label="Filtrar itens por status">
-        {filters.map((f) => (
-          <Link
-            key={f.key}
-            href={f.key ? `?status=${f.key}` : "?"}
-            aria-current={status === f.key || (!status && !f.key) ? "page" : undefined}
-            className="chip"
-          >
-            {f.label}
-          </Link>
-        ))}
-      </FilterBar>
-
-      <TableCard title="Itens" meta={`${items.length} item(ns)`}>
-        <table className="table">
-          <thead>
-            <tr><th>Referência</th><th>Pagador</th><th className="num">Esperado</th><th className="num">Recebido</th><th>Pago em</th><th>Status</th><th>Regra</th><th>Observação</th>{podeEditar && <th>Fechamento</th>}</tr>
-          </thead>
-          <tbody>
-            {items.map((i) => (
-              <tr key={i.id}>
-                <td className="font-mono text-xs text-ink-700">{i.reference}</td>
-                <td>{i.payer ?? "—"}</td>
-                <td className="num">{brl(i.expectedAmount)}</td>
-                <td className="num font-medium">{brl(i.receivedAmount)}</td>
-                <td className="whitespace-nowrap">{day(i.paidAt)}</td>
-                <td><StatusBadge status={i.status} /></td>
-                <td className="text-ink-500">{i.rule ? ruleLabel[i.rule] ?? i.rule : "—"}</td>
-                <td className="text-ink-500">
-                  {i.note ?? ""}
-                  {i.resolution && (
-                    <span className="mt-1 block text-xs text-ink-700">
-                      <b>{resolucaoLabel[i.resolution] ?? i.resolution}</b>
-                      {i.linkedItemId && <> com {refPorId.get(i.linkedItemId) ?? "—"}</>} · {i.resolvedByName} · {dt(i.resolvedAt)} · {i.resolutionNote}
-                    </span>
-                  )}
-                  {eventos.some((e) => e.itemId === i.id) && (
-                    <details className="mt-1 text-xs">
-                      <summary className="cursor-pointer text-ink-500">Histórico</summary>
-                      <ul className="mt-1 space-y-1">
-                        {eventos.filter((e) => e.itemId === i.id).map((e) => (
-                          <li key={e.id}>{dt(e.createdAt)} · {e.userName} · {acaoLabel[e.action] ?? e.action} ({e.fromStatus} → {e.toStatus}) · {e.note}</li>
-                        ))}
-                      </ul>
-                    </details>
-                  )}
-                </td>
-                {podeEditar && (
-                  <td>
-                    <ResolverItem itemId={i.id} status={i.status} resolvido={!!i.resolution} isAdmin={s.role === "ADMIN"} opcoes={opcoes} />
-                  </td>
+      <TableCard title={tipo ? ROTULO_GRUPO[tipo] : "Todos os itens"} meta={`${items.length} item(ns)`}>
+        <ul className="divide-y divide-line">
+          {items.map((i) => (
+            <li key={i.id} className={`flex flex-col gap-2 px-4 py-3 md:flex-row md:items-start md:justify-between ${aberto?.id === i.id ? "bg-brand-50/60" : ""}`}>
+              <div className="min-w-0 text-sm">
+                <p className="text-ink-900">{fraseItem(paraFrase(i), { pagas })}</p>
+                <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-ink-500">
+                  <StatusBadge status={i.status} />
+                  <Link className="link-action" href={`${link({ tipo, item: i.id })}#prova`}>Ver prova</Link>
+                </p>
+                {i.resolution && (
+                  <p className="mt-1 text-xs text-ink-700">
+                    <b>{resolucaoLabel[i.resolution] ?? i.resolution}</b>
+                    {i.linkedItemId && <> com {refPorId.get(i.linkedItemId) ?? "—"}</>} · {i.resolvedByName} · {dt(i.resolvedAt)} · {i.resolutionNote}
+                  </p>
                 )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                {eventos.some((e) => e.itemId === i.id) && (
+                  <details className="mt-1 text-xs">
+                    <summary className="cursor-pointer text-ink-500">Histórico</summary>
+                    <ul className="mt-1 space-y-1">
+                      {eventos.filter((e) => e.itemId === i.id).map((e) => (
+                        <li key={e.id}>{dt(e.createdAt)} · {e.userName} · {acaoLabel[e.action] ?? e.action} ({e.fromStatus} → {e.toStatus}) · {e.note}</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </div>
+              {podeEditar && (
+                <div className="shrink-0">
+                  <ResolverItem itemId={i.id} status={i.status} resolvido={!!i.resolution} isAdmin={s.role === "ADMIN"} opcoes={opcoes} />
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
       </TableCard>
     </>
   );

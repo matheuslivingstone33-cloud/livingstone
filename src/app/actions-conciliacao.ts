@@ -6,15 +6,17 @@ import type { Prisma } from "@prisma/client";
 import { audit, requireSession, type Session } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { fmtData } from "@/lib/tz";
-import { BankFileError, detectBankFormat, parseBankFile, parseExpectedCsv, type BankEntry, type Cnab400Layout, type ExpectedEntry, type ReconcileOptions } from "@/lib/reconcile";
+import { BankFileError, csvHeader, detectBankFormat, parseBankFile, parseExpectedCsv, type BankEntry, type Cnab400Layout, type ExpectedEntry, type ReconcileOptions } from "@/lib/reconcile";
 import { getSettings } from "@/lib/settings";
 import { UploadError, assertUploadTotal, decodeText, readUpload } from "@/lib/upload";
 import type { AiFile } from "@/lib/ai";
 import { fail } from "@/lib/errors";
 import { persistReconciliation } from "@/lib/servicos/conciliacao";
+import { resumoArquivos, sha256Hex, type FonteProva } from "@/lib/prova-conciliacao";
 import { sugerirLayoutDaOrg } from "@/lib/servicos/mapeamento";
 import { findHeaderLine, readTable, type RawTable } from "@/lib/planilha";
 import {
+  colunasDoLayout,
   convertWithLayout,
   headerOf,
   isLegacyCsv,
@@ -65,6 +67,11 @@ export async function createReconciliation(form: FormData) {
     fail(back, e instanceof BankFileError ? e.message : "Não foi possível ler o arquivo do banco.");
   }
   const { format, entries } = parsed;
+  const bankText = decodeText(bank.data);
+  const fontes = {
+    banco: { arquivo: bank.name, formato: format, sha256: sha256Hex(bank.data), cabecalho: format === "CSV" ? csvHeader(bankText) : undefined },
+    esperados: { arquivo: exp.name, formato: "CSV", sha256: sha256Hex(exp.data), cabecalho: csvHeader(decodeText(exp.data)) },
+  };
   let expected: ReturnType<typeof parseExpectedCsv>;
   try {
     expected = parseExpectedCsv(decodeText(exp.data));
@@ -80,16 +87,18 @@ export async function createReconciliation(form: FormData) {
     expected,
     entries,
     options,
+    fontes,
+    cnab400: cfg.cnab400,
   });
-  await audit(s, "conciliacao.criar", `${rec.name} (${format}, ${itemCount} itens, regras ${JSON.stringify(options)})`);
+  await audit(s, "conciliacao.criar", `${rec.name} (${format}, ${itemCount} itens, regras ${JSON.stringify(options)})${resumoArquivos(fontes)}`);
   revalidatePath("/conciliacao");
   redirect(`/conciliacao/${rec.id}`);
 }
 
 // ---------- Planilhas em qualquer formato (layout de colunas por instituição) ----------
 
-type Pronto = { modo: "pronto"; tipo: TipoLayout; nome: string; formato: string; entries: ExpectedEntry[] | BankEntry[]; layoutId?: string };
-type SemLayout = { modo: "layout"; tipo: TipoLayout; nome: string; tabela: RawTable; header: string[]; linha: number; assinatura: string };
+type Pronto = { modo: "pronto"; tipo: TipoLayout; nome: string; formato: string; entries: ExpectedEntry[] | BankEntry[]; layoutId?: string; fonte: FonteProva };
+type SemLayout = { modo: "layout"; tipo: TipoLayout; nome: string; tabela: RawTable; header: string[]; linha: number; assinatura: string; sha256: string };
 
 const ROTULO: Record<TipoLayout, string> = { esperados: "títulos esperados", extrato: "arquivo do banco" };
 const CAMPO_FORM: Record<TipoLayout, string> = { esperados: "expectedFile", extrato: "bankFile" };
@@ -100,15 +109,17 @@ const erroDe = (e: unknown, tipo: TipoLayout) =>
 
 /** OFX/CNAB e CSV no formato antigo seguem os leitores de sempre; o resto vira grade e procura o layout salvo. */
 async function lerArquivo(orgId: string, tipo: TipoLayout, f: AiFile, cnab400: Cnab400Layout): Promise<Pronto | SemLayout> {
+  // Hash do arquivo como chegou (bytes originais); o arquivo em si não é guardado
+  const sha256 = sha256Hex(f.data);
   if (f.mime === "text/plain") {
     const text = decodeText(f.data);
     if (tipo === "extrato" && detectBankFormat(f.name, text) !== "CSV") {
       const p = parseBankFile(f.name, text, cnab400);
-      return { modo: "pronto", tipo, nome: f.name, formato: p.format, entries: p.entries };
+      return { modo: "pronto", tipo, nome: f.name, formato: p.format, entries: p.entries, fonte: { arquivo: f.name, formato: p.format, sha256 } };
     }
     if (isLegacyCsv(tipo, text)) {
       const entries = tipo === "esperados" ? parseExpectedCsv(text) : parseBankFile(f.name, text, cnab400).entries;
-      return { modo: "pronto", tipo, nome: f.name, formato: "CSV", entries };
+      return { modo: "pronto", tipo, nome: f.name, formato: "CSV", entries, fonte: { arquivo: f.name, formato: "CSV", sha256, cabecalho: csvHeader(text) } };
     }
   }
   const tabela = await readTable(f.name, f.data);
@@ -120,9 +131,12 @@ async function lerArquivo(orgId: string, tipo: TipoLayout, f: AiFile, cnab400: C
     // O que veio do banco é conferido de novo contra o cabeçalho deste arquivo
     const v = validateLayout(salvo.layout, header);
     if (v.ok && v.layout.tipo === tipo && v.layout.linhaCabecalho === linha)
-      return { modo: "pronto", tipo, nome: f.name, formato: tabela.formato, entries: convertWithLayout(tabela, v.layout), layoutId: salvo.id };
+      return {
+        modo: "pronto", tipo, nome: f.name, formato: tabela.formato, entries: convertWithLayout(tabela, v.layout), layoutId: salvo.id,
+        fonte: { arquivo: f.name, formato: tabela.formato, sha256, cabecalho: header, colunas: colunasDoLayout(v.layout, header) },
+      };
   }
-  return { modo: "layout", tipo, nome: f.name, tabela, header, linha, assinatura };
+  return { modo: "layout", tipo, nome: f.name, tabela, header, linha, assinatura, sha256 };
 }
 
 async function lerDois(s: Session, form: FormData) {
@@ -162,6 +176,8 @@ async function persistir(s: Session, form: FormData, esp: Pronto, ext: Pronto, e
   const options = optionsOf(form);
   const expected = esp.entries as ExpectedEntry[];
   if (!expected.length) fail(BACK, "Nenhum título válido na lista de esperados.");
+  const fontes = { esperados: esp.fonte, banco: ext.fonte };
+  const { cnab400 } = await getSettings(s.orgId);
   const { rec, itemCount } = await persistReconciliation(s.orgId, {
     name: String(form.get("name") || `Conciliação ${fmtData(new Date())}`),
     bankFileName: ext.nome,
@@ -170,10 +186,12 @@ async function persistir(s: Session, form: FormData, esp: Pronto, ext: Pronto, e
     expected,
     entries: ext.entries as BankEntry[],
     options,
+    fontes,
+    cnab400,
   });
   for (const p of [esp, ext])
     if (p.layoutId) await audit(s, "conciliacao.conversao", `${ROTULO[p.tipo]} (${p.formato}) convertido pelo layout salvo ${p.layoutId}: ${p.entries.length} linha(s)`);
-  await audit(s, "conciliacao.criar", `${rec.name} (${ext.formato}, ${itemCount} itens, regras ${JSON.stringify(options)})${extra}`);
+  await audit(s, "conciliacao.criar", `${rec.name} (${ext.formato}, ${itemCount} itens, regras ${JSON.stringify(options)})${extra}${resumoArquivos(fontes)}`);
   revalidatePath(BACK);
   redirect(`/conciliacao/${rec.id}`);
 }
@@ -264,7 +282,10 @@ export async function confirmLayoutAndReconcile(form: FormData): Promise<Resulta
       if (diff.length) await audit(s, "conciliacao.layout_alterado", `${ROTULO[tipo]} (${salvo.id}): ${diff.join("; ")}`.slice(0, 500));
     } else await audit(s, "conciliacao.layout_salvo", `${ROTULO[tipo]} (${salvo.id}, ${a.header.length} colunas)`);
     notas.push(`layout de ${ROTULO[tipo]} confirmado`);
-    prontos[tipo] = { modo: "pronto", tipo, nome: a.nome, formato: a.tabela.formato, entries };
+    prontos[tipo] = {
+      modo: "pronto", tipo, nome: a.nome, formato: a.tabela.formato, entries,
+      fonte: { arquivo: a.nome, formato: a.tabela.formato, sha256: a.sha256, cabecalho: a.header, colunas: colunasDoLayout(v.layout, a.header) },
+    };
   }
   revalidatePath(BACK);
   return persistir(s, form, prontos.esperados!, prontos.extrato!, notas.length ? ` · ${notas.join(", ")}` : "");
@@ -279,4 +300,14 @@ export async function deleteLayout(form: FormData) {
   await db.reconLayout.deleteMany({ where: { id: l.id, orgId: s.orgId } });
   await audit(s, "conciliacao.layout_excluido", `${ROTULO[l.tipo as TipoLayout] ?? l.tipo} (${l.id})`);
   revalidatePath(BACK);
+}
+
+/** Registra a impressão da prova de um item. Qualquer perfil pode imprimir (é só leitura); fica na auditoria. */
+export async function registrarProvaImpressa(recId: string, itemId: string) {
+  const s = await requireSession();
+  const r = await db.reconciliation.findFirst({ where: { id: String(recId).slice(0, 40), orgId: s.orgId }, select: { id: true } });
+  if (!r) return;
+  const i = await db.reconciliationItem.findFirst({ where: { id: String(itemId).slice(0, 40), reconciliationId: r.id }, select: { id: true } });
+  if (!i) return;
+  await audit(s, "conciliacao.prova_impressa", `conciliação ${r.id}, item ${i.id}`);
 }

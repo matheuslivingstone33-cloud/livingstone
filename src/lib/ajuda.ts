@@ -21,7 +21,8 @@ const EXTRATO_JOAO: Exemplo = { href: "/demo/extrato_joao.csv", rotulo: "extrato
 const HOLERITE_JOAO: Exemplo = { href: "/demo/holerite_joao.txt", rotulo: "holerite de exemplo (TXT)" };
 const COBOL: Exemplo = { href: "/demo/CALCJUROS.cbl", rotulo: "programa COBOL de exemplo" };
 const CNAB: Exemplo = { href: "/demo/retorno_cnab400.ret", rotulo: "retorno do banco CNAB 400 de exemplo" };
-const TITULOS: Exemplo = { href: "/demo/titulos_esperados.csv", rotulo: "títulos esperados de exemplo (CSV)" };
+const ESPERADOS_COOP: Exemplo = { href: "/demo/esperados_cooperativa.csv", rotulo: "lista de títulos esperados de uma cooperativa (CSV)" };
+const EXTRATO_COOP: Exemplo = { href: "/demo/extrato_cooperativa.xlsx", rotulo: "extrato do mesmo mês em planilha (.xlsx)" };
 const OFX: Exemplo = { href: "/demo/extrato.ofx", rotulo: "extrato OFX de exemplo" };
 
 export const AJUDA: Record<Aba, Ajuda> = {
@@ -42,7 +43,7 @@ export const AJUDA: Record<Aba, Ajuda> = {
       "Aponta o que foi pago, o que veio com valor diferente e o que não entrou, para você resolver só as exceções.",
     ],
     passos: ["Envie o arquivo do banco.", "Envie a lista de títulos esperados (CSV ou planilha).", "Clique em Conciliar, confirme as colunas se for pedido e resolva as divergências no detalhe."],
-    exemplos: [CNAB, TITULOS, OFX],
+    exemplos: [ESPERADOS_COOP, EXTRATO_COOP, CNAB, OFX],
     vazio: { texto: "Nenhuma conciliação ainda. Envie o retorno do banco e a lista de títulos esperados para começar.", exemplo: CNAB },
   },
   cobranca: {

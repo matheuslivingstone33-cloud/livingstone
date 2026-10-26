@@ -1,9 +1,10 @@
 // Validação do corpo JSON da API de conciliação e conversão para os tipos de reconcile.ts. Puro: sem banco nem Next.
-import { BankFileError, REF_MAX, detectBankFormat, normRef, parseBankFile, utcDay, type BankEntry, type Cnab400Layout, type ExpectedEntry, type ReconcileOptions } from "./reconcile";
+import { BankFileError, REF_MAX, csvHeader, detectBankFormat, normRef, parseBankFile, utcDay, type BankEntry, type Cnab400Layout, type ExpectedEntry, type ReconcileOptions } from "./reconcile";
 import { decodeText } from "./upload";
 import { formatBytes } from "./upload-limits";
 import { findHeaderLine, readTable, type RawTable } from "./planilha";
-import { convertWithLayout, headerOf, layoutSignature, validateLayout, type Layout, type TipoLayout } from "./layout-conciliacao";
+import { jsonCanonico, sha256Hex, type FonteProva } from "./prova-conciliacao";
+import { colunasDoLayout, convertWithLayout, headerOf, layoutSignature, validateLayout, type Layout, type TipoLayout } from "./layout-conciliacao";
 
 export type FieldError = { campo: string; mensagem: string };
 
@@ -18,6 +19,8 @@ export type ReconciliationInput = {
   bankFormat: string;
   entries: BankEntry[];
   options: ReconcileOptions;
+  /** Para a prova: hash do arquivo enviado (ou do JSON canônico da lista) e cabeçalho. */
+  fontes: { esperados: FonteProva; banco: FonteProva };
 };
 
 /** status 422: planilha sem layout salvo na instituição. */
@@ -106,7 +109,7 @@ function fromTable(tipo: TipoLayout, campo: ApiFileField, ctx: ApiContext, error
     return void errors.push({ campo, mensagem: SEM_LAYOUT });
   }
   try {
-    return { entries: convertWithLayout(t, v.layout), formato: t.formato };
+    return { entries: convertWithLayout(t, v.layout), formato: t.formato, cabecalho: header, colunas: colunasDoLayout(v.layout, header) };
   } catch (e) {
     errors.push({ campo, mensagem: e instanceof BankFileError ? e.message : "Não foi possível converter o arquivo." });
   }
@@ -123,6 +126,7 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
   // Esperados: lista JSON ou planilha (arquivoEsperados) com layout salvo
   let expected: ExpectedEntry[] = [];
   let expectedFileName = "api.json";
+  let fonteEsp: Omit<FonteProva, "arquivo"> = { formato: "JSON", sha256: "" };
   const esp = body.esperados;
   if (esp !== undefined && body.arquivoEsperados !== undefined) errors.push({ campo: "esperados", mensagem: "Envie exatamente um: esperados ou arquivoEsperados." });
   else if (body.arquivoEsperados !== undefined) {
@@ -131,11 +135,15 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
     else {
       expectedFileName = f.nome;
       const r = fromTable("esperados", "arquivoEsperados", ctx, errors, flags);
-      if (r) expected = r.entries as ExpectedEntry[];
+      if (r) {
+        expected = r.entries as ExpectedEntry[];
+        fonteEsp = { formato: r.formato, sha256: sha256Hex(f.buf), cabecalho: r.cabecalho, colunas: r.colunas };
+      }
     }
   } else if (!Array.isArray(esp) || esp.length === 0) errors.push({ campo: "esperados", mensagem: "Envie ao menos um título esperado." });
   else if (esp.length > API_LIMITS.esperados) errors.push({ campo: "esperados", mensagem: `No máximo ${API_LIMITS.esperados} títulos por conciliação.` });
   else {
+    fonteEsp = { formato: "JSON", sha256: sha256Hex(jsonCanonico(esp)) };
     const seen = new Map<string, number>();
     esp.forEach((e, i) => {
       const at = `esperados[${i}]`;
@@ -154,7 +162,8 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
       const dueAt = parseIsoDay(e.vencimento);
       if (!dueAt) errors.push({ campo: `${at}.vencimento`, mensagem: "Data no formato AAAA-MM-DD." });
       if (e.pagador !== undefined && e.pagador !== null && typeof e.pagador !== "string") errors.push({ campo: `${at}.pagador`, mensagem: "Deve ser texto." });
-      expected.push({ reference, payer: str(e.pagador, 120) || undefined, amount: e.valor as number, dueAt: dueAt ?? undefined });
+      // Prova: linha = índice na lista enviada; o objeto como veio
+      expected.push({ reference, payer: str(e.pagador, 120) || undefined, amount: e.valor as number, dueAt: dueAt ?? undefined, origem: { linha: i, bruto: JSON.stringify(e).slice(0, 1000) } });
     });
   }
 
@@ -162,6 +171,7 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
   let entries: BankEntry[] = [];
   let bankFileName = "";
   let bankFormat = "";
+  let fonteBanco: Omit<FonteProva, "arquivo" | "formato"> = { sha256: "" };
   const banco = body.banco;
   if (banco !== undefined && body.arquivoBanco !== undefined) errors.push({ campo: "banco", mensagem: "Envie exatamente um: banco ou arquivoBanco." });
   else if (body.arquivoBanco !== undefined) {
@@ -169,6 +179,7 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
     if (isFieldError(f)) errors.push(f);
     else {
       bankFileName = f.nome;
+      fonteBanco = { sha256: sha256Hex(f.buf) };
       const text = f.buf.includes(0) ? "" : decodeText(f.buf);
       const fmt = text ? detectBankFormat(f.nome, text) : "CSV";
       if (fmt !== "CSV")
@@ -184,6 +195,7 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
         if (r) {
           entries = r.entries as BankEntry[];
           bankFormat = r.formato;
+          fonteBanco = { ...fonteBanco, cabecalho: r.cabecalho, colunas: r.colunas };
         }
       }
     }
@@ -194,6 +206,7 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
     const l = banco.lancamentos;
     bankFileName = "lancamentos.json";
     bankFormat = "JSON";
+    if (Array.isArray(l)) fonteBanco = { sha256: sha256Hex(jsonCanonico(l)) };
     if (!Array.isArray(l) || l.length === 0) errors.push({ campo: "banco.lancamentos", mensagem: "Envie ao menos um lançamento." });
     else if (l.length > API_LIMITS.lancamentos) errors.push({ campo: "banco.lancamentos", mensagem: `No máximo ${API_LIMITS.lancamentos} lançamentos.` });
     else
@@ -204,7 +217,7 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
         if (!validAmount(r.valor)) errors.push({ campo: `${at}.valor`, mensagem: "Número positivo em reais, com até 2 casas decimais." });
         const paidAt = parseIsoDay(r.data);
         if (!paidAt) errors.push({ campo: `${at}.data`, mensagem: "Data no formato AAAA-MM-DD." });
-        entries.push({ reference: refOf(r.referencia, `${at}.referencia`, errors), amount: r.valor as number, paidAt: paidAt ?? undefined });
+        entries.push({ reference: refOf(r.referencia, `${at}.referencia`, errors), amount: r.valor as number, paidAt: paidAt ?? undefined, origem: { linha: i, bruto: JSON.stringify(r).slice(0, 1000) } });
       });
   } else {
     const a = banco.arquivo;
@@ -221,9 +234,11 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
         else if (buf.includes(0)) errors.push({ campo: "banco.arquivo.conteudoBase64", mensagem: "O arquivo não parece ser texto (OFX, CNAB ou CSV)." });
         else if (bankFileName)
           try {
-            const parsed = parseBankFile(bankFileName, decodeText(buf), cnab400);
+            const text = decodeText(buf);
+            const parsed = parseBankFile(bankFileName, text, cnab400);
             entries = parsed.entries;
             bankFormat = parsed.format;
+            fonteBanco = { sha256: sha256Hex(buf), cabecalho: parsed.format === "CSV" ? csvHeader(text) : undefined };
           } catch (e) {
             errors.push({ campo: "banco.arquivo", mensagem: e instanceof BankFileError ? e.message : "Não foi possível ler o arquivo do banco." });
           }
@@ -245,5 +260,6 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
   }
 
   if (errors.length) return { ok: false, errors: errors.slice(0, 50), ...(flags.semLayout ? { status: 422 as const } : {}) };
-  return { ok: true, value: { name, expected, expectedFileName, bankFileName, bankFormat, entries, options } };
+  const fontes = { esperados: { arquivo: expectedFileName, ...fonteEsp }, banco: { arquivo: bankFileName, formato: bankFormat, ...fonteBanco } };
+  return { ok: true, value: { name, expected, expectedFileName, bankFileName, bankFormat, entries, options, fontes } };
 }

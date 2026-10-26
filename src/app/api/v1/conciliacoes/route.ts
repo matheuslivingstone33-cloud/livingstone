@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { persistReconciliation } from "@/lib/servicos/conciliacao";
 import { reconciliationJson } from "@/lib/servicos/conciliacao-api";
+import { resumoArquivos } from "@/lib/prova-conciliacao";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -19,8 +20,8 @@ export function POST(req: Request) {
     const v = validateReconciliationBody(body, cfg.cnab400, { tables, layouts });
     if (!v.ok && v.status === 422) return { status: 422, json: errBody("layout_not_found", SEM_LAYOUT, v.errors) };
     if (!v.ok) return { status: 400, json: errBody("validation_error", "Corpo inválido.", v.errors) };
-    const { rec, itemCount } = await persistReconciliation(orgId, v.value);
-    await auditRaw(orgId, null, "api.conciliacao.criar", `chave ${key.prefix}: ${rec.name} (${rec.bankFormat}, ${itemCount} itens, regras ${JSON.stringify(v.value.options)})`, ip);
+    const { rec, itemCount } = await persistReconciliation(orgId, { ...v.value, cnab400: cfg.cnab400 });
+    await auditRaw(orgId, null, "api.conciliacao.criar", `chave ${key.prefix}: ${rec.name} (${rec.bankFormat}, ${itemCount} itens, regras ${JSON.stringify(v.value.options)})${resumoArquivos(v.value.fontes)}`, ip);
     return { status: 201, json: reconciliationJson(rec), resourceType: "Reconciliation", resourceId: rec.id };
   });
 }

@@ -306,3 +306,22 @@ body {
     animation: grow-x 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
 }
+
+/* Impressão da prova da conciliação: só o conteúdo, sem menu nem cabeçalho */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body:has(.prova-print) aside,
+  body:has(.prova-print) header.sticky {
+    display: none !important;
+  }
+  body:has(.prova-print) main {
+    max-width: none;
+    padding: 0;
+  }
+  .prova-print .card {
+    box-shadow: none;
+    break-inside: avoid;
+  }
+}

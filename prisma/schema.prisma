@@ -118,6 +118,8 @@ model Reconciliation {
   createdAt     DateTime     @default(now())
   manualCount   Int          @default(0) // itens resolvidos manualmente (vínculo, aceite, baixa)
   updatedAt     DateTime?
+  bankFileSha256     String? // SHA-256 do arquivo do banco como foi enviado (o arquivo não é guardado)
+  expectedFileSha256 String? // SHA-256 da lista de esperados como foi enviada
   items         ReconciliationItem[]
 }
 
@@ -143,6 +145,7 @@ model ReconciliationItem {
   resolvedAt       DateTime?
   linkedItemId     String?
   version          Int            @default(0)
+  evidence         Json? // prova: linhas usadas dos dois arquivos (CPF/CNPJ mascarados) e a regra aplicada; nulo em conciliações antigas
 }
 
 model ReconciliationItemEvent {

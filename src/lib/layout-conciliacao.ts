@@ -206,7 +206,8 @@ export function sampleForAi(t: Tabela, linhaCabecalho: number, n = 5): { cabecal
 
 export type LinhaConvertida = { linha: number; referencia: string; valor?: number; data?: string; pagador?: string; ignorada?: string; erro?: string };
 
-function convertRows(t: Tabela, layout: Layout, header: string[], limit = Infinity) {
+// `indices` (opcional) recebe a posição em t.linhas de cada linha devolvida (para a prova)
+function convertRows(t: Tabela, layout: Layout, header: string[], limit = Infinity, indices?: number[]) {
   const idx = (name?: string) => (name ? header.indexOf(name) : -1);
   const I = { ref: idx(layout.colunas.referencia), val: idx(layout.colunas.valor), data: idx(layout.colunas.data), pag: idx(layout.colunas.pagador), desc: idx(layout.colunas.descricao), sinal: idx(layout.colunas.sinal) };
   const get = (r: string[], i: number) => (i >= 0 ? (r[i] ?? "").trim() : "");
@@ -245,6 +246,7 @@ function convertRows(t: Tabela, layout: Layout, header: string[], limit = Infini
     }
     if (erros.length) item.erro = erros.join(", ");
     out.push(item);
+    indices?.push(i);
   }
   return out;
 }
@@ -254,15 +256,17 @@ export const previewRows = (t: Tabela, layout: Layout, n = 10) => convertRows(t,
 
 /** Converte a planilha inteira. Linhas inválidas viram BankFileError com o número da linha. */
 export function convertWithLayout(t: Tabela, layout: Layout): ExpectedEntry[] | BankEntry[] {
-  const rows = convertRows(t, layout, headerOf(t.linhas, layout.linhaCabecalho));
+  const pos: number[] = [];
+  const rows = convertRows(t, layout, headerOf(t.linhas, layout.linhaCabecalho), Infinity, pos);
   const label = layout.tipo === "esperados" ? "de esperados" : "do banco";
   fileErrors(label, rows.filter((r) => r.erro).map((r) => `Linha ${r.linha}: ${r.erro}`));
+  const origem = new Map(rows.map((r, k) => [r, { linha: r.linha, celulas: t.linhas[pos[k]] }]));
   const ok = rows.filter((r) => !r.ignorada && r.valor !== undefined);
   if (!ok.length) throw new BankFileError(`Arquivo ${label}: nenhuma linha com valor válido.`);
   const date = (s?: string) => (s ? new Date(`${s}T00:00:00.000Z`) : undefined);
   return layout.tipo === "esperados"
-    ? ok.map((r) => ({ reference: r.referencia, payer: r.pagador, amount: r.valor!, dueAt: date(r.data) }))
-    : ok.map((r) => ({ reference: r.referencia, payer: r.pagador, amount: r.valor!, paidAt: date(r.data) }));
+    ? ok.map((r) => ({ reference: r.referencia, payer: r.pagador, amount: r.valor!, dueAt: date(r.data), origem: origem.get(r) }))
+    : ok.map((r) => ({ reference: r.referencia, payer: r.pagador, amount: r.valor!, paidAt: date(r.data), origem: origem.get(r) }));
 }
 
 /** Nomes de coluna que mudaram entre dois layouts (para a auditoria). */
@@ -299,3 +303,10 @@ export type PreviaArquivo = {
   erro?: string;
 };
 export type ResultadoPrevia = { ok: false; erro: string } | { ok: true; previas: PreviaArquivo[] };
+
+/** Índices (no cabeçalho e nas linhas) das colunas de referência, valor e data do layout, para destacar na prova. */
+export function colunasDoLayout(layout: Layout, header: string[]) {
+  const i = (n?: string) => (n ? header.indexOf(n) : -1);
+  const ok = (n: number) => (n >= 0 ? n : undefined);
+  return { referencia: ok(i(layout.colunas.referencia)), valor: ok(i(layout.colunas.valor)), data: ok(i(layout.colunas.data)) };
+}

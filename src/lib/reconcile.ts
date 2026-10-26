@@ -1,7 +1,9 @@
 // Leitura de arquivos bancários e conciliação contra os títulos esperados.
 
-export type BankEntry = { reference: string; payer?: string; amount: number; paidAt?: Date };
-export type ExpectedEntry = { reference: string; payer?: string; amount: number; dueAt?: Date };
+/** De onde veio o lançamento: número da linha e as células (CSV/planilha) ou o trecho bruto (OFX/CNAB/JSON). */
+export type Origem = { linha: number; celulas?: string[]; bruto?: string };
+export type BankEntry = { reference: string; payer?: string; amount: number; paidAt?: Date; origem?: Origem };
+export type ExpectedEntry = { reference: string; payer?: string; amount: number; dueAt?: Date; origem?: Origem };
 
 export class BankFileError extends Error {}
 
@@ -78,8 +80,11 @@ function csvObjects(text: string) {
   const keys = header.cells.map((h) =>
     h.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z]/g, ""),
   );
-  return rows.map((r) => ({ line: r.line, o: Object.fromEntries(keys.map((k, i) => [k, r.cells[i] ?? ""])) as Record<string, string> }));
+  return rows.map((r) => ({ line: r.line, cells: r.cells, o: Object.fromEntries(keys.map((k, i) => [k, r.cells[i] ?? ""])) as Record<string, string> }));
 }
+
+/** Cabeçalho do CSV no formato antigo, como está no arquivo (para a prova). */
+export const csvHeader = (text: string): string[] => splitCsv(text)[0]?.cells ?? [];
 
 const pick = (o: Record<string, string>, ...names: string[]) => {
   for (const n of names) if (o[n]) return o[n];
@@ -94,8 +99,8 @@ export function fileErrors(label: string, errors: string[]) {
 // Lê linhas de CSV (esperados ou banco). Linha toda vazia é ignorada; referência sem valor/data válidos é erro.
 function parseCsvRows(text: string, label: string, valueCols: string[], dateCols: string[]) {
   const errors: string[] = [];
-  const out: { reference: string; payer?: string; amount: number; date?: Date }[] = [];
-  for (const { line, o } of csvObjects(text)) {
+  const out: { reference: string; payer?: string; amount: number; date?: Date; origem: Origem }[] = [];
+  for (const { line, cells, o } of csvObjects(text)) {
     if (Object.values(o).every((v) => !v.trim())) continue;
     const reference = pick(o, "referencia", "nossonumero", "documento", "id");
     const rawValue = pick(o, ...valueCols);
@@ -111,7 +116,7 @@ function parseCsvRows(text: string, label: string, valueCols: string[], dateCols
     else if (!validMoney(amount)) errors.push(`Linha ${line}: valor ${rawValue} deve ser positivo`);
     if (date === null) errors.push(`Linha ${line}: data ${rawDate} inválida`);
     if (validMoney(amount) && date !== null)
-      out.push({ reference, payer: pick(o, "pagador", "cliente", "sacado", "nome") || undefined, amount, date });
+      out.push({ reference, payer: pick(o, "pagador", "cliente", "sacado", "nome") || undefined, amount, date, origem: { linha: line, celulas: cells } });
   }
   fileErrors(label, errors);
   return out;
@@ -148,7 +153,7 @@ function parseOfx(text: string): BankEntry[] {
     const memo = tag(b, "MEMO");
     // A referência do título costuma vir em REFNUM/CHECKNUM ou no histórico (MEMO)
     const reference = tag(b, "REFNUM") || tag(b, "CHECKNUM") || memo.match(/\b\d{5,}\b/)?.[0] || fitid;
-    out.push({ reference, payer: tag(b, "NAME") || memo || undefined, amount, paidAt });
+    out.push({ reference, payer: tag(b, "NAME") || memo || undefined, amount, paidAt, origem: { linha: i + 1, bruto: `<STMTTRN>${b.trim()}</STMTTRN>`.slice(0, 1000) } });
   });
   fileErrors("OFX", errors);
   return out;
@@ -174,7 +179,9 @@ export const DEFAULT_CNAB400: Cnab400Layout = {
 const cut = (l: string, [a, b]: [number, number]) => l.slice(a - 1, b);
 
 function parseCnab400(text: string, layout: Cnab400Layout): BankEntry[] {
-  const lines = text.split(/\r?\n/).filter((l) => l[0] === "1");
+  const todas = text.split(/\r?\n/);
+  const nums = todas.map((_, n) => n + 1).filter((n) => todas[n - 1][0] === "1");
+  const lines = nums.map((n) => todas[n - 1]);
   const out: BankEntry[] = [];
   lines.forEach((l, i) => {
     if (l.length < layout.valorPago[1]) throw new BankFileError(`CNAB 400: a linha de detalhe ${i + 1} tem ${l.length} posições (esperado 400).`);
@@ -186,7 +193,7 @@ function parseCnab400(text: string, layout: Cnab400Layout): BankEntry[] {
     const paidAt = utcDay(2000 + +d.slice(4, 6), +d.slice(2, 4), +d.slice(0, 2));
     if (!paidAt) throw new BankFileError(`CNAB 400: data ${d} inválida na linha de detalhe ${i + 1}.`);
     if (!(Number(v) > 0)) throw new BankFileError(`CNAB 400: liquidação com valor zero na linha de detalhe ${i + 1}.`);
-    out.push({ reference: cut(l, layout.nossoNumero).trim(), amount: Number(v) / 100, paidAt });
+    out.push({ reference: cut(l, layout.nossoNumero).trim(), amount: Number(v) / 100, paidAt, origem: { linha: nums[i], bruto: l } });
   });
   return out;
 }
@@ -195,7 +202,9 @@ function parseCnab400(text: string, layout: Cnab400Layout): BankEntry[] {
 // T: nosso número 38-57, valor do título 82-96 · U: valor pago 78-92, data da ocorrência 138-145 (DDMMAAAA).
 // Código de movimento 16-17: 06 liquidação, 09 baixa, 17 liquidação após baixa.
 function parseCnab240(text: string): BankEntry[] {
-  const lines = text.split(/\r?\n/).filter((l) => l.length >= 240 && l[7] === "3");
+  const todas = text.split(/\r?\n/);
+  const nums = todas.map((_, n) => n + 1).filter((n) => todas[n - 1].length >= 240 && todas[n - 1][7] === "3");
+  const lines = nums.map((n) => todas[n - 1]);
   const out: BankEntry[] = [];
   for (let i = 0; i < lines.length; i++) {
     const t = lines[i];
@@ -217,6 +226,7 @@ function parseCnab240(text: string): BankEntry[] {
       payer: t.slice(148, 188).trim() || undefined,
       amount: Number(v) / 100,
       paidAt,
+      origem: { linha: nums[i], bruto: `${t}\n${u}` },
     });
   }
   return out;
@@ -249,7 +259,8 @@ export function parseBankFile(fileName: string, text: string, cnab400: Cnab400La
 const cents = (n: number) => Math.round(n * 100);
 
 export type MatchRule = "REFERENCIA" | "REFERENCIA_DV" | "VALOR_DATA";
-export type MatchedItem = ResultItem & { rule?: MatchRule; dueAt?: Date; excess?: number };
+/** expectedIndex/receivedIndex: posição do título e do crédito nas listas recebidas (para montar a prova). */
+export type MatchedItem = ResultItem & { rule?: MatchRule; dueAt?: Date; excess?: number; expectedIndex?: number; receivedIndex?: number };
 
 export type ReconcileOptions = {
   /** Diferença de valor (em centavos) aceita como conciliada; 0 = só valor exato */
@@ -266,15 +277,15 @@ const money = (c: number) => (c / 100).toLocaleString("pt-BR", { style: "currenc
 
 export function reconcileWith(expected: ExpectedEntry[], received: BankEntry[], options: Partial<ReconcileOptions> = {}): MatchedItem[] {
   const opts = { ...DEFAULT_RECONCILE, ...options };
-  const pool = received.map((r) => ({ r, key: normRef(r.reference), used: false }));
-  const hits: ({ r: BankEntry; rule: MatchRule } | undefined)[] = [];
+  const pool = received.map((r, j) => ({ r, j, key: normRef(r.reference), used: false }));
+  const hits: ({ r: BankEntry; j: number; rule: MatchRule } | undefined)[] = [];
 
   // 1ª passada (a): referência exata, para todos os títulos antes de olhar dígito verificador
   const keys = expected.map((e) => normRef(e.reference));
   keys.forEach((k, i) => {
     const c = pool.find((p) => !p.used && p.key === k);
     if (c) c.used = true;
-    hits[i] = c && { r: c.r, rule: "REFERENCIA" };
+    hits[i] = c && { r: c.r, j: c.j, rule: "REFERENCIA" };
   });
   // 1ª passada (b): nosso número com 1–2 dígitos verificadores anexados pelo banco, só nos créditos que sobraram
   const dvMatch = (k: string, key: string) => /^\d{5,}$/.test(k) && key.startsWith(k) && key.length - k.length >= 1 && key.length - k.length <= 2;
@@ -282,7 +293,7 @@ export function reconcileWith(expected: ExpectedEntry[], received: BankEntry[], 
     if (hits[i]) return;
     const c = pool.find((p) => !p.used && dvMatch(k, p.key));
     if (c) c.used = true;
-    hits[i] = c && { r: c.r, rule: "REFERENCIA_DV" };
+    hits[i] = c && { r: c.r, j: c.j, rule: "REFERENCIA_DV" };
   });
 
   // 2ª passada: valor exato e data próxima. Só casa quando o par é único dos dois lados (evita falso positivo)
@@ -302,7 +313,7 @@ export function reconcileWith(expected: ExpectedEntry[], received: BankEntry[], 
         continue;
       }
       cands[0].used = true;
-      hits[i] = { r: cands[0].r, rule: "VALOR_DATA" };
+      hits[i] = { r: cands[0].r, j: cands[0].j, rule: "VALOR_DATA" };
     }
   }
 
@@ -310,7 +321,7 @@ export function reconcileWith(expected: ExpectedEntry[], received: BankEntry[], 
     const h = hits[i];
     if (!h)
       return {
-        reference: e.reference, payer: e.payer, expectedAmount: e.amount, dueAt: e.dueAt, status: "PENDENTE",
+        reference: e.reference, payer: e.payer, expectedAmount: e.amount, dueAt: e.dueAt, status: "PENDENTE", expectedIndex: i,
         note: ambiguous.has(i) ? "Mais de um crédito com o mesmo valor e data: concilie manualmente" : "Pagamento não localizado no arquivo do banco",
       };
     const diff = cents(h.r.amount) - cents(e.amount);
@@ -332,12 +343,14 @@ export function reconcileWith(expected: ExpectedEntry[], received: BankEntry[], 
       status: within ? "CONCILIADO" : "DIVERGENTE",
       excess: diff > 0 && !within ? diff / 100 : undefined,
       note: notes.join(" · ") || undefined,
+      expectedIndex: i,
+      receivedIndex: h.j,
     };
   });
 
   for (const p of pool)
     if (!p.used)
-      items.push({ reference: p.r.reference, payer: p.r.payer, receivedAmount: p.r.amount, paidAt: p.r.paidAt, status: "NAO_ESPERADO", note: "Crédito sem título correspondente" });
+      items.push({ reference: p.r.reference, payer: p.r.payer, receivedAmount: p.r.amount, paidAt: p.r.paidAt, status: "NAO_ESPERADO", note: "Crédito sem título correspondente", receivedIndex: p.j });
 
   return items;
 }
