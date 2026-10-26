@@ -39,6 +39,7 @@ model Organization {
   // Trava da execução da régua de cobrança (uma por vez na instituição)
   collectionRunLockUntil DateTime?
   collectionMessages CollectionMessage[]
+  reconLayouts ReconLayout[]
 }
 
 model User {
@@ -442,4 +443,21 @@ model DailySummary {
   factsHash   String
   generatedAt DateTime
   lockUntil   DateTime?
+}
+
+// Layout de colunas de uma planilha de conciliação (esperados ou extrato), por instituição e cabeçalho.
+// Só nomes de coluna e formatos; o conteúdo dos arquivos nunca é guardado.
+model ReconLayout {
+  id         String       @id @default(cuid())
+  orgId      String
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  tipo       String
+  assinatura String
+  cabecalho  Json
+  layout     Json
+  criadoPor  String?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  @@unique([orgId, assinatura])
 }

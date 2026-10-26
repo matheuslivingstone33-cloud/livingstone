@@ -1,6 +1,6 @@
 // Configuração da IA por tarefa, preços e teto de consumo. Puro: sem banco, sem Next, sem rede.
 
-export type AiTask = "cobranca" | "pld" | "credito" | "legado" | "resumo";
+export type AiTask = "cobranca" | "pld" | "credito" | "legado" | "resumo" | "mapeamento";
 export type AiEffort = "low" | "medium" | "high";
 export type TaskConfig = { model: string; effort: AiEffort; max_tokens: number; timeoutMs: number };
 
@@ -12,9 +12,11 @@ export const TASKS: Record<AiTask, TaskConfig> = {
   legado: { model: "claude-sonnet-5-5", effort: "medium", max_tokens: 6000, timeoutMs: 50_000 },
   // Resumo do dia do painel: 2 a 3 frases, curto e barato
   resumo: { model: "claude-haiku-5-5", effort: "low", max_tokens: 400, timeoutMs: 10_000 },
+  // Mapeamento de colunas de planilha da conciliação: só nomes de coluna e amostra mascarada
+  mapeamento: { model: "claude-haiku-5-5", effort: "low", max_tokens: 800, timeoutMs: 10_000 },
 };
 
-const OVERRIDE: Record<AiTask, string> = { cobranca: "AI_MODEL_COBRANCA", pld: "AI_MODEL_PLD", credito: "AI_MODEL_CREDITO", legado: "AI_MODEL_LEGADO", resumo: "AI_MODEL_RESUMO" };
+const OVERRIDE: Record<AiTask, string> = { cobranca: "AI_MODEL_COBRANCA", pld: "AI_MODEL_PLD", credito: "AI_MODEL_CREDITO", legado: "AI_MODEL_LEGADO", resumo: "AI_MODEL_RESUMO", mapeamento: "AI_MODEL_MAPEAMENTO" };
 const MODEL_RE = /^claude-[a-z0-9-]+$/;
 
 /** Modelo da tarefa: AI_MODEL_<TAREFA> só vale se tiver forma de id de modelo Claude. ANTHROPIC_MODEL é ignorada. */

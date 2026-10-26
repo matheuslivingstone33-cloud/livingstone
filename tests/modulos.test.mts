@@ -1665,3 +1665,248 @@ test("Fuso: hora e início do mês em Brasília", () => {
   assert.equal(inicioDoMesSP(new Date("2026-11-01T02:00:00Z")).toISOString(), "2026-10-01T03:00:00.000Z");
   assert.equal(inicioDoMesSP(new Date("2026-11-01T03:00:00Z")).toISOString(), "2026-11-01T03:00:00.000Z");
 });
+
+// ---------- Conciliação com planilha em qualquer formato (layout por instituição) ----------
+import { PLANILHA_LIMITES, cellText, findHeaderLine, parseCsvTable, readTable, readXlsx } from "../src/lib/planilha";
+import { convertWithLayout, guessLayout, headerOf, isLegacyCsv, layoutSignature, normHeader, previewRows, sampleForAi, validateLayout, type Layout } from "../src/lib/layout-conciliacao";
+import { BankFileError } from "../src/lib/reconcile";
+import { isLayoutShape } from "../src/lib/ai-guard";
+import { sugerirLayout } from "../src/lib/servicos/mapeamento";
+import { readApiTables } from "../src/lib/api-payload";
+// @ts-expect-error módulo .mjs sem tipos
+import { buildXlsx, buildZip } from "../scripts/xlsx-mini.mjs";
+
+const tab = async (f: string) => readTable(f, demo(f));
+const layoutAlt: Layout = {
+  tipo: "esperados",
+  colunas: { referencia: "Nosso Número", valor: "Vlr Pago", data: "Dt Venc", pagador: "Cliente" },
+  formatoData: "aaaa-mm-dd",
+  formatoValor: "br",
+  separador: ",",
+  linhaCabecalho: 0,
+};
+const layoutExtrato: Layout = {
+  tipo: "extrato",
+  colunas: { referencia: "Documento", valor: "Valor", data: "Data", descricao: "Histórico" },
+  formatoData: "aaaa-mm-dd",
+  formatoValor: "br",
+  linhaCabecalho: 2,
+};
+
+test("Planilha: CSV RFC 4180 (aspas, aspas duplas, quebra dentro de aspas, tab, barra, BOM)", () => {
+  const a = parseCsvTable('﻿a,b,c\r\n"x, y","diz ""oi""","linha\nquebrada"\r\n1,2,3\r\n');
+  assert.equal(a.separador, ",");
+  assert.deepEqual(a.linhas, [["a", "b", "c"], ["x, y", 'diz "oi"', "linha\nquebrada"], ["1", "2", "3"]]);
+  assert.deepEqual(a.numeros, [1, 2, 4]);
+  assert.equal(parseCsvTable("a\tb\n1\t2").separador, "\t");
+  assert.equal(parseCsvTable("a|b|c\n1|2,5|3").separador, "|");
+  assert.equal(parseCsvTable("a;b\n1,5;2,5\n3,5;4").separador, ";");
+});
+
+test("Planilha: linha do cabeçalho ignora título e linhas numéricas", () => {
+  assert.equal(findHeaderLine([["Extrato outubro"], [], ["Data", "Valor"], ["05/10/2026", "10,00"]]), 2);
+  assert.equal(findHeaderLine([["1", "2"], ["ref", "valor"]]), 1);
+  assert.equal(findHeaderLine([["1", "2"]]), 0);
+});
+
+test("Layout: nome de coluna normalizado, cabeçalho duplicado e assinatura", () => {
+  assert.equal(normHeader(" Nosso Número "), "nossonumero");
+  assert.deepEqual(headerOf([["Valor", "valor", "", "Valor"]], 0), ["Valor", "valor#2", "Coluna 3", "Valor#3"]);
+  const h = ["Ref", "Valor"];
+  assert.equal(layoutSignature("esperados", h), layoutSignature("esperados", ["ref", " VALOR "]));
+  assert.notEqual(layoutSignature("esperados", h), layoutSignature("extrato", h));
+  assert.notEqual(layoutSignature("esperados", h), layoutSignature("esperados", ["Valor", "Ref"]));
+  assert.match(layoutSignature("esperados", h), /^[0-9a-f]{64}$/);
+});
+
+test("Layout: sugestão com confiança alta e baixa", async () => {
+  const t = await tab("esperados_layout_alt.csv");
+  const g = guessLayout("esperados", headerOf(t.linhas, 0), t, 0);
+  assert.equal(g.confianca, "alta", g.motivos.join("; "));
+  assert.deepEqual(g.layout, layoutAlt.colunas);
+  assert.equal(g.formatoData, "aaaa-mm-dd");
+  const r = await tab("esperados_ruim.csv");
+  assert.equal(guessLayout("esperados", headerOf(r.linhas, 0), r, 0).confianca, "baixa");
+  // dd/mm × mm/dd sem dia acima de 12 é dúvida
+  const amb = { linhas: [["ref", "valor", "data"], ["1", "10,00", "05/10/2026"]], numeros: [1, 2] };
+  assert.equal(guessLayout("esperados", ["ref", "valor", "data"], amb, 0).confianca, "baixa");
+  const ok = { linhas: [["ref", "valor", "data"], ["1", "10,00", "25/10/2026"]], numeros: [1, 2] };
+  assert.equal(guessLayout("esperados", ["ref", "valor", "data"], ok, 0).confianca, "alta");
+  // Duas colunas candidatas a valor
+  assert.equal(guessLayout("esperados", ["ref", "valor", "vlr"], { linhas: [["ref", "valor", "vlr"], ["1", "1,00", "2,00"]], numeros: [1, 2] }, 0).confianca, "baixa");
+});
+
+test("Layout: validação estrita recusa chaves extras, colunas inexistentes, enums e __proto__", () => {
+  const h = ["Nosso Número", "Cliente", "Vlr Pago", "Dt Venc", "Obs"];
+  assert.ok(validateLayout(layoutAlt, h).ok);
+  assert.ok(validateLayout(JSON.parse(JSON.stringify(layoutAlt)), h).ok);
+  const bad = (x: unknown) => assert.ok(!validateLayout(x, h).ok, JSON.stringify(x));
+  bad(null);
+  bad([]);
+  bad({ ...layoutAlt, extra: 1 });
+  bad({ ...layoutAlt, tipo: "outro" });
+  bad({ ...layoutAlt, formatoData: "dd/mm/aa" });
+  bad({ ...layoutAlt, formatoValor: "us" });
+  bad({ ...layoutAlt, separador: "x" });
+  bad({ ...layoutAlt, linhaCabecalho: 11 });
+  bad({ ...layoutAlt, linhaCabecalho: 1.5 });
+  bad({ ...layoutAlt, colunas: { ...layoutAlt.colunas, valor: "Inexistente" } });
+  bad({ ...layoutAlt, colunas: { ...layoutAlt.colunas, valor: "Nosso Número" } });
+  bad({ ...layoutAlt, colunas: { referencia: "Nosso Número" } });
+  bad({ ...layoutAlt, colunas: { ...layoutAlt.colunas, sinal: "Obs" } });
+  bad({ ...layoutAlt, colunas: { ...layoutAlt.colunas, outra: "Obs" } });
+  bad(JSON.parse(`{"__proto__": {"x": 1}, "tipo": "esperados", "colunas": {"referencia": "Nosso Número", "valor": "Vlr Pago"}, "formatoData": "aaaa-mm-dd", "formatoValor": "br", "linhaCabecalho": 0}`));
+  bad(JSON.parse(`{"tipo": "esperados", "colunas": {"__proto__": {"a": 1}, "referencia": "Nosso Número", "valor": "Vlr Pago"}, "formatoData": "aaaa-mm-dd", "formatoValor": "br", "linhaCabecalho": 0}`));
+  assert.equal(({} as Record<string, unknown>).x, undefined);
+});
+
+test("Layout: amostra para a IA sem dígitos nem nomes originais, até 5 linhas", async () => {
+  const t = await tab("esperados_layout_alt.csv");
+  const a = sampleForAi(t, 0, 50);
+  assert.equal(a.linhas.length, 5);
+  const txt = JSON.stringify(a.linhas);
+  assert.ok(!/[0-8]/.test(txt), txt);
+  assert.ok(!txt.includes("Padaria"));
+  assert.equal(a.linhas[0][2], "9999.99");
+  assert.deepEqual(a.cabecalho, ["Nosso Número", "Cliente", "Vlr Pago", "Dt Venc", "Obs"]);
+  const doc = sampleForAi({ linhas: [["123.456.789-09", "x".repeat(100)]], numeros: [1] }, 0);
+  assert.equal(doc.cabecalho[0], "999.999.999-99");
+  assert.equal(doc.cabecalho[1].length, 60);
+});
+
+test("Layout: conversão igual à do CSV padrão; linha inválida e referência longa dão erro com a linha", async () => {
+  const t = await tab("esperados_layout_alt.csv");
+  assert.equal(t.separador, ",");
+  assert.ok(!isLegacyCsv("esperados", demo("esperados_layout_alt.csv").toString()));
+  assert.ok(isLegacyCsv("esperados", demo("titulos_esperados.csv").toString()));
+  assert.deepEqual(convertWithLayout(t, layoutAlt), parseExpectedCsv(demo("titulos_esperados.csv").toString()));
+
+  const r = await tab("esperados_ruim.csv");
+  const lr: Layout = { tipo: "esperados", colunas: { referencia: "Codigo", valor: "Quantia", data: "Quando" }, formatoData: "dd/mm/aaaa", formatoValor: "br", linhaCabecalho: 0 };
+  assert.throws(
+    () => convertWithLayout(r, lr),
+    (e: Error) => e instanceof BankFileError && /Linha 3: valor abc ilegível/.test(e.message) && /Linha 4: .*positivo.*data 31\/02\/2026 inválida/.test(e.message),
+  );
+  const p = previewRows(r, lr, 10);
+  assert.deepEqual(p.map((x) => [x.linha, !!x.erro]), [[2, false], [3, true], [4, true]]);
+
+  const longa = { linhas: [["ref", "valor"], ["X".repeat(61), "10,00"]], numeros: [1, 2] };
+  assert.throws(() => convertWithLayout(longa, { ...lr, colunas: { referencia: "ref", valor: "valor" } }), /Linha 2: referência com mais de 60/);
+});
+
+test("Planilha .xlsx: primeira aba, título acima do cabeçalho, data serial, número e débito ignorado", async () => {
+  const t = await tab("extrato_planilha.xlsx");
+  assert.equal(t.formato, "XLSX");
+  assert.equal(findHeaderLine(t.linhas), 2);
+  assert.deepEqual(t.linhas[3], ["2026-10-05", "Crédito boleto", "10000101", "1250"]);
+  const g = guessLayout("extrato", headerOf(t.linhas, 2), t, 2);
+  assert.equal(g.confianca, "alta", g.motivos.join("; "));
+  assert.deepEqual(g.layout, layoutExtrato.colunas);
+  const e = convertWithLayout(t, layoutExtrato);
+  assert.equal(e.length, 5);
+  assert.deepEqual(e[0], { reference: "10000101", payer: "Crédito boleto", amount: 1250, paidAt: new Date("2026-10-05T00:00:00Z") });
+  assert.ok(previewRows(t, layoutExtrato).some((l) => l.ignorada === "débito"));
+  // Só a 1ª aba
+  const duas = await readXlsx(buildXlsx([{ name: "A", rows: [["a", "b"]] }, { name: "B", rows: [["c", "d"]] }]));
+  assert.deepEqual(duas.linhas, [["a", "b"]]);
+  // Células: ruído de ponto flutuante, mais de 2 casas, booleano, data
+  assert.deepEqual([cellText(0.1 + 0.2), cellText(1.234), cellText(true), cellText(new Date(Date.UTC(2026, 0, 2, 15))), cellText(null)], ["0.3", "1.234", "", "2026-01-02", ""]);
+  const f = await readXlsx(buildXlsx([{ name: "A", rows: [["a", "b"], [{ formula: "1+1" }, 2]] }]));
+  assert.deepEqual(f.linhas[1], ["", "2"]);
+});
+
+test("Planilha .xlsx: ZIP que não é planilha, zip-bomb, .xls, senha e tetos são recusados", async () => {
+  await assert.rejects(readXlsx(buildZip([{ name: "a.txt", data: "oi" }])), BankFileError);
+  await assert.rejects(readTable("a.zip", buildXlsx([{ name: "A", rows: [["a"]] }])), /compactado/);
+  await assert.rejects(readTable("a.xls", Buffer.from("x")), /\.xlsx/);
+  await assert.rejects(readTable("a.xlsm", Buffer.from("x")), /\.xlsx/);
+  await assert.rejects(readXlsx(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0])), /senha/);
+  await assert.rejects(readXlsx(buildZip([{ name: "x.xml", data: "a", declaredSize: PLANILHA_LIMITES.descompactadoBytes + 1 }])), /50 MB/);
+  await assert.rejects(readXlsx(buildZip([{ name: "xl/vbaProject.bin", data: "a" }])), /macros/);
+  await assert.rejects(readTable("a.csv", Buffer.from(Array.from({ length: PLANILHA_LIMITES.linhas + 20 }, (_, i) => `${i};1`).join("\n"))), /20000 linhas/);
+  await assert.rejects(readTable("a.csv", Buffer.from(Array.from({ length: 51 }, (_, i) => `c${i}`).join(";"))), /50 colunas/);
+});
+
+test("IA: tarefa de mapeamento barata, com override próprio", () => {
+  assert.deepEqual(TASKS.mapeamento, { model: "claude-haiku-5-5", effort: "low", max_tokens: 800, timeoutMs: 10_000 });
+  assert.equal(modelFor("mapeamento", { AI_MODEL_MAPEAMENTO: "claude-sonnet-5-5" }), "claude-sonnet-5-5");
+  assert.equal(modelFor("mapeamento", { AI_MODEL_MAPEAMENTO: "gpt" }), "claude-haiku-5-5");
+  assert.ok(reserveCost("mapeamento", 3000, {}) < reserveCost("cobranca", 3000, {}));
+  assert.ok(isLayoutShape({ colunas: { referencia: "a" }, formatoData: "x", formatoValor: "br" }));
+  assert.ok(!isLayoutShape({ colunas: [], formatoData: "x", formatoValor: "br" }));
+  assert.ok(!isLayoutShape({ colunas: { a: 1 }, formatoData: "x", formatoValor: "br" }));
+});
+
+test("Mapeamento: IA válida, inválida (rejeitada, fica a heurística) e desligada", async () => {
+  const t = await tab("esperados_ruim.csv");
+  let prompt = "";
+  const fake = (data: unknown): AiCall =>
+    (async (_s: string, p: string, _f: unknown, o: { validate?: (x: unknown) => boolean }) => {
+      prompt = p;
+      return o.validate && !o.validate(data) ? { ok: false, reason: "forma", detail: "x" } : { ok: true, data, usageId: "u1" };
+    }) as AiCall;
+  const boa = await sugerirLayout("esperados", t, 0, { call: fake({ colunas: { referencia: "Codigo", valor: "Quantia", data: "Quando", pagador: "" }, formatoData: "dd/mm/aaaa", formatoValor: "br" }) });
+  assert.equal(boa.status, "usada");
+  assert.equal(boa.origem, "ia");
+  assert.deepEqual(boa.layout?.colunas, { referencia: "Codigo", valor: "Quantia", data: "Quando" });
+  assert.ok(!prompt.includes("A2") && !prompt.includes("100,00"), "amostra mascarada");
+  const ruim = await sugerirLayout("esperados", t, 0, { call: fake({ colunas: { referencia: "Codigo", valor: "Inventada" }, formatoData: "dd/mm/aaaa", formatoValor: "br" }) });
+  assert.equal(ruim.status, "rejeitada");
+  assert.equal(ruim.usageId, "u1");
+  assert.equal(ruim.origem, "heuristica");
+  assert.equal(ruim.layout, undefined);
+  const off = await sugerirLayout("esperados", t, 0);
+  assert.equal(off.status, "desligada");
+  assert.equal(off.origem, "heuristica");
+  // Heurística com certeza não chama a IA
+  let chamou = false;
+  const alt = await sugerirLayout("esperados", await tab("esperados_layout_alt.csv"), 0, {
+    call: (async () => {
+      chamou = true;
+      return { ok: false, reason: "http", detail: "" };
+    }) as AiCall,
+  });
+  assert.ok(!chamou);
+  assert.ok(alt.layout);
+});
+
+test("API: planilha com layout salvo concilia; sem layout dá 422 com o campo", async () => {
+  const body = {
+    nome: "Planilhas",
+    arquivoEsperados: { nome: "esperados_layout_alt.csv", base64: demo("esperados_layout_alt.csv").toString("base64") },
+    arquivoBanco: { nome: "extrato_planilha.xlsx", base64: demo("extrato_planilha.xlsx").toString("base64") },
+  };
+  const tables = await readApiTables(body);
+  const te = tables.get("arquivoEsperados");
+  const tb = tables.get("arquivoBanco");
+  assert.ok(te && "linhas" in te && tb && "linhas" in tb);
+  const layouts = new Map<string, Layout>([
+    [layoutSignature("esperados", headerOf(te.linhas, 0)), layoutAlt],
+    [layoutSignature("extrato", headerOf(tb.linhas, 2)), layoutExtrato],
+  ]);
+  const v = validateReconciliationBody(body, DEFAULT_CNAB400, { tables, layouts });
+  assert.ok(v.ok, JSON.stringify(!v.ok && v.errors));
+  assert.equal(v.value.expected.length, 12);
+  assert.equal(v.value.entries.length, 5);
+  assert.equal(v.value.bankFormat, "XLSX");
+  assert.equal(v.value.expectedFileName, "esperados_layout_alt.csv");
+
+  const sem = validateReconciliationBody(body, DEFAULT_CNAB400, { tables, layouts: new Map() });
+  assert.ok(!sem.ok);
+  assert.equal(sem.status, 422);
+  assert.deepEqual(sem.errors.map((e) => e.campo).sort(), ["arquivoBanco", "arquivoEsperados"]);
+  assert.match(sem.errors[0].mensagem, /Layout não cadastrado; envie uma vez pela tela\./);
+
+  // OFX em arquivoBanco segue o leitor de sempre; esperados e arquivoEsperados juntos é erro
+  const ofx = { ...body, arquivoBanco: { nome: "extrato.ofx", base64: demo("extrato.ofx").toString("base64") } };
+  const vo = validateReconciliationBody(ofx, DEFAULT_CNAB400, { tables: await readApiTables(ofx), layouts });
+  assert.ok(vo.ok && vo.value.bankFormat === "OFX");
+  const dup = validateReconciliationBody({ ...body, esperados: [] }, DEFAULT_CNAB400, { tables, layouts });
+  assert.ok(!dup.ok && dup.status === undefined && dup.errors.some((e) => e.campo === "esperados"));
+  const big = validateReconciliationBody(
+    { ...body, arquivoEsperados: { nome: "a.csv", base64: Buffer.alloc(API_LIMITS.arquivoBytes + 1, 0x41).toString("base64") } },
+    DEFAULT_CNAB400,
+    { tables, layouts },
+  );
+  assert.ok(!big.ok && big.errors.some((e) => e.campo === "arquivoEsperados.base64"));
+});

@@ -47,7 +47,7 @@ function SectionHead({ n, title, children }: { n: string; title: string; childre
 
 const P = (n: number) => +(n * 100).toFixed(2);
 
-const TASK_LABEL: Record<AiTask, string> = { cobranca: "Cobrança", pld: "PLD", credito: "Crédito", legado: "Legado", resumo: "Resumo do painel" };
+const TASK_LABEL: Record<AiTask, string> = { cobranca: "Cobrança", pld: "PLD", credito: "Crédito", legado: "Legado", resumo: "Resumo do painel", mapeamento: "Mapeamento de planilha" };
 const usd = (n: number) => `US$ ${n.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`;
 
 // Consumo de IA da instituição desde um instante (custo inclui reservas em andamento)

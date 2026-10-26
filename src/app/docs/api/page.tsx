@@ -78,6 +78,7 @@ const ERRORS: [string, string, string][] = [
   ["409", "request_in_progress", "Outra requisição com a mesma Idempotency-Key está em processamento"],
   ["413", "payload_too_large", `Corpo acima de ${CORPO_MAX}`],
   ["422", "idempotency_key_reused", "Idempotency-Key já usada com outro corpo"],
+  ["422", "layout_not_found", "Planilha (arquivoEsperados/arquivoBanco) sem layout salvo; envie uma vez pela tela"],
   ["429", "rate_limited", "Mais de 60 requisições por minuto na chave (veja Retry-After)"],
   ["500", "internal_error", "Erro interno; pode repetir com a mesma Idempotency-Key"],
 ];
@@ -141,6 +142,7 @@ export default function ApiDocs() {
 
         <Sec id="criar" title="POST /api/v1/conciliacoes">
           <p>Campos: <C>nome</C>; <C>esperados</C> (até 20.000: referencia, pagador opcional, valor em reais, vencimento AAAA-MM-DD); <C>banco</C> com <em>exatamente um</em> entre <C>lancamentos</C> (referencia opcional, valor, data) e <C>arquivo</C> (nome e conteudoBase64, até {ARQUIVO_MAX} antes da codificação); <C>opcoes</C> opcional (toleranciaCentavos 0 a 100, valorEData, toleranciaDias 0 a 10). O layout CNAB 400 é o configurado pela instituição.</p>
+          <p>Planilhas: no lugar de <C>esperados</C> envie <C>arquivoEsperados</C>, e no lugar de <C>banco</C> envie <C>arquivoBanco</C>, cada um como <C>{`{ "nome", "base64" }`}</C> (CSV em qualquer separador ou .xlsx, até {ARQUIVO_MAX} antes da codificação). A API usa o layout de colunas que a instituição confirmou na tela para aquele cabeçalho; se ainda não existe, responde 422 <C>layout_not_found</C> com o campo em <C>details</C>. A API nunca chama a IA. Em <C>arquivoBanco</C>, OFX e CNAB seguem os leitores de sempre; débitos do extrato são ignorados.</p>
           <Code>{POST_BODY}</Code>
           <Code>{CURL_POST}</Code>
           <Code>{CURL_FILE}</Code>

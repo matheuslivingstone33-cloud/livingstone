@@ -2,10 +2,10 @@ import Link from "next/link";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { brl, dt } from "@/lib/format";
-import { createReconciliation } from "../../actions-conciliacao";
+import { confirmLayoutAndReconcile, deleteLayout, previewReconciliation } from "../../actions-conciliacao";
+import { NovaConciliacao } from "@/components/NovaConciliacao";
 import { PageTitle, EmptyHelp, CardHeader } from "@/components/ui";
 import { SubmitButton } from "@/components/SubmitButton";
-import { FileSizeGuard } from "@/components/FileSizeGuard";
 import { AjudaAba } from "@/components/AjudaAba";
 import { AJUDA } from "@/lib/ajuda";
 
@@ -14,58 +14,17 @@ export const maxDuration = 60;
 
 export default async function ConciliacaoPage() {
   const s = await requireSession();
-  const list = await db.reconciliation.findMany({ where: { orgId: s.orgId }, orderBy: { createdAt: "desc" } });
+  const [list, layouts] = await Promise.all([
+    db.reconciliation.findMany({ where: { orgId: s.orgId }, orderBy: { createdAt: "desc" } }),
+    db.reconLayout.findMany({ where: { orgId: s.orgId }, orderBy: { updatedAt: "desc" }, take: 50 }),
+  ]);
   const canEdit = s.role !== "AUDITOR";
 
   return (
     <>
-      <PageTitle eyebrow="Conciliação" title="Conciliação bancária" subtitle="Cruze o arquivo do banco (CNAB 400 ou 240, OFX ou CSV) com os títulos esperados" />
+      <PageTitle eyebrow="Conciliação" title="Conciliação bancária" subtitle="Cruze o arquivo do banco (CNAB 400 ou 240, OFX, CSV ou planilha) com os títulos esperados" />
       <AjudaAba aba="conciliacao" />
-      {canEdit && (
-        <form action={createReconciliation} className="card mb-8 grid gap-4 md:grid-cols-3">
-          <div className="md:col-span-3">
-            <CardHeader title="Nova conciliação">Arquivo do banco × títulos esperados</CardHeader>
-          </div>
-          <div>
-            <label className="label" htmlFor="name">Nome</label>
-            <input className="input" id="name" name="name" placeholder="Ex.: Retorno Sicoob 14/10" />
-          </div>
-          <div>
-            <label className="label" htmlFor="bankFile">Arquivo do banco (retorno/extrato)</label>
-            <input className="input" id="bankFile" name="bankFile" type="file" accept=".ret,.txt,.ofx,.csv,.rem" required />
-          </div>
-          <div>
-            <label className="label" htmlFor="expectedFile">Títulos esperados (CSV)</label>
-            <input className="input" id="expectedFile" name="expectedFile" type="file" accept=".csv,.txt" required />
-            <p className="hint mt-1">Até 4 MB por envio.</p>
-            <FileSizeGuard inputIds={["bankFile","expectedFile"]} />
-          </div>
-          <details className="disclosure rounded-xl border border-line bg-paper/50 px-4 py-3 md:col-span-3">
-            <summary>Regras avançadas</summary>
-            <div className="mt-4 grid gap-4 md:grid-cols-3">
-              <div>
-                <label className="label" htmlFor="toleranciaCentavos">Tolerância de valor (centavos)</label>
-                <input className="input" id="toleranciaCentavos" name="toleranciaCentavos" type="number" min={0} max={100} defaultValue={0} />
-                <p className="hint">Diferenças até esse valor contam como conciliadas, com observação.</p>
-              </div>
-              <div>
-                <label className="flex min-h-10 items-center gap-2.5 text-sm font-medium text-ink-700" htmlFor="casarPorValorData">
-                  <input id="casarPorValorData" name="casarPorValorData" type="checkbox" className="size-4 accent-brand-600" />
-                  Casar por valor e data quando faltar a referência
-                </label>
-                <p className="hint">Só casa quando há um único crédito possível; se houver empate, fica para conciliação manual.</p>
-              </div>
-              <div>
-                <label className="label" htmlFor="toleranciaDias">Tolerância de data (dias)</label>
-                <input className="input" id="toleranciaDias" name="toleranciaDias" type="number" min={0} max={10} defaultValue={3} />
-              </div>
-            </div>
-          </details>
-          <div className="flex flex-wrap items-center justify-end gap-3 border-t border-line pt-4 md:col-span-3">
-            <SubmitButton pending="Conciliando...">Conciliar</SubmitButton>
-          </div>
-        </form>
-      )}
+      {canEdit && <NovaConciliacao preview={previewReconciliation} confirm={confirmLayoutAndReconcile} />}
 
       <section className="card p-0 md:p-0">
         <div className="px-5 pt-5 md:px-6">
@@ -99,6 +58,43 @@ export default async function ConciliacaoPage() {
         )}
         </div>
       </section>
+
+      {layouts.length > 0 && (
+        <section className="card mt-8 p-0 md:p-0">
+          <div className="px-5 pt-5 md:px-6">
+            <CardHeader title="Formatos de planilha salvos">{`${layouts.length} formato(s)`}</CardHeader>
+            <p className="hint">Arquivos com estas colunas são conciliados direto. Exclua um formato para confirmar as colunas de novo no próximo envio.</p>
+          </div>
+          <div className="overflow-x-auto px-2 pb-3 md:px-3">
+            <table className="table">
+              <thead>
+                <tr><th>Arquivo</th><th>Colunas usadas</th><th>Salvo por</th><th>Atualizado</th>{canEdit && <th><span className="sr-only">Ações</span></th>}</tr>
+              </thead>
+              <tbody>
+                {layouts.map((l) => {
+                  const col = (l.layout ?? {}) as { colunas?: Record<string, string> };
+                  return (
+                    <tr key={l.id}>
+                      <td>{l.tipo === "extrato" ? "Arquivo do banco" : "Títulos esperados"}</td>
+                      <td className="text-ink-600">{Object.entries(col.colunas ?? {}).map(([k, v]) => `${k}: ${v}`).join(" · ")}</td>
+                      <td className="text-ink-500">{l.criadoPor ?? "-"}</td>
+                      <td className="whitespace-nowrap text-ink-500">{dt(l.updatedAt)}</td>
+                      {canEdit && (
+                        <td>
+                          <form action={deleteLayout}>
+                            <input type="hidden" name="id" value={l.id} />
+                            <SubmitButton variant="link" pending="Excluindo...">Excluir</SubmitButton>
+                          </form>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
     </>
   );
 }

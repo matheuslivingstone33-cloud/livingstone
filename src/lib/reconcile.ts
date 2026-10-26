@@ -46,7 +46,10 @@ export function parseMoney(raw: string, mode: "br" | "ofx" = "br"): number | nul
   return null;
 }
 
-const validMoney = (n: number | null): n is number => n !== null && Number.isFinite(n) && n > 0 && n < 1e12;
+/** Tamanho máximo de uma referência (acima disso é erro; truncar poderia casar títulos diferentes). */
+export const REF_MAX = 60;
+
+export const validMoney = (n: number | null): n is number => n !== null && Number.isFinite(n) && n > 0 && n < 1e12;
 
 /** undefined = campo vazio; null = preenchido mas inválido. Aceita dd/mm/aaaa, aaaa-mm-dd[hora] e aaaammdd[hora]. */
 export function parseDate(raw: string): Date | undefined | null {
@@ -83,7 +86,7 @@ const pick = (o: Record<string, string>, ...names: string[]) => {
   return "";
 };
 
-function fileErrors(label: string, errors: string[]) {
+export function fileErrors(label: string, errors: string[]) {
   if (errors.length)
     throw new BankFileError(`Arquivo ${label}: ${errors.length} linha(s) inválida(s). ${errors.slice(0, 5).join("; ")}${errors.length > 5 ? "…" : ""}`);
 }

@@ -13,6 +13,7 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "demo:files": "node scripts/gerar-demo.mjs",
+    "demo:planilhas": "node scripts/gerar-demo-planilhas.mjs",
     "setup": "prisma migrate dev --name init && npm run db:seed && npm run demo:files",
     "db:demo": "tsx prisma/seed-demo.ts",
     "video:studio": "remotion studio video/index.ts",
@@ -30,6 +31,7 @@
     "qrcode": "^1.5.4",
     "react": "19.1.0",
     "react-dom": "19.1.0",
+    "read-excel-file": "9.3.12",
     "unpdf": "^1.9.0"
   },
   "devDependencies": {

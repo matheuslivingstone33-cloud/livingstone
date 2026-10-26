@@ -163,3 +163,16 @@ export function isLegacyShape(x: unknown): x is { summary: string; modernCode: s
     o.rules.every((r) => !!r && typeof r === "object" && typeof (r as Record<string, unknown>).onde === "string" && typeof (r as Record<string, unknown>).regra === "string")
   );
 }
+
+/** Forma da sugestão de colunas da IA (o conteúdo é conferido depois por validateLayout contra o cabeçalho). */
+export function isLayoutShape(x: unknown): x is { colunas: Record<string, string>; formatoData: string; formatoValor: string } {
+  if (!x || typeof x !== "object" || Array.isArray(x)) return false;
+  const o = x as Record<string, unknown>;
+  const c = o.colunas;
+  return (
+    !!c && typeof c === "object" && !Array.isArray(c) &&
+    Object.keys(c).length <= 6 &&
+    Object.values(c as Record<string, unknown>).every((v) => typeof v === "string" && v.length <= 100) &&
+    typeof o.formatoData === "string" && typeof o.formatoValor === "string"
+  );
+}

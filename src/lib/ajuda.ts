@@ -37,10 +37,11 @@ export const AJUDA: Record<Aba, Ajuda> = {
   conciliacao: {
     titulo: "Conciliação bancária",
     frases: [
-      "Compara o arquivo que o banco devolve (CNAB 400 ou 240, OFX ou CSV) com a lista de títulos que você esperava receber.",
+      "Compara o arquivo que o banco devolve (CNAB 400 ou 240, OFX, CSV ou planilha .xlsx) com a lista de títulos que você esperava receber.",
+      "Aceita planilha em qualquer formato de colunas: na primeira vez você confirma o que é cada coluna; depois, arquivos iguais são conciliados direto.",
       "Aponta o que foi pago, o que veio com valor diferente e o que não entrou, para você resolver só as exceções.",
     ],
-    passos: ["Envie o arquivo do banco.", "Envie a lista de títulos esperados (CSV).", "Clique em Conciliar e resolva as divergências no detalhe."],
+    passos: ["Envie o arquivo do banco.", "Envie a lista de títulos esperados (CSV ou planilha).", "Clique em Conciliar, confirme as colunas se for pedido e resolva as divergências no detalhe."],
     exemplos: [CNAB, TITULOS, OFX],
     vazio: { texto: "Nenhuma conciliação ainda. Envie o retorno do banco e a lista de títulos esperados para começar.", exemplo: CNAB },
   },

@@ -1,5 +1,6 @@
 import { withApiKey, errBody } from "@/lib/api-http";
-import { validateReconciliationBody } from "@/lib/api-payload";
+import { SEM_LAYOUT, readApiTables, validateReconciliationBody } from "@/lib/api-payload";
+import { carregarLayouts } from "@/lib/servicos/layouts";
 import { auditRaw } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
@@ -13,7 +14,10 @@ export const maxDuration = 60;
 export function POST(req: Request) {
   return withApiKey(req, "conciliacao:write", async ({ key, orgId, body, ip }) => {
     const cfg = await getSettings(orgId);
-    const v = validateReconciliationBody(body, cfg.cnab400);
+    // Planilhas (arquivoEsperados/arquivoBanco) só com layout salvo pela tela; a API nunca chama a IA
+    const [tables, layouts] = await Promise.all([readApiTables(body), carregarLayouts(orgId)]);
+    const v = validateReconciliationBody(body, cfg.cnab400, { tables, layouts });
+    if (!v.ok && v.status === 422) return { status: 422, json: errBody("layout_not_found", SEM_LAYOUT, v.errors) };
     if (!v.ok) return { status: 400, json: errBody("validation_error", "Corpo inválido.", v.errors) };
     const { rec, itemCount } = await persistReconciliation(orgId, v.value);
     await auditRaw(orgId, null, "api.conciliacao.criar", `chave ${key.prefix}: ${rec.name} (${rec.bankFormat}, ${itemCount} itens, regras ${JSON.stringify(v.value.options)})`, ip);
