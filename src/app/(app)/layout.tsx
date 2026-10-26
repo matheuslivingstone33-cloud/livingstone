@@ -90,7 +90,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           {children}
         </main>
       </div>
-      <Assistente podeConfirmar={s.role === "ADMIN" || s.role === "ANALISTA"} comIa={!demo} />
+      <Assistente podeConfirmar={s.role === "ADMIN" || s.role === "ANALISTA"} comIa={!demo} nome={s.name} perfil={roleLabel[s.role] ?? s.role} instituicao={org?.name ?? ""} />
     </div>
   );
 }

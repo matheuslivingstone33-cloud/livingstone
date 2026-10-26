@@ -350,3 +350,14 @@ body {
     break-inside: avoid;
   }
 }
+
+/* Assistente: comprovante com borda inferior picotada e linha tracejada entre corpo e dados */
+.comprovante {
+  border-radius: 0.75rem 0.75rem 0 0;
+  -webkit-mask: radial-gradient(circle 5px at 7px 100%, #0000 97%, #000) 0 0 / 14px 100% repeat-x;
+  mask: radial-gradient(circle 5px at 7px 100%, #0000 97%, #000) 0 0 / 14px 100% repeat-x;
+}
+.comprovante-picote {
+  margin: 0 1rem;
+  border-top: 1.5px dashed var(--color-line-strong);
+}

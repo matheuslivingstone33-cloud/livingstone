@@ -2334,3 +2334,33 @@ test("Serviços extraídos: actions finas chamam os serviços e mantêm mensagen
   assert.match(acao, /status: "PENDENTE", expiresAt: \{ gt: now \}/);
   assert.ok(!/audit\([^\n]*pergunta/.test(acao));
 });
+
+// ---------- Assistente: formato de extrato ----------
+import { blocosDoTexto, linhaExtrato, protocoloDe } from "../src/lib/assistente-formato";
+
+test("assistente-formato: linhas Rótulo: valor viram extrato", () => {
+  assert.deepEqual(linhaExtrato("Dívida em aberto: R$ 1.234,56"), { rotulo: "Dívida em aberto", valor: "R$ 1.234,56" });
+  assert.deepEqual(linhaExtrato("- Casos de PLD: 12"), { rotulo: "Casos de PLD", valor: "12" });
+  assert.deepEqual(linhaExtrato("Gasto de IA: US$0,42"), { rotulo: "Gasto de IA", valor: "US$ 0,42" });
+  assert.equal(linhaExtrato("Veja em: Cobrança"), null);
+  assert.equal(linhaExtrato("Horário: 10:30"), null);
+  assert.equal(linhaExtrato("https://x.com: 12"), null);
+  assert.equal(linhaExtrato("Você tem 3 casos: confira 2 hoje"), null);
+  // Sem interpretar marcação: o rótulo volta como texto literal
+  assert.deepEqual(linhaExtrato("<b>x</b>: 1"), { rotulo: "<b>x</b>", valor: "1" });
+});
+
+test("assistente-formato: agrupa blocos e mantém texto puro", () => {
+  const b = blocosDoTexto("Números de hoje.\nPLD em análise: 4\nDívida em aberto: R$ 10.000,00\nAbra o Painel.\n<script>x</script>");
+  assert.equal(b.length, 3);
+  assert.deepEqual(b[0], { tipo: "texto", texto: "Números de hoje." });
+  assert.equal(b[1].tipo === "extrato" && b[1].linhas.length, 2);
+  assert.deepEqual(b[2], { tipo: "texto", texto: "Abra o Painel.\n<script>x</script>" });
+  assert.deepEqual(blocosDoTexto(""), []);
+});
+
+test("assistente-formato: protocolo do plano", () => {
+  assert.equal(protocoloDe("clx1abcd2efgh3ijk"), "LIV-EFGH-3IJK");
+  assert.equal(protocoloDe("cm9zq8w7e6r5t4y3"), "LIV-E6R5-T4Y3");
+  assert.match(protocoloDe("ab"), /^LIV-[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+});

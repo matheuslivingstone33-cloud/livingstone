@@ -2,12 +2,21 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { confirmarPlano, enviarMensagem, type PlanoTela } from "@/app/actions-assistente";
+import { blocosDoTexto, protocoloDe } from "@/lib/assistente-formato";
+import { fmtDataHora } from "@/lib/tz";
 import { Icon } from "./Icon";
 
-type Msg = { role: "user" | "assistant"; texto: string; plano?: PlanoTela & { estado: "pendente" | "feito" | "cancelado" }; erro?: boolean };
+type Comprovante = { protocolo: string; quando: string; por: string };
+type Msg = { role: "user" | "assistant"; texto: string; plano?: PlanoTela & { estado: "pendente" | "feito" | "cancelado"; comprovante?: Comprovante }; erro?: boolean };
 
 const CHAVE = "finops:assistente";
-const SUGESTOES = ["O que tenho para resolver hoje?", "Quais casos de PLD vencem esta semana?", "Como faço uma conciliação?", "Quanto já gastamos de IA hoje?"];
+// Atalhos: cada um vira uma pergunta que as ferramentas de consulta respondem (painel, conciliação, PLD).
+const ATALHOS = [
+  { rotulo: "Resumo do dia", icone: "painel", pergunta: "Quais são os números do painel hoje?" },
+  { rotulo: "Cobrar", icone: "cobranca", pergunta: "Quanto há de dívida em aberto e quais acordos estão vencendo?" },
+  { rotulo: "Conciliar", icone: "conciliacao", pergunta: "Qual o resultado da última conciliação e quais pendências ficaram?" },
+  { rotulo: "PLD", icone: "pld", pergunta: "Quais casos de PLD vencem nos próximos 7 dias?" },
+] as const;
 
 function ler(): Msg[] {
   try {
@@ -19,8 +28,21 @@ function ler(): Msg[] {
 }
 
 /** Assistente da plataforma: aba lateral recolhível (tela cheia no celular). Histórico só nesta aba do navegador. */
-export function Assistente({ podeConfirmar, comIa }: { podeConfirmar: boolean; comIa: boolean }) {
+export function Assistente({
+  podeConfirmar,
+  comIa,
+  nome,
+  perfil,
+  instituicao,
+}: {
+  podeConfirmar: boolean;
+  comIa: boolean;
+  nome: string;
+  perfil: string;
+  instituicao: string;
+}) {
   const [aberto, setAberto] = useState(false);
+  const [atalhos, setAtalhos] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [texto, setTexto] = useState("");
   const [pensando, setPensando] = useState(false);
@@ -73,6 +95,7 @@ export function Assistente({ podeConfirmar, comIa }: { podeConfirmar: boolean; c
   async function enviar(pergunta: string) {
     const q = pergunta.trim();
     if (!q || pensando) return;
+    setAtalhos(false);
     const historico = msgs.filter((m) => !m.erro).map((m) => ({ role: m.role, texto: m.texto }));
     setMsgs((m) => [...m, { role: "user", texto: q }]);
     setTexto("");
@@ -99,6 +122,10 @@ export function Assistente({ podeConfirmar, comIa }: { podeConfirmar: boolean; c
     try {
       const r = await confirmarPlano(id);
       marcar(id, "feito");
+      if (r.ok) {
+        const c: Comprovante = { protocolo: protocoloDe(id), quando: fmtDataHora(r.executadoEm ?? new Date()), por: `${nome} · ${perfil}` };
+        setMsgs((m) => m.map((x) => (x.plano?.id === id ? { ...x, plano: { ...x.plano, comprovante: c } } : x)));
+      }
       setMsgs((m) => [...m, r.ok ? { role: "assistant", texto: r.texto } : { role: "assistant", texto: r.erro, erro: true }]);
     } catch {
       setMsgs((m) => [...m, { role: "assistant", texto: "Não consegui confirmar agora. Tente de novo.", erro: true }]);
@@ -145,6 +172,15 @@ export function Assistente({ podeConfirmar, comIa }: { podeConfirmar: boolean; c
                   Assistente Livingstone
                 </h2>
                 <p className="mt-0.5 text-xs leading-snug text-white/75">Explica, consulta e prepara ações — você confirma</p>
+                <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] leading-snug text-white/80">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-brand-400/15 px-2 py-0.5 font-medium text-brand-100 ring-1 ring-brand-400/30">
+                    <Icon name="lock" size={11} />
+                    Ambiente seguro
+                  </span>
+                  {instituicao && <span className="max-w-[12rem] truncate">{instituicao}</span>}
+                  {instituicao && <span aria-hidden className="text-white/40">·</span>}
+                  <span>{perfil}</span>
+                </p>
                 {!comIa && <p className="mt-1.5 text-[11px] leading-snug text-gold-300">IA não configurada: respondo com o guia da plataforma.</p>}
               </div>
             </div>
@@ -170,20 +206,8 @@ export function Assistente({ podeConfirmar, comIa }: { podeConfirmar: boolean; c
                   <p className="mt-1.5 leading-relaxed text-ink-600">Pergunte como usar um módulo ou peça um número do dia. Ações só acontecem depois que você confirmar.</p>
                 </div>
                 <div>
-                  <p className="eyebrow">Sugestões</p>
-                  <ul className="mt-2 flex flex-wrap gap-2">
-                    {SUGESTOES.map((s) => (
-                      <li key={s}>
-                        <button
-                          type="button"
-                          onClick={() => enviar(s)}
-                          className="rounded-full border border-line-strong bg-white px-3.5 py-1.5 text-left text-[13px] text-ink-700 transition-colors hover:border-brand-600/50 hover:bg-brand-50 hover:text-ink-900"
-                        >
-                          {s}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+                  <p className="eyebrow">Atalhos</p>
+                  <Atalhos onEscolher={enviar} desabilitado={pensando} />
                 </div>
               </div>
             )}
@@ -199,13 +223,14 @@ export function Assistente({ podeConfirmar, comIa }: { podeConfirmar: boolean; c
                   </span>
                   <div className="min-w-0 max-w-[88%] flex-1">
                     <div
-                      className={`whitespace-pre-line rounded-2xl rounded-tl-md px-3.5 py-2.5 leading-relaxed ${
+                      className={`rounded-2xl rounded-tl-md px-3.5 py-2.5 leading-relaxed tabular-nums ${
                         m.erro ? "bg-red-50 text-red-800 ring-1 ring-red-200" : "bg-white text-ink-800 shadow-[0_1px_2px_rgba(10,31,44,0.06)] ring-1 ring-line"
                       }`}
                     >
-                      {m.texto}
+                      {m.erro ? <p className="whitespace-pre-line">{m.texto}</p> : <TextoAssistente texto={m.texto} />}
                     </div>
-                    {m.plano && (
+                    {m.plano?.comprovante && <ComprovanteCartao titulo={m.plano.titulo} descricao={m.plano.descricao} c={m.plano.comprovante} />}
+                    {m.plano && !m.plano.comprovante && (
                       <div className={`mt-2 overflow-hidden rounded-xl bg-white ring-1 ${m.plano.estado === "pendente" ? "shadow-[0_4px_14px_-6px_rgba(10,31,44,0.18)] ring-gold-400/70" : "ring-line"}`}>
                         <div className={`flex items-center gap-2 border-b px-3.5 py-2 ${m.plano.estado === "pendente" ? "border-gold-100 bg-gold-50" : "border-line bg-paper"}`}>
                           <Icon name="check" size={14} className={m.plano.estado === "pendente" ? "text-gold-700" : "text-ink-500"} />
@@ -273,6 +298,27 @@ export function Assistente({ podeConfirmar, comIa }: { podeConfirmar: boolean; c
           </div>
 
           <div className="border-t border-line bg-white px-4 py-3">
+            {msgs.length > 0 && (
+              <div className="mb-2">
+                <button
+                  type="button"
+                  onClick={() => setAtalhos((v) => !v)}
+                  aria-expanded={atalhos}
+                  aria-controls="assistente-atalhos"
+                  className="inline-flex items-center gap-1.5 rounded-lg px-1.5 py-1 text-xs font-medium text-ink-600 transition-colors hover:bg-paper hover:text-ink-900"
+                >
+                  <svg aria-hidden width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" className={`transition-transform ${atalhos ? "rotate-180" : ""}`}>
+                    <path d="M6 15l6-6 6 6" />
+                  </svg>
+                  {atalhos ? "Ocultar atalhos" : "Atalhos"}
+                </button>
+                {atalhos && (
+                  <div id="assistente-atalhos">
+                    <Atalhos onEscolher={enviar} desabilitado={pensando} compacto />
+                  </div>
+                )}
+              </div>
+            )}
             <form
               className="flex items-end gap-2 rounded-2xl border border-line-strong bg-white p-1.5 pl-3 transition-colors focus-within:border-brand-600 focus-within:ring-4 focus-within:ring-brand-100"
               onSubmit={(e) => {
@@ -317,6 +363,101 @@ export function Assistente({ podeConfirmar, comIa }: { podeConfirmar: boolean; c
         </div>
       )}
     </>
+  );
+}
+
+/** Grade 2×2 de atalhos, como a área de ações de um app de banco. */
+function Atalhos({ onEscolher, desabilitado, compacto }: { onEscolher: (q: string) => void; desabilitado: boolean; compacto?: boolean }) {
+  return (
+    <ul className={`grid grid-cols-2 gap-2 ${compacto ? "mt-1.5" : "mt-2.5"}`}>
+      {ATALHOS.map((a) => (
+        <li key={a.rotulo}>
+          <button
+            type="button"
+            disabled={desabilitado}
+            onClick={() => onEscolher(a.pergunta)}
+            title={a.pergunta}
+            className={`group flex h-full w-full rounded-xl border border-line bg-white text-left transition-[border-color,box-shadow] hover:border-brand-600/40 hover:shadow-[0_4px_14px_-8px_rgba(10,31,44,0.25)] disabled:cursor-not-allowed disabled:opacity-60 ${
+              compacto ? "items-center gap-2.5 px-2.5 py-2" : "flex-col items-start gap-2.5 p-3.5"
+            }`}
+          >
+            <span aria-hidden className={`grid shrink-0 place-items-center rounded-lg bg-ink-900 text-gold-300 transition-colors group-hover:bg-brand-700 ${compacto ? "size-7" : "size-9"}`}>
+              <Icon name={a.icone} size={compacto ? 14 : 17} />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-[13px] font-semibold leading-tight text-ink-900">{a.rotulo}</span>
+              {!compacto && <span className="mt-1 block text-[11px] leading-snug text-ink-500">{a.pergunta}</span>}
+            </span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Texto do assistente: parágrafos + linhas de extrato (rótulo à esquerda, valor à direita). Só texto, sem HTML. */
+function TextoAssistente({ texto }: { texto: string }) {
+  const blocos = blocosDoTexto(texto);
+  return (
+    <div className="space-y-2">
+      {blocos.map((b, i) =>
+        b.tipo === "texto" ? (
+          <p key={i} className="whitespace-pre-line">
+            {b.texto}
+          </p>
+        ) : (
+          <dl key={i} className="-mx-1 divide-y divide-dashed divide-line rounded-lg bg-paper/70 px-3 py-0.5">
+            {b.linhas.map((l, j) => (
+              <div key={j} className="flex items-baseline justify-between gap-3 py-1.5">
+                <dt className="min-w-0 text-[13px] text-ink-600">{l.rotulo}</dt>
+                <dd className="shrink-0 font-semibold text-ink-900">{l.valor}</dd>
+              </div>
+            ))}
+          </dl>
+        ),
+      )}
+    </div>
+  );
+}
+
+/** Comprovante da ação confirmada, no formato de recibo de transferência. */
+function ComprovanteCartao({ titulo, descricao, c }: { titulo: string; descricao: string; c: Comprovante }) {
+  return (
+    <div className="mt-2 drop-shadow-[0_4px_10px_rgba(10,31,44,0.12)]">
+      <div className="comprovante bg-white tabular-nums" role="group" aria-label="Comprovante da ação">
+        <div className="flex items-center gap-3 px-4 pb-3 pt-4">
+          <span aria-hidden className="grid size-9 shrink-0 place-items-center rounded-full bg-brand-600 text-white">
+            <Icon name="check" size={18} />
+          </span>
+          <div className="min-w-0">
+            <p className="font-display text-[15px] font-semibold leading-tight text-ink-900">Ação realizada</p>
+            <p className="text-xs text-ink-600">{titulo}</p>
+          </div>
+        </div>
+        <p className="px-4 pb-3 text-[13px] leading-relaxed text-ink-700">{descricao}</p>
+        <div aria-hidden className="comprovante-picote" />
+        <dl className="space-y-1.5 px-4 py-3 text-[13px]">
+          <div className="flex justify-between gap-3">
+            <dt className="text-ink-500">Protocolo</dt>
+            <dd className="font-mono font-semibold tracking-wide text-ink-900">{c.protocolo}</dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-ink-500">Data e hora</dt>
+            <dd className="text-right font-medium text-ink-900">
+              {c.quando} <span className="text-ink-500">(Brasília)</span>
+            </dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="shrink-0 text-ink-500">Confirmado por</dt>
+            <dd className="min-w-0 truncate text-right font-medium text-ink-900">{c.por}</dd>
+          </div>
+        </dl>
+        <p className="mx-4 mb-5 flex items-center justify-center gap-1.5 rounded-lg bg-brand-50 px-2 py-1.5 text-xs font-medium text-brand-800">
+          <Icon name="chain" size={12} />
+          Registrado na auditoria
+        </p>
+      </div>
+    </div>
   );
 }
 

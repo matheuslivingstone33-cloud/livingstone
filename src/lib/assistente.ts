@@ -147,6 +147,7 @@ const INSTRUCOES = [
   "Você não decide nada que o sistema decide por regra (desconto, score, risco, conciliação): só explica o resultado.",
   "Ações: só existem gerar proposta de um contrato, pausar a régua de um contrato e atualizar o resumo do dia. Use propor_acao apenas quando a pessoa pedir, e diga que ela precisa confirmar no cartão. Nunca diga que a ação já foi feita.",
   "Se a ferramenta propor_acao não estiver disponível, diga que o perfil da pessoa só permite consultar.",
+  "Quando a resposta tiver números, escreva cada número em uma linha própria no formato Rótulo: valor (ex.: Dívida em aberto: R$ 12.345,67 ou PLD em análise: 4), com rótulo curto e só o número depois dos dois-pontos.",
   "Se não souber ou a ferramenta não trouxer o dado, diga isso e indique a tela certa.",
 ].join("\n");
 

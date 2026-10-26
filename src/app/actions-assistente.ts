@@ -29,7 +29,7 @@ import { atualizarResumoServico } from "@/lib/servicos/resumo";
 import { diaSP, inicioDoDiaSP } from "@/lib/tz";
 
 export type PlanoTela = { id: string; titulo: string; descricao: string };
-export type RespostaAssistente = { ok: true; texto: string; plano?: PlanoTela } | { ok: false; erro: string };
+export type RespostaAssistente = { ok: true; texto: string; plano?: PlanoTela; executadoEm?: string } | { ok: false; erro: string };
 
 const MAX_PERGUNTA = 1000;
 const FALHA: Record<string, string> = {
@@ -152,5 +152,5 @@ export async function confirmarPlano(planId: string): Promise<RespostaAssistente
     revalidatePath("/dashboard");
   }
   await audit(s, "assistente.acao_confirmada", `${plano.acao} ${plano.alvo ?? "-"} via assistente`);
-  return { ok: true, texto };
+  return { ok: true, texto, executadoEm: now.toISOString() };
 }
