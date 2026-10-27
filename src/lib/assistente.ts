@@ -5,9 +5,10 @@ import { ASSISTENTE, estimateCost, modelFor } from "./ai-config";
 import { untrusted } from "./ai-prompt";
 import type { ApiMessage, MessagesResult, MsgBlock, ToolDef } from "./ai";
 import { GUIA_ASSISTENTE } from "./assistente-guia";
+import { entendimentoDe, type Entendimento } from "./pedidos";
 
 export type Papel = "ADMIN" | "ANALISTA" | "AUDITOR";
-export type TipoTool = "consulta" | "acao";
+export type TipoTool = "consulta" | "acao" | "registro";
 export type Acao = "gerar_proposta" | "pausar_regua" | "atualizar_resumo";
 export const ACOES: Acao[] = ["gerar_proposta", "pausar_regua", "atualizar_resumo"];
 export const ROTULO_ACAO: Record<Acao, string> = {
@@ -66,6 +67,20 @@ export const TOOLS: ToolSpec[] = [
       alvo: { tipo: "id", descricao: "Id do contrato (gerar_proposta, pausar_regua)." },
       motivo: { tipo: "enum", valores: ["pausa", "opt_out"], descricao: "Só para pausar_regua: pausa ou opt_out (devedor pediu para não receber)." },
       resumo: { tipo: "texto", obrigatorio: true, min: 1, max: 200, descricao: "Uma frase dizendo o que será feito." },
+    },
+  },
+  {
+    nome: "registrar_entendimento",
+    tipo: "registro",
+    perfis: OPERAM,
+    descricao:
+      "Registra o seu entendimento de uma necessidade nova que a pessoa descreveu, para ela confirmar na tela. Não implementa nada. Sempre envie a versão inteira, reescrita.",
+    campos: {
+      titulo: { tipo: "texto", obrigatorio: true, min: 3, max: 80, descricao: "Título curto da necessidade." },
+      problema: { tipo: "texto", obrigatorio: true, min: 1, max: 600, descricao: "Qual problema a pessoa quer resolver." },
+      diaADia: { tipo: "texto", obrigatorio: true, min: 1, max: 600, descricao: "Como isso seria usado no dia a dia." },
+      jaExiste: { tipo: "texto", obrigatorio: true, min: 1, max: 600, descricao: "O que a plataforma já tem sobre isso, só com base no guia." },
+      novo: { tipo: "texto", obrigatorio: true, min: 1, max: 600, descricao: "O que seria novo." },
     },
   },
 ];
@@ -149,6 +164,12 @@ const INSTRUCOES = [
   "Se a ferramenta propor_acao não estiver disponível, diga que o perfil da pessoa só permite consultar.",
   "Quando a resposta tiver números, escreva cada número em uma linha própria no formato Rótulo: valor (ex.: Dívida em aberto: R$ 12.345,67 ou PLD em análise: 4), com rótulo curto e só o número depois dos dois-pontos.",
   "Se não souber ou a ferramenta não trouxer o dado, diga isso e indique a tela certa.",
+  "Pedidos: quando a pessoa descrever uma necessidade que a plataforma não atende, faça no máximo 2 perguntas curtas e então use registrar_entendimento com problema, uso no dia a dia, o que já existe e o que seria novo.",
+  "Em jaExiste, cite só o que está no guia abaixo. Se o guia não tiver nada, diga que não há nada parecido hoje.",
+  "NUNCA prometa entrega, prazo ou que a funcionalidade será feita; diga apenas que fica registrado para a equipe avaliar.",
+  "Quando a pessoa pedir ajuste, pergunte o que mudar se ela não disse e então chame registrar_entendimento de novo com a versão inteira reescrita, não só o trecho alterado.",
+  "No registro, não copie CPF, CNPJ, nomes de pessoas ou valores reais: descreva de forma genérica.",
+  "Se a ferramenta registrar_entendimento não estiver disponível, diga que o perfil da pessoa só permite consultar.",
 ].join("\n");
 
 /** Blocos do system: fixos para todas as chamadas (sem nome, data ou perfil). */
@@ -203,8 +224,8 @@ export function montarMensagens(historico: MsgCliente[], pergunta: string, conte
 
 // ---------- Laço ----------
 
-export type FimLoop = "resposta" | "plano" | "passos" | "custo" | "falha" | "limite";
-export type ResultadoLoop = { fim: FimLoop; texto: string; plano?: Plano; passos: number; ferramentas: string[]; custoUsd: number; detalhe?: string };
+export type FimLoop = "resposta" | "plano" | "entendimento" | "passos" | "custo" | "falha" | "limite";
+export type ResultadoLoop = { fim: FimLoop; texto: string; plano?: Plano; entendimento?: Entendimento; passos: number; ferramentas: string[]; custoUsd: number; detalhe?: string };
 export type Executar = (nome: string, entrada: Entrada) => Promise<unknown>;
 
 const textoDe = (content: MsgBlock[]) =>
@@ -261,6 +282,8 @@ export async function rodarLoop(o: {
         continue;
       }
       const spec = o.tools.find((x) => x.nome === nome)!;
+      // Registro: encerra sem executar; a action salva e a pessoa confirma na tela
+      if (spec.tipo === "registro") return fim("entendimento", passo + 1, { entendimento: entendimentoDe(v.valor) });
       if (spec.tipo === "acao") {
         const p = planoDe(v.valor);
         if (!p.ok) {

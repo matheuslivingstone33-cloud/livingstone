@@ -19,7 +19,9 @@ const ABAS = Object.keys(AJUDA) as Aba[];
 export const GUIA_ASSISTENTE: string = ABAS.map((a) => {
   const h = AJUDA[a];
   return `## ${h.titulo} (${ROTA[a]})\n${h.frases.join(" ")}\nPassos: ${h.passos.map((p, i) => `${i + 1}. ${p}`).join(" ")}`;
-}).join("\n\n");
+})
+  .concat("## Pedidos de melhoria\nDescreva no assistente uma necessidade que a plataforma não atende: ele registra o entendimento, você confirma ou ajusta, e fica registrado para a equipe avaliar.")
+  .join("\n\n");
 
 const norm = (s: string) =>
   s

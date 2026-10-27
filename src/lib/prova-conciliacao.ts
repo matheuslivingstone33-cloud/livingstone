@@ -2,7 +2,7 @@
 // Puro: sem banco nem Next. O arquivo original nunca é guardado; só as linhas usadas, com CPF/CNPJ mascarados.
 import { createHash } from "node:crypto";
 import { DEFAULT_CNAB400, normRef, parseDate, parseMoney, type BankEntry, type Cnab400Layout, type ExpectedEntry, type MatchedItem, type Origem, type ReconcileOptions } from "./reconcile";
-import { validCnpj, validCpf } from "./validators";
+import { mascararDocs } from "./mascara";
 
 export const PROVA_LIMITES = { celula: 200, colunas: 50, bruto: 1000, itemBytes: 8 * 1024, totalBytes: 5_000_000 } as const;
 
@@ -51,24 +51,7 @@ export function jsonCanonico(v: unknown): string {
 
 // ---------- CPF/CNPJ ----------
 
-// Formatado (com pontuação) sempre conta; só dígitos (11 ou 14) só se os dígitos verificadores baterem
-const DOC = /\d{3}\.\d{3}\.\d{3}-\d{2}|\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|(?<!\d)\d{14}(?!\d)|(?<!\d)\d{11}(?!\d)/g;
-
-function mascararUm(m: string): string {
-  const d = m.replace(/\D/g, "");
-  const formatado = /\D/.test(m);
-  if (!formatado && !(d.length === 11 ? validCpf(d) : validCnpj(d))) return m;
-  // CPF: ***.456.789-** · CNPJ: **.345.678/0001-**
-  const [a, b] = d.length === 11 ? [3, 9] : [2, 12];
-  let k = 0;
-  return m.replace(/\d/g, (c) => {
-    const x = k++;
-    return x < a || x >= b ? "*" : c;
-  });
-}
-
-/** Mascara tudo o que parece CPF ou CNPJ, mantendo os dígitos do meio. */
-export const mascararDocs = (s: string) => s.replace(DOC, mascararUm);
+export { DOC, mascararDocs, mascararUm } from "./mascara";
 
 // Campos de inscrição (CPF/CNPJ) nos registros CNAB: mascarados pela posição
 const POS_DOC: Record<string, { faixa: [number, number]; segmento: number }[]> = {

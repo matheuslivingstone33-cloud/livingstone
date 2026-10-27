@@ -22,6 +22,8 @@ import {
   type Plano,
 } from "@/lib/assistente";
 import { responderSemIa } from "@/lib/assistente-guia";
+import { untrusted } from "@/lib/ai-prompt";
+import { anexarTranscricao, novaVersao, versaoAtual, type Entendimento } from "@/lib/pedidos";
 import { executarConsulta } from "@/lib/servicos/assistente";
 import { gerarPropostaServico } from "@/lib/servicos/cobranca";
 import { pausarReguaServico } from "@/lib/servicos/regua";
@@ -29,7 +31,10 @@ import { atualizarResumoServico } from "@/lib/servicos/resumo";
 import { diaSP, inicioDoDiaSP } from "@/lib/tz";
 
 export type PlanoTela = { id: string; titulo: string; descricao: string };
-export type RespostaAssistente = { ok: true; texto: string; plano?: PlanoTela; executadoEm?: string } | { ok: false; erro: string };
+export type EntendimentoTela = Entendimento & { pedidoId: string; versao: number };
+export type RespostaAssistente = { ok: true; texto: string; plano?: PlanoTela; entendimento?: EntendimentoTela; executadoEm?: string } | { ok: false; erro: string };
+
+const TEXTO_ENTENDIMENTO = "Registrei meu entendimento abaixo. Confirme se é isso — fica registrado para a equipe avaliar.";
 
 const MAX_PERGUNTA = 1000;
 const FALHA: Record<string, string> = {
@@ -68,6 +73,8 @@ export async function enviarMensagem(form: FormData): Promise<RespostaAssistente
     bruto = [];
   }
   const historico = limparHistorico(bruto);
+  const pedidoRaw = String(form.get("pedidoId") ?? "");
+  if (pedidoRaw && !ID_RE.test(pedidoRaw)) return { ok: false, erro: "Pedido não encontrado." };
 
   // Limite diário por pessoa (dia em Brasília): conta as mensagens registradas na auditoria
   const limite = msgsPorUsuarioDia();
@@ -82,6 +89,16 @@ export async function enviarMensagem(form: FormData): Promise<RespostaAssistente
     return { ok: true, texto: responderSemIa(pergunta) };
   }
 
+  const operam = s.role === "ADMIN" || s.role === "ANALISTA";
+  // Pedido em andamento: só da mesma pessoa, da mesma instituição, ainda sem consenso
+  const pedido =
+    pedidoRaw && operam
+      ? await db.featureRequest.findFirst({ where: { id: pedidoRaw, orgId: s.orgId, userId: s.userId, status: { not: "CONSENSO" } }, select: { id: true, versoes: true, transcricao: true } })
+      : null;
+  const atual = pedido ? versaoAtual(pedido.versoes) : null;
+  // A versão atual vai como dado não confiável na mensagem do usuário, nunca no system (o prefixo do cache fica fixo)
+  const contexto = contextoSessao(s.name, s.role, now) + (atual ? `\nPedido em andamento, versão ${atual.n} (reescreva a versão inteira ao ajustar):\n${untrusted("pedido_atual", JSON.stringify(atual))}` : "");
+
   const tools = toolsPara(s.role);
   const defs = tools.map(toolDef);
   const call = meteredMessages(s.orgId, s.userId);
@@ -89,7 +106,7 @@ export async function enviarMensagem(form: FormData): Promise<RespostaAssistente
     call: (m) => call(requestBodyAssistente(SYSTEM_ASSISTENTE, defs, m)),
     executar: (nome, e) => executarConsulta(s.orgId, nome, e, now),
     tools,
-    mensagens: montarMensagens(historico, pergunta, contextoSessao(s.name, s.role, now)),
+    mensagens: montarMensagens(historico, pergunta, contexto),
   });
   // Só metadados: nunca a pergunta nem a resposta
   await audit(s, "assistente.mensagem", `Passos ${r.passos} · ferramentas ${r.ferramentas.join(", ") || "nenhuma"} · custo US$ ${r.custoUsd.toFixed(4)} · fim ${r.fim}`.slice(0, 500));
@@ -106,8 +123,46 @@ export async function enviarMensagem(form: FormData): Promise<RespostaAssistente
     });
     return { ok: true, texto: "Preparei a ação abaixo. Ela só acontece se você confirmar, em até 10 minutos.", plano: { id: row.id, titulo: ROTULO_ACAO[p.acao], descricao: d.descricao } };
   }
-  const texto = r.fim === "resposta" && r.texto ? r.texto : FALHA[r.fim] ?? FALHA.falha;
-  return { ok: true, texto: texto.slice(0, 2000) };
+  if (r.fim === "entendimento" && r.entendimento) {
+    if (!operam) return { ok: true, texto: "Seu perfil só permite consultar. Peça a um analista ou administrador." };
+    const e = r.entendimento;
+    // Só a pergunta e a resposta que passaram por esta action; o histórico do navegador não entra
+    const troca = [
+      { role: "user" as const, texto: pergunta },
+      { role: "assistant" as const, texto: TEXTO_ENTENDIMENTO },
+    ];
+    let id: string;
+    let versao: number;
+    if (pedido) {
+      const versoes = novaVersao(pedido.versoes, e, now);
+      const up = await db.featureRequest.updateMany({
+        where: { id: pedido.id, orgId: s.orgId, userId: s.userId, status: { not: "CONSENSO" } },
+        data: { titulo: e.titulo, versoes, transcricao: anexarTranscricao(pedido.transcricao, troca, now), status: "AGUARDANDO_CONFIRMACAO" },
+      });
+      if (up.count !== 1) return { ok: false, erro: "Pedido não encontrado ou já confirmado." };
+      id = pedido.id;
+      versao = versoes.at(-1)!.n;
+    } else {
+      const versoes = novaVersao([], e, now);
+      const row = await db.featureRequest.create({
+        data: { orgId: s.orgId, userId: s.userId, titulo: e.titulo, status: "AGUARDANDO_CONFIRMACAO", versoes, transcricao: anexarTranscricao([], troca, now) },
+        select: { id: true },
+      });
+      id = row.id;
+      versao = versoes.at(-1)!.n;
+    }
+    await audit(s, "pedido.versao", `Pedido ${id} · versão ${versao}`);
+    return { ok: true, texto: TEXTO_ENTENDIMENTO, entendimento: { ...e, pedidoId: id, versao } };
+  }
+  const texto = (r.fim === "resposta" && r.texto ? r.texto : FALHA[r.fim] ?? FALHA.falha).slice(0, 2000);
+  if (pedido) {
+    // Conversa sobre o pedido: guarda a troca e volta para EM_CONVERSA até a próxima versão
+    await db.featureRequest.updateMany({
+      where: { id: pedido.id, orgId: s.orgId, userId: s.userId, status: { not: "CONSENSO" } },
+      data: { transcricao: anexarTranscricao(pedido.transcricao, [{ role: "user", texto: pergunta }, { role: "assistant", texto }], now), status: "EM_CONVERSA" },
+    });
+  }
+  return { ok: true, texto };
 }
 
 export async function confirmarPlano(planId: string): Promise<RespostaAssistente> {

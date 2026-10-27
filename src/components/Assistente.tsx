@@ -1,13 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { confirmarPlano, enviarMensagem, type PlanoTela } from "@/app/actions-assistente";
+import { confirmarPlano, enviarMensagem, type EntendimentoTela, type PlanoTela } from "@/app/actions-assistente";
+import { ajustarEntendimento, confirmarEntendimento } from "@/app/actions-pedidos";
 import { blocosDoTexto, protocoloDe } from "@/lib/assistente-formato";
 import { fmtDataHora } from "@/lib/tz";
 import { Icon } from "./Icon";
 
 type Comprovante = { protocolo: string; quando: string; por: string };
-type Msg = { role: "user" | "assistant"; texto: string; plano?: PlanoTela & { estado: "pendente" | "feito" | "cancelado"; comprovante?: Comprovante }; erro?: boolean };
+type EstadoEntendimento = "pendente" | "confirmado" | "ajustando";
+type Msg = {
+  role: "user" | "assistant";
+  texto: string;
+  plano?: PlanoTela & { estado: "pendente" | "feito" | "cancelado"; comprovante?: Comprovante };
+  entendimento?: EntendimentoTela & { estado: EstadoEntendimento };
+  erro?: boolean;
+};
 
 const CHAVE = "finops:assistente";
 // Atalhos: cada um vira uma pergunta que as ferramentas de consulta respondem (painel, conciliação, PLD).
@@ -46,6 +54,8 @@ export function Assistente({
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [texto, setTexto] = useState("");
   const [pensando, setPensando] = useState(false);
+  // Pedido em andamento (modo pedido/descoberta): vai no FormData até haver consenso
+  const [pedidoId, setPedidoId] = useState<string | null>(null);
   const painel = useRef<HTMLDivElement>(null);
   const campo = useRef<HTMLTextAreaElement>(null);
   const botao = useRef<HTMLButtonElement>(null);
@@ -104,8 +114,20 @@ export function Assistente({
       const fd = new FormData();
       fd.set("mensagem", q);
       fd.set("historico", JSON.stringify(historico));
+      if (pedidoId) fd.set("pedidoId", pedidoId);
       const r = await enviarMensagem(fd);
-      setMsgs((m) => [...m, r.ok ? { role: "assistant", texto: r.texto, plano: r.plano ? { ...r.plano, estado: "pendente" } : undefined } : { role: "assistant", texto: r.erro, erro: true }]);
+      if (r.ok && r.entendimento) {
+        const id = r.entendimento.pedidoId;
+        setPedidoId(id);
+        // Versão nova substitui o cartão pendente anterior do mesmo pedido
+        setMsgs((m) => m.map((x) => (x.entendimento?.pedidoId === id && x.entendimento.estado === "pendente" ? { ...x, entendimento: { ...x.entendimento, estado: "ajustando" } } : x)));
+      }
+      setMsgs((m) => [
+        ...m,
+        r.ok
+          ? { role: "assistant", texto: r.texto, plano: r.plano ? { ...r.plano, estado: "pendente" } : undefined, entendimento: r.entendimento ? { ...r.entendimento, estado: "pendente" } : undefined }
+          : { role: "assistant", texto: r.erro, erro: true },
+      ]);
     } catch {
       setMsgs((m) => [...m, { role: "assistant", texto: "Não consegui falar com o servidor. Tente de novo.", erro: true }]);
     } finally {
@@ -139,7 +161,48 @@ export function Assistente({
     setMsgs((m) => [...m, { role: "assistant", texto: "Ação cancelada. Nada foi feito." }]);
   }
 
-  const limpar = () => setMsgs([]);
+  const marcarEnt = (id: string, versao: number, estado: EstadoEntendimento) =>
+    setMsgs((m) => m.map((x) => (x.entendimento?.pedidoId === id && x.entendimento.versao === versao ? { ...x, entendimento: { ...x.entendimento, estado } } : x)));
+
+  async function confirmarEnt(e: EntendimentoTela) {
+    if (pensando) return;
+    setPensando(true);
+    try {
+      const r = await confirmarEntendimento(e.pedidoId, e.versao);
+      if (r.ok) {
+        marcarEnt(e.pedidoId, e.versao, "confirmado");
+        setPedidoId(null);
+      }
+      setMsgs((m) => [...m, r.ok ? { role: "assistant", texto: r.texto } : { role: "assistant", texto: r.erro, erro: true }]);
+    } catch {
+      setMsgs((m) => [...m, { role: "assistant", texto: "Não consegui registrar agora. Tente de novo.", erro: true }]);
+    } finally {
+      setPensando(false);
+    }
+  }
+
+  async function ajustarEnt(e: EntendimentoTela) {
+    if (pensando) return;
+    setPensando(true);
+    try {
+      const r = await ajustarEntendimento(e.pedidoId);
+      if (r.ok) {
+        marcarEnt(e.pedidoId, e.versao, "ajustando");
+        setPedidoId(e.pedidoId);
+      }
+      setMsgs((m) => [...m, r.ok ? { role: "assistant", texto: r.texto } : { role: "assistant", texto: r.erro, erro: true }]);
+    } catch {
+      setMsgs((m) => [...m, { role: "assistant", texto: "Não consegui abrir o ajuste agora. Tente de novo.", erro: true }]);
+    } finally {
+      setPensando(false);
+      campo.current?.focus();
+    }
+  }
+
+  const limpar = () => {
+    setMsgs([]);
+    setPedidoId(null);
+  };
 
   return (
     <>
@@ -197,6 +260,11 @@ export function Assistente({
             <span aria-hidden className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-gold-400/0 via-gold-400/60 to-gold-400/0" />
           </div>
 
+          <p className="flex items-center gap-1.5 border-b border-line bg-paper px-5 py-1.5 text-[11px] leading-snug text-ink-600">
+            <Icon name="lock" size={11} />
+            Esta conversa é registrada. CPF e CNPJ são mascarados.
+          </p>
+
           <div className="flex-1 space-y-4 overflow-y-auto bg-paper/60 px-5 py-5 text-sm" aria-live="polite">
             {msgs.length === 0 && (
               <div className="space-y-5 pt-1">
@@ -229,7 +297,10 @@ export function Assistente({
                     >
                       {m.erro ? <p className="whitespace-pre-line">{m.texto}</p> : <TextoAssistente texto={m.texto} />}
                     </div>
-                    {m.plano?.comprovante && <ComprovanteCartao titulo={m.plano.titulo} descricao={m.plano.descricao} c={m.plano.comprovante} />}
+                    {m.entendimento && (
+                      <EntendimentoCartao e={m.entendimento} podeConfirmar={podeConfirmar} pensando={pensando} onConfirmar={() => confirmarEnt(m.entendimento!)} onAjustar={() => ajustarEnt(m.entendimento!)} />
+                    )}
+                    {m.plano?.comprovante &&<ComprovanteCartao titulo={m.plano.titulo} descricao={m.plano.descricao} c={m.plano.comprovante} />}
                     {m.plano && !m.plano.comprovante && (
                       <div className={`mt-2 overflow-hidden rounded-xl bg-white ring-1 ${m.plano.estado === "pendente" ? "shadow-[0_4px_14px_-6px_rgba(10,31,44,0.18)] ring-gold-400/70" : "ring-line"}`}>
                         <div className={`flex items-center gap-2 border-b px-3.5 py-2 ${m.plano.estado === "pendente" ? "border-gold-100 bg-gold-50" : "border-line bg-paper"}`}>
@@ -456,6 +527,73 @@ function ComprovanteCartao({ titulo, descricao, c }: { titulo: string; descricao
           <Icon name="chain" size={12} />
           Registrado na auditoria
         </p>
+      </div>
+    </div>
+  );
+}
+
+const BLOCOS_ENT = [
+  ["problema", "Problema"],
+  ["diaADia", "No dia a dia"],
+  ["jaExiste", "O que já existe"],
+  ["novo", "O que seria novo"],
+] as const;
+
+/** Entendimento de um pedido, no mesmo formato de recibo do comprovante. Só texto. */
+function EntendimentoCartao({
+  e,
+  podeConfirmar,
+  pensando,
+  onConfirmar,
+  onAjustar,
+}: {
+  e: EntendimentoTela & { estado: EstadoEntendimento };
+  podeConfirmar: boolean;
+  pensando: boolean;
+  onConfirmar: () => void;
+  onAjustar: () => void;
+}) {
+  return (
+    <div className="mt-2 drop-shadow-[0_4px_10px_rgba(10,31,44,0.12)]">
+      <div className="comprovante bg-white" role="group" aria-label="Entendimento do pedido">
+        <div className="flex items-center gap-3 px-4 pb-3 pt-4">
+          <span aria-hidden className={`grid size-9 shrink-0 place-items-center rounded-full ${e.estado === "confirmado" ? "bg-brand-600 text-white" : "bg-ink-900 text-gold-300"}`}>
+            <Icon name={e.estado === "confirmado" ? "check" : "sparkle"} size={16} />
+          </span>
+          <div className="min-w-0">
+            <p className="font-display text-[15px] font-semibold leading-tight text-ink-900">{e.titulo}</p>
+            <p className="text-xs text-ink-600">Meu entendimento · versão {e.versao}</p>
+          </div>
+        </div>
+        <div aria-hidden className="comprovante-picote" />
+        <dl className="space-y-2.5 px-4 py-3 text-[13px]">
+          {BLOCOS_ENT.map(([k, r]) => (
+            <div key={k}>
+              <dt className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-500">{r}</dt>
+              <dd className="mt-0.5 whitespace-pre-line leading-relaxed text-ink-800">{e[k]}</dd>
+            </div>
+          ))}
+        </dl>
+        <div className="px-4 pb-5">
+          {e.estado === "pendente" && podeConfirmar ? (
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="btn" disabled={pensando} onClick={onConfirmar}>
+                <Icon name="check" size={14} />
+                Sim, é isso
+              </button>
+              <button type="button" className="btn-ghost" disabled={pensando} onClick={onAjustar}>
+                Não, ajustar
+              </button>
+            </div>
+          ) : e.estado === "confirmado" ? (
+            <p className="flex items-center justify-center gap-1.5 rounded-lg bg-brand-50 px-2 py-1.5 text-xs font-medium text-brand-800">
+              <Icon name="check" size={12} />
+              Registrado para a equipe avaliar
+            </p>
+          ) : e.estado === "ajustando" ? (
+            <p className="text-xs text-ink-500">Em ajuste. A próxima versão aparece abaixo.</p>
+          ) : null}
+        </div>
       </div>
     </div>
   );

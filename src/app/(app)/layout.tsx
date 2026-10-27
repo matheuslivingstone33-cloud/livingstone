@@ -9,6 +9,7 @@ import { Assistente } from "@/components/Assistente";
 import { requireSession } from "@/lib/auth";
 import { aiProvider } from "@/lib/ai";
 import { db } from "@/lib/db";
+import { podeVerPedidos } from "@/lib/pedidos";
 import { logout } from "../actions";
 
 const nav = [
@@ -27,7 +28,11 @@ const roleLabel: Record<string, string> = { ADMIN: "Administrador", ANALISTA: "A
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const s = await requireSession();
-  const org = await db.organization.findUnique({ where: { id: s.orgId } });
+  const [org, eu] = await Promise.all([
+    db.organization.findUnique({ where: { id: s.orgId } }),
+    db.user.findFirst({ where: { id: s.userId, orgId: s.orgId }, select: { email: true } }),
+  ]);
+  const itens = [...nav.filter((n) => !n.roles || n.roles.includes(s.role)), ...(podeVerPedidos(eu?.email, process.env.PEDIDOS_VIEWERS) ? [{ href: "/pedidos", label: "Pedidos", icon: "sparkle" }] : [])];
   const demo = aiProvider() === "demo";
   const initials = s.name
     .split(" ")
@@ -51,7 +56,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         </div>
         <p className="eyebrow relative hidden px-6 pb-2 text-brand-100/45 md:block">Módulos</p>
         <nav className="relative flex gap-1 overflow-x-auto px-3 pb-3 md:flex-1 md:flex-col md:pb-6" aria-label="Módulos">
-          <NavLinks items={nav.filter((n) => !n.roles || n.roles.includes(s.role))} />
+          <NavLinks items={itens} />
         </nav>
         <div className="relative hidden border-t border-white/10 px-6 py-4 md:block">
           <span className={`inline-flex items-center gap-2 text-xs ${demo ? "text-gold-300" : "text-brand-200"}`} title={aiTitle}>

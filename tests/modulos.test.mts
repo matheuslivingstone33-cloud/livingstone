@@ -2110,8 +2110,12 @@ test("Prova: grupos da tela e frase de cada caso", () => {
 test("Prova: lib pura (sem banco nem Next) e gerador de demos determinístico", () => {
   const src = readFileSync(new URL("../src/lib/prova-conciliacao.ts", import.meta.url), "utf8");
   const imports = [...src.matchAll(/^import .* from "([^"]+)";$/gm)].map((m) => m[1]);
-  assert.deepEqual(imports.sort(), ["./reconcile", "./validators", "node:crypto"]);
+  assert.deepEqual(imports.sort(), ["./mascara", "./reconcile", "node:crypto"]);
   assert.ok(!/@\/lib\/db|next\//.test(src));
+  for (const f of ["mascara.ts", "pedidos.ts"]) {
+    const s = readFileSync(new URL(`../src/lib/${f}`, import.meta.url), "utf8");
+    assert.ok(!/@\/lib\/db|next\/|\.\/ai"|\.\/auth"/.test(s), f);
+  }
   const hashes = () => Object.fromEntries(Object.entries(gerarPlanilhas()).map(([k, v]) => [k, sha256Hex(v as Buffer | string)]));
   const a = hashes();
   assert.deepEqual(hashes(), a);
@@ -2278,7 +2282,7 @@ test("Assistente: corpo com cache no fim do system, ferramentas em ordem estáve
   assert.match(b.system.at(-1)!.text, /dados_nao_confiaveis/);
   // Sem prefill: a última mensagem é do usuário
   assert.equal(b.messages.at(-1)?.role, "user");
-  assert.deepEqual(b.tools.map((t) => t.name), ["consultar_painel", "buscar_contrato", "casos_pld_vencendo", "resultado_conciliacao", "uso_ia_hoje", "propor_acao"]);
+  assert.deepEqual(b.tools.map((t) => t.name), ["consultar_painel", "buscar_contrato", "casos_pld_vencendo", "resultado_conciliacao", "uso_ia_hoje", "propor_acao", "registrar_entendimento"]);
   assert.equal(JSON.stringify(toolsPara("ADMIN").map(toolDef)), JSON.stringify(defs));
   assert.equal((defs[1].input_schema as { additionalProperties: boolean }).additionalProperties, false);
   // Guia estático: nenhuma data no prefixo do cache
@@ -2363,4 +2367,135 @@ test("assistente-formato: protocolo do plano", () => {
   assert.equal(protocoloDe("clx1abcd2efgh3ijk"), "LIV-EFGH-3IJK");
   assert.equal(protocoloDe("cm9zq8w7e6r5t4y3"), "LIV-E6R5-T4Y3");
   assert.match(protocoloDe("ab"), /^LIV-[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+});
+
+// ---------- Pedidos (modo pedido/descoberta) ----------
+import { DOC as DOC_MASCARA, mascararDocs as mascararDocsM } from "../src/lib/mascara";
+import { mascararDocs as mascararDocsProva } from "../src/lib/prova-conciliacao";
+import { anexarTranscricao, entendimentoDe, lerVersoes, montarPrompt, novaVersao, podeTransicionar, podeVerPedidos, PEDIDOS_LIMITES } from "../src/lib/pedidos";
+import { SYSTEM_ASSISTENTE } from "../src/lib/assistente";
+
+const ENT = { titulo: "Relatório de inadimplência por agência", problema: "Hoje somo à mão.", diaADia: "Toda segunda, antes da reunião.", jaExiste: "Cobrança mostra a dívida em aberto.", novo: "Separar por agência." };
+
+test("Pedidos: registrar_entendimento só para quem opera e com entrada validada", () => {
+  const nomes = (r: string) => toolsPara(r).map((t) => t.nome);
+  assert.ok(nomes("ADMIN").includes("registrar_entendimento") && nomes("ANALISTA").includes("registrar_entendimento"));
+  assert.ok(!nomes("AUDITOR").includes("registrar_entendimento"));
+  assert.equal(TOOLS.at(-1)?.nome, "registrar_entendimento");
+  assert.ok(validarEntrada("registrar_entendimento", ENT).ok);
+  const falta: Record<string, string> = { ...ENT };
+  delete falta.novo;
+  assert.equal(validarEntrada("registrar_entendimento", falta).ok, false);
+  assert.equal(validarEntrada("registrar_entendimento", { ...ENT, titulo: "ab" }).ok, false);
+  assert.equal(validarEntrada("registrar_entendimento", { ...ENT, problema: "x".repeat(601) }).ok, false);
+  const org = validarEntrada("registrar_entendimento", { ...ENT, orgId: "outra" });
+  assert.match(!org.ok ? org.erro : "", /sessão/);
+  assert.equal(validarEntrada("registrar_entendimento", { ...ENT, prazo: "amanhã" }).ok, false);
+  assert.equal(validarEntrada("registrar_entendimento", ENT, toolsPara("AUDITOR")).ok, false);
+});
+
+test("Pedidos: registrar_entendimento encerra o laço sem executar nada", async () => {
+  const executou: string[] = [];
+  const r = await rodarLoop({
+    call: async () => ferramenta("registrar_entendimento", { ...ENT, problema: "Cliente CPF 123.456.789-09 reclama." }),
+    executar: async (n) => (executou.push(n), null),
+    tools: toolsPara("ADMIN"),
+    mensagens: [],
+  });
+  assert.equal(r.fim, "entendimento");
+  assert.equal(r.passos, 1);
+  assert.deepEqual(executou, []);
+  assert.equal(r.entendimento?.problema, "Cliente CPF ***.456.789-** reclama.");
+  assert.equal(r.plano, undefined);
+});
+
+test("Pedidos: máscara extraída mantém o comportamento e é reexportada", () => {
+  assert.equal(mascararDocsM("CNPJ 11.222.333/0001-81 e CPF 52998224725"), "CNPJ **.222.333/0001-** e CPF ***982247**");
+  assert.equal(mascararDocsM("conta 12345678901"), "conta 12345678901"); // só dígitos sem DV válido: fica
+  assert.equal(mascararDocsProva, mascararDocsM);
+  assert.ok(DOC_MASCARA.global);
+  const e = entendimentoDe({ titulo: "  Título\n com  espaço ", problema: "a\u0000b 111.444.777-35", diaADia: "x".repeat(900), jaExiste: "", novo: 5 });
+  assert.equal(e.titulo, "Título com espaço");
+  assert.equal(e.problema, "a b ***.444.777-**");
+  assert.equal(e.diaADia.length, PEDIDOS_LIMITES.campo);
+  assert.equal(e.novo, "5");
+});
+
+test("Pedidos: novaVersao numera N+1, tolera lixo e guarda no máximo 20", () => {
+  const now = new Date("2026-10-27T12:00:00Z");
+  const v1 = novaVersao(null, ENT, now);
+  assert.deepEqual(v1.map((v) => v.n), [1]);
+  assert.equal(v1[0].em, "2026-10-27T12:00:00.000Z");
+  const v2 = novaVersao([...v1, "lixo", { n: "9" }, null, { n: 7, titulo: 1 }], ENT, now);
+  assert.deepEqual(v2.map((v) => v.n), [1, 2]);
+  assert.deepEqual(novaVersao("nada", ENT, now).map((v) => v.n), [1]);
+  let vs: unknown = [];
+  for (let i = 0; i < 25; i++) vs = novaVersao(vs, ENT, now);
+  const lidas = lerVersoes(vs);
+  assert.equal(lidas.length, 20);
+  assert.equal(lidas[0].n, 6);
+  assert.equal(lidas.at(-1)!.n, 25);
+});
+
+test("Pedidos: transcrição mascarada, cortada por item e com teto de 200", () => {
+  const now = new Date("2026-10-27T12:00:00Z");
+  const t = anexarTranscricao([{ role: "system", texto: "x", em: "" }, 3], [{ role: "user", texto: "CPF 123.456.789-09" }, { role: "assistant", texto: "y".repeat(5000) }, { role: "user", texto: "  " }], now);
+  assert.equal(t.length, 2);
+  assert.equal(t[0].texto, "CPF ***.456.789-**");
+  assert.equal(t[1].texto.length, PEDIDOS_LIMITES.item);
+  let acc: unknown = [];
+  for (let i = 0; i < 120; i++) acc = anexarTranscricao(acc, [{ role: "user", texto: `p${i}` }, { role: "assistant", texto: `r${i}` }], now);
+  const a = acc as { texto: string }[];
+  assert.equal(a.length, 200);
+  assert.equal(a.at(-1)!.texto, "r119");
+  assert.equal(a[0].texto, "p20");
+});
+
+test("Pedidos: transições de status; CONSENSO é final", () => {
+  assert.ok(podeTransicionar("EM_CONVERSA", "AGUARDANDO_CONFIRMACAO"));
+  assert.ok(podeTransicionar("AGUARDANDO_CONFIRMACAO", "EM_CONVERSA"));
+  assert.ok(podeTransicionar("AGUARDANDO_CONFIRMACAO", "CONSENSO"));
+  assert.equal(podeTransicionar("EM_CONVERSA", "CONSENSO"), false);
+  for (const p of ["EM_CONVERSA", "AGUARDANDO_CONFIRMACAO", "CONSENSO"]) assert.equal(podeTransicionar("CONSENSO", p), false);
+  assert.equal(podeTransicionar("toString", "CONSENSO"), false);
+  assert.equal(podeTransicionar("OUTRO", "EM_CONVERSA"), false);
+});
+
+test("Pedidos: prompt determinístico com os 4 blocos e as restrições do projeto", () => {
+  const now = new Date("2026-10-27T15:00:00Z");
+  const p = montarPrompt({ titulo: ENT.titulo, versao: { ...ENT, n: 3 } }, now);
+  assert.equal(p, montarPrompt({ titulo: ENT.titulo, versao: { ...ENT, n: 3 } }, now));
+  assert.match(p, /^# Pedido: Relatório de inadimplência por agência\nVersão 3 confirmada em 27\/10\/2026\./);
+  assert.match(p, /não é compromisso de entrega/);
+  for (const b of ["## Problema\nHoje somo à mão.", "## Uso no dia a dia\nToda segunda", "## O que já existe na plataforma\nCobrança", "## O que seria novo\nSeparar por agência."]) assert.ok(p.includes(b), b);
+  assert.match(p, /src\/lib\/<modulo>\.ts → testes em tests\/modulos\.test\.mts → server action fina/);
+  assert.match(p, /orgId da sessão/);
+  assert.match(p, /ADMIN ou ANALISTA; AUDITOR só lê/);
+  assert.match(p, /auditoria/);
+});
+
+test("Pedidos: quem vê /pedidos", () => {
+  assert.ok(podeVerPedidos("matheuslivingstone33@gmail.com", undefined));
+  assert.ok(podeVerPedidos("Matheuslivingstone33@Gmail.com", undefined));
+  assert.equal(podeVerPedidos("amanda@x.com", undefined), false);
+  assert.ok(podeVerPedidos("b@y.com", " a@x.com , B@Y.com "));
+  assert.equal(podeVerPedidos("a@x.com.evil", "a@x.com"), false);
+  assert.equal(podeVerPedidos("x.com", "a@x.com"), false);
+  assert.equal(podeVerPedidos("a@x.com", ""), false);
+  assert.equal(podeVerPedidos("matheuslivingstone33@gmail.com", ""), false);
+  assert.equal(podeVerPedidos(null, "a@x.com"), false);
+  assert.equal(podeVerPedidos("", ","), false);
+});
+
+test("Pedidos: system fixo proíbe prometer entrega e não leva data", () => {
+  const sys = SYSTEM_ASSISTENTE.join("\n");
+  assert.match(sys, /NUNCA prometa entrega, prazo/);
+  assert.match(sys, /fica registrado para a equipe avaliar/);
+  assert.match(sys, /no máximo 2 perguntas curtas/);
+  assert.match(sys, /versão inteira reescrita/);
+  assert.match(sys, /não copie CPF, CNPJ, nomes de pessoas ou valores reais/);
+  assert.ok(!/\d{2}\/\d{2}\/\d{4}/.test(sys));
+  const acao = readFileSync(new URL("../src/app/actions-assistente.ts", import.meta.url), "utf8");
+  assert.match(acao, /untrusted\("pedido_atual"/);
+  assert.match(acao, /"pedido\.versao", `Pedido \$\{id\} · versão \$\{versao\}`/);
 });

@@ -35,6 +35,7 @@ model Organization {
   dailySummary DailySummary?
   aiUsages   AiUsage[]
   assistantPlans AssistantPlan[]
+  featureRequests FeatureRequest[]
   // Trava do lote de propostas com IA (um lote por vez na instituição)
   aiBatchLockUntil DateTime?
   // Trava da execução da régua de cobrança (uma por vez na instituição)
@@ -481,5 +482,23 @@ model AssistantPlan {
   expiresAt DateTime
   createdAt DateTime     @default(now())
 
+  @@index([orgId, userId, status])
+}
+
+// Pedido de funcionalidade descrito no assistente: versões do entendimento até haver consenso
+model FeatureRequest {
+  id          String       @id @default(cuid())
+  orgId       String
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  userId      String
+  titulo      String
+  status      String       @default("EM_CONVERSA") // EM_CONVERSA | AGUARDANDO_CONFIRMACAO | CONSENSO
+  versoes     Json         @default("[]")
+  transcricao Json         @default("[]")
+  prompt      String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([orgId, status, updatedAt])
   @@index([orgId, userId, status])
 }
