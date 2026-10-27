@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { dt } from "@/lib/format";
 import { fraseItem, lerProva } from "@/lib/prova-conciliacao";
 import { ProvaView } from "../../Prova";
-import { paraFrase, referenciasPagas } from "../../itens";
+import { moedaDe, paraFrase, referenciasPagas } from "../../itens";
 import { ImprimirProva } from "./ImprimirProva";
 
 // Versão para imprimir ou salvar em PDF da prova de um item. Qualquer perfil pode ver (é só leitura).
@@ -29,7 +29,7 @@ export default async function ProvaImpressao({ params }: { params: Promise<{ id:
           {r.name} · criada em {dt(r.createdAt)} · emitida em {dt(new Date())} por {s.name}
         </p>
       </div>
-      <ProvaView prova={lerProva(item.evidence)} frase={fraseItem(paraFrase(item), { pagas })} />
+      <ProvaView prova={lerProva(item.evidence)} frase={fraseItem(paraFrase(item), { pagas, moeda: moedaDe(r.currency) })} />
     </div>
   );
 }

@@ -1,13 +1,12 @@
 // Layout de colunas de uma planilha de conciliação (esperados ou extrato): sugestão, validação e conversão.
 // Puro: sem banco nem Next. A planilha chega como grade de textos (ver planilha.ts).
 import { createHash } from "node:crypto";
-import { BankFileError, REF_MAX, fileErrors, parseMoney, utcDay, validMoney, type BankEntry, type ExpectedEntry } from "./reconcile";
+import { BankFileError, REF_MAX, fileErrors, parseMoney, parseMoneyUs, utcDay, validMoney, type BankEntry, type ExpectedEntry } from "./reconcile";
+import { FORMATOS_DATA, FORMATOS_VALOR, isMoeda, type FormatoData, type FormatoValor, type Moeda } from "./moeda";
+
+export { FORMATOS_DATA, FORMATOS_VALOR, type FormatoData, type FormatoValor };
 
 export type TipoLayout = "esperados" | "extrato";
-export const FORMATOS_DATA = ["dd/mm/aaaa", "aaaa-mm-dd", "mm/dd/aaaa", "dd-mm-aaaa", "dd.mm.aaaa", "aaaammdd"] as const;
-export type FormatoData = (typeof FORMATOS_DATA)[number];
-export const FORMATOS_VALOR = ["br", "ponto"] as const;
-export type FormatoValor = (typeof FORMATOS_VALOR)[number];
 export const CAMPOS = ["referencia", "valor", "data", "pagador", "descricao", "sinal", "forma"] as const;
 export type Campo = (typeof CAMPOS)[number];
 export const SEPARADORES_LAYOUT = [";", ",", "\t", "|"] as const;
@@ -19,7 +18,12 @@ export type Layout = {
   formatoValor: FormatoValor;
   separador?: (typeof SEPARADORES_LAYOUT)[number];
   linhaCabecalho: number;
+  /** Moeda da planilha, escolhida pelo usuário. Ausente em layouts antigos: vale BRL. */
+  moeda?: Moeda;
 };
+
+/** Moeda de um layout salvo; layout antigo (sem moeda) é BRL. */
+export const moedaDoLayout = (l: Pick<Layout, "moeda">): Moeda => l.moeda ?? "BRL";
 
 /** Grade de textos (mesma forma de RawTable em planilha.ts). */
 export type Tabela = { linhas: string[][]; numeros: number[]; separador?: string };
@@ -46,15 +50,26 @@ export const layoutSignature = (tipo: TipoLayout, header: string[]) =>
   createHash("sha256").update(`${tipo}\n${header.map(normHeader).join("|")}`).digest("hex");
 
 const SINONIMOS: Record<Campo, string[]> = {
-  valor: ["valor", "vlr", "valorpago", "valortitulo", "valorrecebido", "credito", "montante", "valoresperado"],
-  data: ["data", "dt", "vencimento", "datapagamento", "datacredito", "dtvenc", "datavencimento", "dtpagamento"],
-  referencia: ["referencia", "ref", "nossonumero", "documento", "doc", "id", "titulo"],
-  pagador: ["pagador", "cliente", "sacado", "nome", "favorecido"],
-  descricao: ["descricao", "historico", "memo", "complemento"],
-  sinal: ["dc", "cd", "sinal", "natureza", "debitocredito", "creditodebito"],
+  // "credit" e "debit" sozinhos não entram: em extrato em inglês costumam ser colunas separadas de entrada e saída
+  valor: ["valor", "vlr", "valorpago", "valortitulo", "valorrecebido", "credito", "montante", "valoresperado", "amount", "value", "total"],
+  data: ["data", "dt", "vencimento", "datapagamento", "datacredito", "dtvenc", "datavencimento", "dtpagamento", "date", "duedate", "paymentdate", "posteddate", "transactiondate"],
+  referencia: ["referencia", "ref", "nossonumero", "documento", "doc", "id", "titulo", "reference", "invoice", "invoicenumber", "invoiceno"],
+  pagador: ["pagador", "cliente", "sacado", "nome", "favorecido", "payer", "customer", "client", "name"],
+  descricao: ["descricao", "historico", "memo", "complemento", "description", "details"],
+  sinal: ["dc", "cd", "sinal", "natureza", "debitocredito", "creditodebito", "debitcredit", "creditdebit", "drcr", "crdr"],
   // Forma de recebimento (só esperados): usada na pista de taxa de cartão
-  forma: ["forma", "formapagamento", "meiopagamento", "tipopagamento", "modalidade"],
+  forma: ["forma", "formapagamento", "meiopagamento", "tipopagamento", "modalidade", "paymentmethod", "method", "cardtype"],
 };
+
+// Coluna "Type": vira sinal só se ≥ 80% dos valores são débito/crédito; vira forma só se parecem formas de pagamento
+const DEBITO_CREDITO = new Set(["d", "c", "dr", "cr", "debit", "credit", "debito", "credito"]);
+const FORMA_PAGAMENTO = /credit|debit|card|cartao|visa|master|amex|elo|pix|boleto|ach|wire|transfer|check|cheque|cash|dinheiro|paypal|zelle/;
+function tipoServeDe(campo: "sinal" | "forma", valores: string[]): boolean {
+  const v = valores.map(normHeader).filter(Boolean);
+  if (!v.length) return false;
+  if (campo === "sinal") return v.filter((x) => DEBITO_CREDITO.has(x)).length / v.length >= 0.8;
+  return v.every((x) => FORMA_PAGAMENTO.test(x)) && !v.every((x) => DEBITO_CREDITO.has(x));
+}
 
 // "Vlr Pago" → "vlrpago" e também "valorpago"
 const variants = (h: string) => {
@@ -66,9 +81,12 @@ const variants = (h: string) => {
 export function parseDateAs(raw: string, fmt: FormatoData): Date | undefined | null {
   const s = raw.trim();
   if (!s) return undefined;
-  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  // ISO, com ou sem hora ("2026-10-27T15:30:00Z"): vale o dia escrito, sem conversão de fuso
+  const iso = s.match(ISO);
   if (iso) return utcDay(+iso[1], +iso[2], +iso[3]) ?? null;
-  const re: Record<FormatoData, [RegExp, [number, number, number]]> = {
+  // Mês por extenso não é ambíguo: os dois formatos com nome de mês leem as duas formas
+  if (fmt === "mmm dd, aaaa" || fmt === "dd-mmm-aaaa") return dataComMes(s);
+  const re: Record<Exclude<FormatoData, "mmm dd, aaaa" | "dd-mmm-aaaa">, [RegExp, [number, number, number]]> = {
     "dd/mm/aaaa": [/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/, [3, 2, 1]],
     "aaaa-mm-dd": [/^(\d{4})-(\d{1,2})-(\d{1,2})$/, [1, 2, 3]],
     "mm/dd/aaaa": [/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/, [3, 1, 2]],
@@ -82,9 +100,50 @@ export function parseDateAs(raw: string, fmt: FormatoData): Date | undefined | n
   return utcDay(+x[y], +x[m], +x[d]) ?? null;
 }
 
-const money = (raw: string, f: FormatoValor) => parseMoney(raw, f === "ponto" ? "ofx" : "br");
+const ISO = /^(\d{4})-(\d{2})-(\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+const MESES: Record<string, number> = {
+  jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4, may: 5, jun: 6, june: 6, jul: 7, july: 7,
+  aug: 8, august: 8, sep: 9, sept: 9, september: 9, oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
+};
+/** "Oct 27, 2026", "October 27 2026", "Oct. 27, 2026", "27-Oct-2026", "27-October-2026" (meses em inglês). */
+function dataComMes(s: string): Date | null {
+  let m = s.match(/^([A-Za-z]{3,9})\.? (\d{1,2}),? (\d{4})$/);
+  if (m) {
+    const mes = MESES[m[1].toLowerCase()];
+    return mes ? utcDay(+m[3], mes, +m[2]) ?? null : null;
+  }
+  m = s.match(/^(\d{1,2})-([A-Za-z]{3,9})-(\d{4})$/);
+  if (m) {
+    const mes = MESES[m[2].toLowerCase()];
+    return mes ? utcDay(+m[3], mes, +m[1]) ?? null : null;
+  }
+  return null;
+}
 
-export type Sugestao = { layout: Partial<Layout["colunas"]>; formatoData?: FormatoData; formatoValor?: FormatoValor; confianca: "alta" | "baixa"; motivos: string[] };
+/** Valor em texto no formato do layout → número (null se ilegível). */
+export const money = (raw: string, f: FormatoValor) => (f === "us" ? parseMoneyUs(raw) : parseMoney(raw, f === "ponto" ? "ofx" : "br"));
+
+/** Dúvidas que só o usuário resolve: os formatos possíveis, na ordem de FORMATOS_*. */
+export type Perguntas = { data?: FormatoData[]; valor?: FormatoValor[] };
+export type Sugestao = {
+  layout: Partial<Layout["colunas"]>;
+  formatoData?: FormatoData;
+  formatoValor?: FormatoValor;
+  confianca: "alta" | "baixa";
+  motivos: string[];
+  perguntas?: Perguntas;
+};
+
+/**
+ * Moeda pelos símbolos do cabeçalho e da amostra (textos originais, não mascarados).
+ * USD: "US$", "U$", "USD" ou "$" solto · BRL: "R$" ou "BRL". Sem sinal, ou com sinais das duas, devolve undefined.
+ */
+export function detectarMoeda(header: string[], amostra: string[][]): Moeda | undefined {
+  const textos = [...header, ...amostra.flat()].map((s) => String(s ?? "").toUpperCase());
+  const usd = textos.some((s) => /US\$|U\$|\bUSD\b|(^|[^A-Z])\$/.test(s.replace(/R\$/g, "")));
+  const brl = textos.some((s) => /R\$|\bBRL\b/.test(s));
+  return usd && !brl ? "USD" : brl && !usd ? "BRL" : undefined;
+}
 
 const dataRows = (t: Tabela, linhaCabecalho: number) => t.linhas.slice(linhaCabecalho + 1).filter((l) => l.some((c) => c.trim()));
 
@@ -92,20 +151,56 @@ const dataRows = (t: Tabela, linhaCabecalho: number) => t.linhas.slice(linhaCabe
 function dateFormatsFor(values: string[]): FormatoData[] {
   const v = values.filter((x) => x.trim());
   if (!v.length) return [];
-  // aaaa-mm-dd é aceito por todos (datas nativas da planilha); só ele, então, é o formato
-  if (v.every((x) => /^\d{4}-\d{2}-\d{2}$/.test(x.trim()))) return v.every((x) => parseDateAs(x, "aaaa-mm-dd")) ? ["aaaa-mm-dd"] : [];
+  // aaaa-mm-dd (com ou sem hora) é aceito por todos (datas nativas da planilha); só ele, então, é o formato
+  if (v.every((x) => ISO.test(x.trim()))) return v.every((x) => parseDateAs(x, "aaaa-mm-dd")) ? ["aaaa-mm-dd"] : [];
   return FORMATOS_DATA.filter((f) => v.every((x) => parseDateAs(x, f)));
+}
+
+const COM_MES: FormatoData[] = ["mmm dd, aaaa", "dd-mmm-aaaa"];
+const VENCE_ID = ["reference", "invoice", "invoicenumber", "invoiceno"];
+
+/** Entre várias colunas de data: nos esperados vence a de vencimento (due); no extrato, a de lançamento (posted/transaction). */
+function desempateData(tipo: TipoLayout, cands: string[]): string | undefined {
+  const pref = cands.filter((h) => {
+    const n = normHeader(h);
+    return tipo === "esperados" ? n.includes("due") : n.includes("posted") || n.includes("transaction");
+  });
+  return pref.length === 1 ? pref[0] : undefined;
+}
+
+/**
+ * Formato de valor da amostra. Um formato só é escolhido se todos os que leem a amostra inteira dão os mesmos números
+ * (o primeiro na ordem de FORMATOS_VALOR); se dão números diferentes, vira pergunta. `ler` é injetável para teste.
+ */
+export function formatoValorDa(vals: string[], ler: (raw: string, f: FormatoValor) => number | null = money): { formato?: FormatoValor; pergunta?: FormatoValor[] } {
+  const leitores = FORMATOS_VALOR.filter((f) => vals.every((x) => ler(x, f) !== null));
+  if (!leitores.length) return {};
+  const lidos = leitores.map((f) => vals.map((x) => ler(x, f)));
+  return lidos.every((l) => l.every((n, i) => n === lidos[0][i])) ? { formato: leitores[0] } : { pergunta: [...leitores] };
 }
 
 /** Sugestão por sinônimos dos nomes de coluna e pela amostra. Alta confiança só sem nenhuma ambiguidade. */
 export function guessLayout(tipo: TipoLayout, header: string[], t: Tabela, linhaCabecalho: number): Sugestao {
   const motivos: string[] = [];
   const colunas: Partial<Layout["colunas"]> = {};
+  const perguntas: Perguntas = {};
   let alta = true;
   const usados = new Set<string>();
+  const rows = dataRows(t, linhaCabecalho).slice(0, 50);
+  const col = (name?: string) => (name ? rows.map((r) => r[header.indexOf(name)] ?? "") : []);
   const campos: Campo[] = tipo === "extrato" ? ["referencia", "valor", "data", "pagador", "descricao", "sinal"] : ["referencia", "valor", "data", "pagador", "forma"];
   for (const campo of campos) {
-    const cands = header.filter((h) => !usados.has(h) && variants(h).some((v) => SINONIMOS[campo].includes(v)));
+    let cands = header.filter(
+      (h) =>
+        !usados.has(h) &&
+        (variants(h).some((v) => SINONIMOS[campo].includes(v)) || ((campo === "sinal" || campo === "forma") && variants(h)[0] === "type" && tipoServeDe(campo, col(h)))),
+    );
+    // "id" perde para invoice/reference (os outros empates de referência continuam sendo dúvida, como antes)
+    if (campo === "referencia" && cands.length > 1 && cands.some((h) => VENCE_ID.includes(variants(h)[0]))) cands = cands.filter((h) => variants(h)[0] !== "id");
+    if (campo === "data" && cands.length > 1) {
+      const d = desempateData(tipo, cands);
+      if (d) cands = [d];
+    }
     if (cands.length === 1) {
       colunas[campo] = cands[0];
       usados.add(cands[0]);
@@ -117,8 +212,6 @@ export function guessLayout(tipo: TipoLayout, header: string[], t: Tabela, linha
       motivos.push(`Nenhuma coluna reconhecida como ${campo}`);
     }
   }
-  const rows = dataRows(t, linhaCabecalho).slice(0, 50);
-  const col = (name?: string) => (name ? rows.map((r) => r[header.indexOf(name)] ?? "") : []);
   let formatoData: FormatoData | undefined;
   if (colunas.data) {
     const vals = col(colunas.data).filter((x) => x.trim());
@@ -126,37 +219,34 @@ export function guessLayout(tipo: TipoLayout, header: string[], t: Tabela, linha
     if (!fs.length) {
       alta = false;
       motivos.push("Formato de data não reconhecido");
-    } else if (fs.includes("dd/mm/aaaa") && fs.includes("mm/dd/aaaa")) {
-      formatoData = "dd/mm/aaaa";
-      // Só é certeza se algum dia passa de 12 na primeira posição
-      if (!vals.some((x) => Number(x.split("/")[0]) > 12)) {
-        alta = false;
-        motivos.push("Data pode ser dia/mês ou mês/dia");
-      }
-    } else {
+    } else if (fs.length === 1 || fs.every((f) => COM_MES.includes(f))) {
+      // Os dois formatos com nome de mês leem igual: não há o que perguntar
       formatoData = fs[0];
-      if (fs.length > 1) {
-        alta = false;
-        motivos.push("Mais de um formato de data possível");
-      }
+    } else {
+      // Nunca escolhe dd/mm sem avisar: o usuário responde
+      alta = false;
+      perguntas.data = fs;
+      motivos.push(fs.includes("dd/mm/aaaa") && fs.includes("mm/dd/aaaa") ? "Data pode ser dia/mês ou mês/dia" : "Mais de um formato de data possível");
     }
   }
   let formatoValor: FormatoValor | undefined;
   if (colunas.valor) {
-    const vals = col(colunas.valor).filter((x) => x.trim());
-    const br = vals.map((x) => money(x, "br"));
-    const pt = vals.map((x) => money(x, "ponto"));
-    const brOk = br.every((n) => n !== null);
-    const ptOk = pt.every((n) => n !== null);
-    if (brOk && (!ptOk || br.every((n, i) => n === pt[i]))) formatoValor = "br";
-    else if (ptOk && !brOk) formatoValor = "ponto";
+    const r = formatoValorDa(col(colunas.valor).filter((x) => x.trim()));
+    if (r.formato) formatoValor = r.formato;
     else {
       alta = false;
-      formatoValor = brOk ? "br" : undefined;
-      motivos.push(brOk ? "Valor pode usar ponto ou vírgula como decimal" : "Formato de valor não reconhecido");
+      if (r.pergunta) perguntas.valor = r.pergunta;
+      motivos.push(r.pergunta ? "Valor pode usar ponto ou vírgula como decimal" : "Formato de valor não reconhecido");
     }
   }
-  return { layout: colunas, formatoData: formatoData ?? (colunas.data ? undefined : "dd/mm/aaaa"), formatoValor, confianca: alta ? "alta" : "baixa", motivos };
+  return {
+    layout: colunas,
+    formatoData: formatoData ?? (colunas.data ? undefined : "dd/mm/aaaa"),
+    formatoValor,
+    confianca: alta ? "alta" : "baixa",
+    motivos,
+    ...(perguntas.data || perguntas.valor ? { perguntas } : {}),
+  };
 }
 
 const isRec = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -167,11 +257,12 @@ export function validateLayout(x: unknown, header: string[]): { ok: true; layout
   const bad = (erro: string) => ({ ok: false as const, erro });
   if (!isRec(x) || Object.getPrototypeOf(x) !== Object.prototype && Object.getPrototypeOf(x) !== null) return bad("Layout deve ser um objeto.");
   const keys = Object.keys(x);
-  const allowed = ["tipo", "colunas", "formatoData", "formatoValor", "separador", "linhaCabecalho"];
+  const allowed = ["tipo", "colunas", "formatoData", "formatoValor", "separador", "linhaCabecalho", "moeda"];
   if (keys.some((k) => !allowed.includes(k)) || own(x, "__proto__")) return bad("Layout com campos desconhecidos.");
   if (x.tipo !== "esperados" && x.tipo !== "extrato") return bad("Tipo de layout inválido.");
   if (!FORMATOS_DATA.includes(x.formatoData as FormatoData)) return bad("Formato de data inválido.");
   if (!FORMATOS_VALOR.includes(x.formatoValor as FormatoValor)) return bad("Formato de valor inválido.");
+  if (x.moeda !== undefined && !isMoeda(x.moeda)) return bad("Moeda inválida.");
   if (x.separador !== undefined && !SEPARADORES_LAYOUT.includes(x.separador as ";")) return bad("Separador inválido.");
   if (typeof x.linhaCabecalho !== "number" || !Number.isInteger(x.linhaCabecalho) || x.linhaCabecalho < 0 || x.linhaCabecalho > 10) return bad("Linha do cabeçalho inválida.");
   const c = x.colunas;
@@ -193,6 +284,7 @@ export function validateLayout(x: unknown, header: string[]): { ok: true; layout
   if (colunas.referencia === colunas.valor) return bad("Referência e valor precisam ser colunas diferentes.");
   const layout: Layout = { tipo: x.tipo, colunas, formatoData: x.formatoData as FormatoData, formatoValor: x.formatoValor as FormatoValor, linhaCabecalho: x.linhaCabecalho };
   if (x.separador !== undefined) layout.separador = x.separador as Layout["separador"];
+  if (x.moeda !== undefined) layout.moeda = x.moeda as Moeda;
   return { ok: true, layout };
 }
 
@@ -295,6 +387,7 @@ export function layoutDiff(a: Layout, b: Layout): string[] {
   for (const k of CAMPOS) if ((a.colunas[k] ?? "") !== (b.colunas[k] ?? "")) out.push(`${k}: ${a.colunas[k] ?? "-"} → ${b.colunas[k] ?? "-"}`);
   if (a.formatoData !== b.formatoData) out.push(`data: ${a.formatoData} → ${b.formatoData}`);
   if (a.formatoValor !== b.formatoValor) out.push(`valor: ${a.formatoValor} → ${b.formatoValor}`);
+  if (moedaDoLayout(a) !== moedaDoLayout(b)) out.push(`moeda: ${moedaDoLayout(a)} → ${moedaDoLayout(b)}`);
   return out;
 }
 
@@ -318,13 +411,23 @@ export type PreviaArquivo = {
   colunas: Partial<Layout["colunas"]>;
   formatoData?: FormatoData;
   formatoValor?: FormatoValor;
+  /** Moeda detectada pelos símbolos (ou a escolhida pelo usuário). Ausente: o usuário escolhe. */
+  moeda?: Moeda;
+  /** Formatos que o sistema não decide sozinho; a tela pergunta. */
+  perguntas?: Perguntas;
   confianca: "alta" | "baixa";
   origem: "ia" | "heuristica" | "usuario";
   motivos: string[];
   linhas: LinhaConvertida[];
   erro?: string;
 };
-export type ResultadoPrevia = { ok: false; erro: string } | { ok: true; previas: PreviaArquivo[] };
+/**
+ * moedasFixas: moeda dos arquivos já legíveis (OFX/CNAB/CSV antigo = BRL; layout salvo = a dele).
+ * precisaCotacao: as moedas diferem e falta a cotação; a tela mostra os campos de câmbio.
+ */
+export type ResultadoPrevia =
+  | { ok: false; erro: string }
+  | { ok: true; previas: PreviaArquivo[]; moedasFixas?: Partial<Record<TipoLayout, Moeda>>; precisaCotacao?: true };
 
 /** Índices (no cabeçalho e nas linhas) das colunas de referência, valor e data do layout, para destacar na prova. */
 export function colunasDoLayout(layout: Layout, header: string[]) {
@@ -332,3 +435,7 @@ export function colunasDoLayout(layout: Layout, header: string[]) {
   const ok = (n: number) => (n >= 0 ? n : undefined);
   return { referencia: ok(i(layout.colunas.referencia)), valor: ok(i(layout.colunas.valor)), data: ok(i(layout.colunas.data)) };
 }
+
+/** Moeda detectada na planilha (cabeçalho e até 50 linhas, textos originais). */
+export const moedaDaTabela = (t: Tabela, linhaCabecalho: number): Moeda | undefined =>
+  detectarMoeda(headerOf(t.linhas, linhaCabecalho), dataRows(t, linhaCabecalho).slice(0, 50));

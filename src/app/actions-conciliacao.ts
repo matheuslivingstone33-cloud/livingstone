@@ -19,10 +19,13 @@ import {
   amostrasPorColuna,
   colunasDoLayout,
   convertWithLayout,
+  guessLayout,
   headerOf,
   isLegacyCsv,
   layoutDiff,
   layoutSignature,
+  moedaDaTabela,
+  moedaDoLayout,
   previewRows,
   validateLayout,
   type Layout,
@@ -30,6 +33,8 @@ import {
   type ResultadoPrevia,
   type TipoLayout,
 } from "@/lib/layout-conciliacao";
+import { CambioError, SEM_COTACAO, parseCotacao, parseToleranciaPct, type CambioInfo, type Cotacao } from "@/lib/cambio";
+import type { Moeda } from "@/lib/moeda";
 
 const BACK = "/conciliacao";
 const notaTaxa = (n: number) => (n ? ` · ${n} explicado(s) pela taxa` : "");
@@ -100,7 +105,7 @@ export async function createReconciliation(form: FormData) {
 
 // ---------- Planilhas em qualquer formato (layout de colunas por instituição) ----------
 
-type Pronto = { modo: "pronto"; tipo: TipoLayout; nome: string; formato: string; entries: ExpectedEntry[] | BankEntry[]; layoutId?: string; fonte: FonteProva };
+type Pronto = { modo: "pronto"; tipo: TipoLayout; nome: string; formato: string; entries: ExpectedEntry[] | BankEntry[]; layoutId?: string; fonte: FonteProva; moeda: Moeda };
 type SemLayout = { modo: "layout"; tipo: TipoLayout; nome: string; tabela: RawTable; header: string[]; linha: number; assinatura: string; sha256: string };
 
 const ROTULO: Record<TipoLayout, string> = { esperados: "títulos esperados", extrato: "arquivo do banco" };
@@ -118,11 +123,12 @@ async function lerArquivo(orgId: string, tipo: TipoLayout, f: AiFile, cnab400: C
     const text = decodeText(f.data);
     if (tipo === "extrato" && detectBankFormat(f.name, text) !== "CSV") {
       const p = parseBankFile(f.name, text, cnab400);
-      return { modo: "pronto", tipo, nome: f.name, formato: p.format, entries: p.entries, fonte: { arquivo: f.name, formato: p.format, sha256 } };
+      // OFX e CNAB são de bancos brasileiros: sempre em real
+      return { modo: "pronto", tipo, nome: f.name, formato: p.format, entries: p.entries, fonte: { arquivo: f.name, formato: p.format, sha256 }, moeda: "BRL" };
     }
     if (isLegacyCsv(tipo, text)) {
       const entries = tipo === "esperados" ? parseExpectedCsv(text) : parseBankFile(f.name, text, cnab400).entries;
-      return { modo: "pronto", tipo, nome: f.name, formato: "CSV", entries, fonte: { arquivo: f.name, formato: "CSV", sha256, cabecalho: csvHeader(text) } };
+      return { modo: "pronto", tipo, nome: f.name, formato: "CSV", entries, fonte: { arquivo: f.name, formato: "CSV", sha256, cabecalho: csvHeader(text) }, moeda: "BRL" };
     }
   }
   const tabela = await readTable(f.name, f.data);
@@ -137,6 +143,7 @@ async function lerArquivo(orgId: string, tipo: TipoLayout, f: AiFile, cnab400: C
       return {
         modo: "pronto", tipo, nome: f.name, formato: tabela.formato, entries: convertWithLayout(tabela, v.layout), layoutId: salvo.id,
         fonte: { arquivo: f.name, formato: tabela.formato, sha256, cabecalho: header, colunas: colunasDoLayout(v.layout, header) },
+        moeda: moedaDoLayout(v.layout),
       };
   }
   return { modo: "layout", tipo, nome: f.name, tabela, header, linha, assinatura, sha256 };
@@ -171,31 +178,64 @@ function layoutDoForm(form: FormData, a: SemLayout): { ok: true; layout: Layout 
   if (!x || typeof x !== "object" || Array.isArray(x)) return { ok: false, erro: "Layout ilegível." };
   const o = x as Record<string, unknown>;
   const montado: Record<string, unknown> = { tipo: a.tipo, colunas: o.colunas, formatoData: o.formatoData, formatoValor: o.formatoValor, linhaCabecalho: a.linha };
+  // Moeda escolhida pelo usuário (vazio = ainda não escolhida)
+  if (o.moeda !== undefined && o.moeda !== "") montado.moeda = o.moeda;
   if (a.tabela.separador) montado.separador = a.tabela.separador;
   return validateLayout(montado, a.header);
 }
 
+/** Perguntas de formato (data/valor) que a amostra deixa em aberto, pela mesma heurística da sugestão. */
+const perguntasDe = (a: SemLayout) => guessLayout(a.tipo, a.header, a.tabela, a.linha).perguntas;
+
+type CambioForm = { cotacao: Cotacao; toleranciaPct: number; informadaPor: string };
+
+/** Câmbio da tela: obrigatório só quando as moedas diferem. A cotação é sempre digitada pelo usuário. */
+function cambioDoForm(form: FormData, s: Session, esp: Moeda, ext: Moeda): { ok: true; cambio?: CambioForm } | { ok: false; erro: string } {
+  if (esp === ext) return { ok: true };
+  const raw = String(form.get("cotacao") ?? "").trim();
+  if (!raw) return { ok: false, erro: SEM_COTACAO };
+  const cotacao = parseCotacao(raw.slice(0, 20));
+  if (!cotacao) return { ok: false, erro: "Cotação inválida: use um número positivo com até 6 casas decimais (ex.: 5,4321)." };
+  const toleranciaPct = parseToleranciaPct(String(form.get("toleranciaCambioPct") ?? "").trim().slice(0, 10));
+  if (toleranciaPct === null) return { ok: false, erro: "Tolerância de câmbio inválida: use de 0 a 10%, com até 2 casas decimais." };
+  return { ok: true, cambio: { cotacao, toleranciaPct, informadaPor: s.name } };
+}
+
+const notaCambio = (c: CambioInfo | undefined, n: number) =>
+  c ? ` · moedas esperados ${c.moedaEsperados} / extrato ${c.moedaExtrato}, base ${c.base}, cotação ${c.cotacao} (tolerância ${c.toleranciaPct}%) informada por ${c.informadaPor}${n ? `, ${n} com diferença de câmbio` : ""}` : "";
+
 async function persistir(s: Session, form: FormData, esp: Pronto, ext: Pronto, extra = ""): Promise<never> {
   const options = optionsOf(form);
+  const cx = cambioDoForm(form, s, esp.moeda, ext.moeda);
+  if (!cx.ok) fail(BACK, cx.erro);
   const expected = esp.entries as ExpectedEntry[];
   if (!expected.length) fail(BACK, "Nenhum título válido na lista de esperados.");
   const fontes = { esperados: esp.fonte, banco: ext.fonte };
   const { cnab400, conciliacao } = await getSettings(s.orgId);
-  const { rec, itemCount, explicadosTaxa } = await persistReconciliation(s.orgId, {
-    name: String(form.get("name") || `Conciliação ${fmtData(new Date())}`),
-    bankFileName: ext.nome,
-    bankFormat: ext.formato,
-    expectedFileName: esp.nome,
-    expected,
-    entries: ext.entries as BankEntry[],
-    options,
-    fontes,
-    cnab400,
-    taxas: conciliacao.taxas,
-  });
+  let r: Awaited<ReturnType<typeof persistReconciliation>>;
+  try {
+    r = await persistReconciliation(s.orgId, {
+      name: String(form.get("name") || `Conciliação ${fmtData(new Date())}`),
+      bankFileName: ext.nome,
+      bankFormat: ext.formato,
+      expectedFileName: esp.nome,
+      expected,
+      entries: ext.entries as BankEntry[],
+      options,
+      fontes,
+      cnab400,
+      taxas: conciliacao.taxas,
+      moedas: { esperados: esp.moeda, extrato: ext.moeda },
+      cambio: cx.cambio,
+    });
+  } catch (e) {
+    if (e instanceof CambioError) fail(BACK, e.message);
+    throw e;
+  }
+  const { rec, itemCount, explicadosTaxa, explicadosCambio, cambio } = r;
   for (const p of [esp, ext])
     if (p.layoutId) await audit(s, "conciliacao.conversao", `${ROTULO[p.tipo]} (${p.formato}) convertido pelo layout salvo ${p.layoutId}: ${p.entries.length} linha(s)`);
-  await audit(s, "conciliacao.criar", `${rec.name} (${ext.formato}, ${itemCount} itens, regras ${JSON.stringify(options)})${extra}${notaTaxa(explicadosTaxa)}${resumoArquivos(fontes)}`);
+  await audit(s, "conciliacao.criar", `${rec.name} (${ext.formato}, ${itemCount} itens, regras ${JSON.stringify(options)})${extra}${notaTaxa(explicadosTaxa)}${notaCambio(cambio, explicadosCambio)}${resumoArquivos(fontes)}`);
   revalidatePath(BACK);
   redirect(`/conciliacao/${rec.id}`);
 }
@@ -214,7 +254,13 @@ export async function previewReconciliation(form: FormData): Promise<ResultadoPr
     return { ok: false, erro: e instanceof Error && (e instanceof BankFileError || e instanceof UploadError) ? e.message : "Não foi possível ler os arquivos." };
   }
   const { esperados, extrato } = lidos;
-  if (esperados.modo === "pronto" && extrato.modo === "pronto") return persistir(s, form, esperados, extrato);
+  const moedasFixas: Partial<Record<TipoLayout, Moeda>> = {};
+  for (const a of [esperados, extrato]) if (a.modo === "pronto") moedasFixas[a.tipo] = a.moeda;
+  if (esperados.modo === "pronto" && extrato.modo === "pronto") {
+    // Moedas diferentes e nenhuma cotação digitada: a tela pede a cotação antes de conciliar
+    if (esperados.moeda !== extrato.moeda && !String(form.get("cotacao") ?? "").trim()) return { ok: true, previas: [], moedasFixas, precisaCotacao: true };
+    return persistir(s, form, esperados, extrato);
+  }
 
   const previas: PreviaArquivo[] = [];
   for (const a of [extrato, esperados]) {
@@ -224,7 +270,12 @@ export async function previewReconciliation(form: FormData): Promise<ResultadoPr
       const v = layoutDoForm(form, a);
       previas.push(
         v.ok
-          ? { ...base, colunas: v.layout.colunas, formatoData: v.layout.formatoData, formatoValor: v.layout.formatoValor, confianca: "baixa", origem: "usuario", motivos: [], linhas: previewRows(a.tabela, v.layout, 10) }
+          ? {
+              ...base, colunas: v.layout.colunas, formatoData: v.layout.formatoData, formatoValor: v.layout.formatoValor, moeda: v.layout.moeda,
+              // As perguntas de formato continuam na tela depois de "Atualizar prévia"
+              ...(perguntasDe(a) ? { perguntas: perguntasDe(a) } : {}),
+              confianca: "baixa", origem: "usuario", motivos: [], linhas: previewRows(a.tabela, v.layout, 10),
+            }
           : { ...base, colunas: {}, confianca: "baixa", origem: "usuario", motivos: [], linhas: [], erro: v.erro },
       );
       continue;
@@ -240,13 +291,16 @@ export async function previewReconciliation(form: FormData): Promise<ResultadoPr
       colunas: r.layout?.colunas ?? r.sugestao.layout,
       formatoData: r.layout?.formatoData ?? r.sugestao.formatoData,
       formatoValor: r.layout?.formatoValor ?? r.sugestao.formatoValor,
+      // Moeda só pelos símbolos da planilha; a IA nunca define moeda nem cotação
+      moeda: moedaDaTabela(a.tabela, a.linha),
+      ...(r.sugestao.perguntas ? { perguntas: r.sugestao.perguntas } : {}),
       confianca: r.sugestao.confianca,
       origem: r.origem,
       motivos: r.sugestao.motivos,
       linhas: r.layout ? previewRows(a.tabela, r.layout, 10) : [],
     });
   }
-  return { ok: true, previas };
+  return { ok: true, previas, moedasFixas };
 }
 
 /** Confirmação na tela: revalida o layout contra o cabeçalho recalculado aqui, salva para a instituição e concilia. */
@@ -268,6 +322,7 @@ export async function confirmLayoutAndReconcile(form: FormData): Promise<Resulta
     }
     const v = layoutDoForm(form, a);
     if (!v.ok) return { ok: false, erro: `${ROTULO[tipo]}: ${v.erro}` };
+    if (!v.layout.moeda) return { ok: false, erro: `${ROTULO[tipo]}: informe se a planilha está em real ou em dólar.` };
     let entries: ExpectedEntry[] | BankEntry[];
     try {
       entries = convertWithLayout(a.tabela, v.layout);
@@ -289,8 +344,12 @@ export async function confirmLayoutAndReconcile(form: FormData): Promise<Resulta
     prontos[tipo] = {
       modo: "pronto", tipo, nome: a.nome, formato: a.tabela.formato, entries,
       fonte: { arquivo: a.nome, formato: a.tabela.formato, sha256: a.sha256, cabecalho: a.header, colunas: colunasDoLayout(v.layout, a.header) },
+      moeda: moedaDoLayout(v.layout),
     };
   }
+  // Moedas diferentes exigem a cotação: devolve o erro à tela em vez de conciliar
+  const cx = cambioDoForm(form, s, prontos.esperados!.moeda, prontos.extrato!.moeda);
+  if (!cx.ok) return { ok: false, erro: cx.erro };
   revalidatePath(BACK);
   return persistir(s, form, prontos.esperados!, prontos.extrato!, notas.length ? ` · ${notas.join(", ")}` : "");
 }

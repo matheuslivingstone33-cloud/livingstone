@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 import { reconcileWith, summarize, type BankEntry, type Cnab400Layout, type ExpectedEntry, type ReconcileOptions } from "@/lib/reconcile";
 import { limitarTotal, montarProva, type FonteProva } from "@/lib/prova-conciliacao";
 import { classificarTaxa, type TaxaRecebimento } from "@/lib/taxa-recebimento";
+import { CambioError, SEM_COTACAO, converterEntradas, explicadoCambio, type CambioInfo, type Cotacao } from "@/lib/cambio";
+import type { Moeda } from "@/lib/moeda";
 
 export type PersistInput = {
   name: string;
@@ -18,20 +20,63 @@ export type PersistInput = {
   cnab400?: Cnab400Layout;
   /** Taxas por forma de recebimento da instituição (getSettings). Congeladas em options.taxas. */
   taxas?: TaxaRecebimento[];
+  /** Moeda de cada arquivo (padrão BRL). A base da conciliação é a moeda dos esperados. */
+  moedas?: { esperados: Moeda; extrato: Moeda };
+  /** Obrigatório quando as moedas diferem: cotação (R$ por US$ 1), tolerância em % e quem informou. */
+  cambio?: { cotacao: Cotacao; toleranciaPct: number; informadaPor: string };
 };
 
 const LOTE = 1000;
+const cents = (n: number) => Math.round(n * 100);
 
 export async function persistReconciliation(orgId: string, input: PersistInput) {
-  const { expected, entries, options, fontes } = input;
+  const { expected, options, fontes } = input;
   const taxas = input.taxas ?? [];
-  const items = reconcileWith(expected, entries, options);
+  const base = input.moedas?.esperados ?? "BRL";
+  const moedaExtrato = input.moedas?.extrato ?? "BRL";
+  const cambio = base !== moedaExtrato ? input.cambio : undefined;
+  if (base !== moedaExtrato && !cambio) throw new CambioError(SEM_COTACAO);
+  // O extrato é convertido para a moeda dos esperados antes de conciliar; o valor original fica no item e na prova
+  const conv = cambio ? converterEntradas(input.entries, moedaExtrato, base, cambio.cotacao) : undefined;
+  const entries = conv?.entries ?? input.entries;
+  const originais = conv?.originaisCentavos ?? [];
+  const cambioInfo: CambioInfo | undefined = cambio && {
+    moedaEsperados: base,
+    moedaExtrato,
+    base,
+    cotacao: cambio.cotacao.texto,
+    toleranciaPct: cambio.toleranciaPct,
+    informadaPor: cambio.informadaPor.slice(0, 120),
+    informadaEm: new Date().toISOString(),
+  };
+  const items = reconcileWith(expected, entries, { ...options, moeda: base });
   const { excess, ...counts } = summarize(items);
-  // A taxa só acrescenta a pista: status e contagens vêm da conciliação acima, sem mudança
-  const taxa = items.map((i) => classificarTaxa(i, i.expectedIndex !== undefined ? expected[i.expectedIndex]?.forma : undefined, taxas));
+  // A taxa só acrescenta a pista: status e contagens vêm da conciliação acima, sem mudança.
+  // As regras de taxa são em reais (parte fixa em centavos de R$): só valem para conciliação em BRL
+  const taxa = items.map((i) => (base === "BRL" ? classificarTaxa(i, i.expectedIndex !== undefined ? expected[i.expectedIndex]?.forma : undefined, taxas) : { explicadoTaxa: false, formaPagamento: undefined, taxaEsperada: undefined }));
   const explicadosTaxa = taxa.filter((t) => t.explicadoTaxa).length;
+  // Câmbio também é só pista: não muda status nem contagens
+  const porCambio = items.map((i) => !!cambioInfo && i.receivedIndex !== undefined && explicadoCambio(i, cambioInfo.toleranciaPct));
+  const explicadosCambio = porCambio.filter(Boolean).length;
+  const regraCambio = (k: number) => {
+    const j = items[k].receivedIndex;
+    if (!cambioInfo || j === undefined) return undefined;
+    return {
+      moedaOriginal: moedaExtrato,
+      valorOriginalCentavos: originais[j],
+      valorConvertidoCentavos: cents(entries[j].amount),
+      cotacao: cambioInfo.cotacao,
+      toleranciaPct: cambioInfo.toleranciaPct,
+      informadaPor: cambioInfo.informadaPor,
+      explicadoCambio: porCambio[k],
+    };
+  };
   const provas = fontes
-    ? limitarTotal(items.map((i, k) => montarProva(i, { ...fontes.esperados, entries: expected }, { ...fontes.banco, entries }, { ...options, cnab400: input.cnab400 }, taxa[k])))
+    ? limitarTotal(
+        items.map((i, k) =>
+          montarProva(i, { ...fontes.esperados, entries: expected }, { ...fontes.banco, entries }, { ...options, cnab400: input.cnab400 }, taxa[k], { base, cambio: regraCambio(k) }),
+        ),
+      )
     : [];
   return db.$transaction(
     async (tx) => {
@@ -47,7 +92,8 @@ export async function persistReconciliation(orgId: string, input: PersistInput) 
           totalExpected: expected.reduce((a, e) => a + e.amount, 0),
           totalReceived: entries.reduce((a, e) => a + e.amount, 0),
           totalExcess: excess,
-          options: { ...options, taxas } as unknown as Prisma.InputJsonValue,
+          currency: base,
+          options: { ...options, taxas, ...(cambioInfo ? { cambio: cambioInfo } : {}) } as unknown as Prisma.InputJsonValue,
           ...counts,
         },
       });
@@ -67,10 +113,12 @@ export async function persistReconciliation(orgId: string, input: PersistInput) 
         formaPagamento: taxa[k].formaPagamento,
         taxaEsperada: taxa[k].taxaEsperada,
         explicadoTaxa: taxa[k].explicadoTaxa,
+        amountOriginal: cambioInfo && i.receivedIndex !== undefined ? originais[i.receivedIndex] / 100 : undefined,
+        explicadoCambio: porCambio[k],
         evidence: provas[k] as unknown as Prisma.InputJsonValue | undefined,
       }));
       for (let k = 0; k < rows.length; k += LOTE) await tx.reconciliationItem.createMany({ data: rows.slice(k, k + LOTE) });
-      return { rec, itemCount: items.length, explicadosTaxa, summary: { ...counts, excess } };
+      return { rec, itemCount: items.length, explicadosTaxa, explicadosCambio, cambio: cambioInfo, summary: { ...counts, excess } };
     },
     { timeout: 60_000 },
   );

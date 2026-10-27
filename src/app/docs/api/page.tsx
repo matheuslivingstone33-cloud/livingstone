@@ -53,7 +53,19 @@ const RESP_201 = `HTTP/1.1 201 Created
   "formatoBanco": "JSON",
   "resumo": { "conciliados": 2, "divergentes": 0, "pendentes": 1, "naoEsperados": 0,
               "totalEsperado": 5620.5, "totalRecebido": 4730.5, "excedente": 0 },
-  "opcoes": { "toleranciaCentavos": 2, "casarPorValorData": true, "toleranciaDias": 3 }
+  "opcoes": { "toleranciaCentavos": 2, "casarPorValorData": true, "toleranciaDias": 3 },
+  "currency": "BRL",
+  "cambio": null
+}`;
+
+const CAMBIO_BODY = `{
+  "nome": "Recebimentos em dólar",
+  "moedaEsperados": "BRL",
+  "moedaExtrato": "USD",
+  "cotacao": "5.4321",
+  "toleranciaCambioPct": 0.5,
+  "esperados": [{ "referencia": "INV-1001", "valor": 543.21, "vencimento": "2026-10-05" }],
+  "banco": { "lancamentos": [{ "referencia": "INV-1001", "valor": 100.00, "data": "2026-10-05" }] }
 }`;
 
 const CURL_GET = `curl "${BASE}/api/v1/conciliacoes?pagina=1&limite=20" \\
@@ -71,7 +83,7 @@ const ERR = `{
 }`;
 
 const ERRORS: [string, string, string][] = [
-  ["400", "validation_error · invalid_json · idempotency_key_required", "Corpo inválido, JSON malformado ou Idempotency-Key ausente"],
+  ["400", "validation_error · invalid_json · idempotency_key_required", "Corpo inválido, JSON malformado, moedas diferentes sem cotação ou Idempotency-Key ausente"],
   ["401", "unauthorized", "Chave ausente, inválida ou revogada (sempre a mesma resposta)"],
   ["403", "insufficient_scope", "A chave não tem o escopo da operação"],
   ["404", "not_found", "Recurso inexistente ou de outra instituição"],
@@ -147,6 +159,8 @@ export default function ApiDocs() {
           <Code>{CURL_POST}</Code>
           <Code>{CURL_FILE}</Code>
           <Code>{RESP_201}</Code>
+          <p>Moeda e câmbio (opcionais): <C>moedaEsperados</C> e <C>moedaExtrato</C> (<C>BRL</C> ou <C>USD</C>; sem eles, BRL; numa planilha com layout salvo, vale a moeda do layout). A base da conciliação é a moeda dos esperados, e o extrato é convertido pela <C>cotacao</C> que você informa (texto ou número, sempre em reais por US$ 1, até 6 casas). A API não busca câmbio. Com moedas diferentes, a cotação é obrigatória e, sem ela, a resposta é 400 <C>validation_error</C>. A <C>toleranciaCambioPct</C> vai de 0 a 10 (padrão 0,5): um item com valor diferente dentro dela ganha a pista <C>explicadoPeloCambio</C>, mas a situação dele não muda. A resposta traz <C>currency</C> (moeda base) e <C>cambio</C> (moedas, cotação, tolerância, quem informou e quando; nulo sem câmbio). Cada item traz também <C>valorOriginal</C>, o valor do crédito na moeda do extrato.</p>
+          <Code>{CAMBIO_BODY}</Code>
         </Sec>
 
         <Sec id="consultar" title="GET /api/v1/conciliacoes e /api/v1/conciliacoes/{id}">

@@ -4,7 +4,9 @@ import { decodeText } from "./upload";
 import { formatBytes } from "./upload-limits";
 import { findHeaderLine, readTable, type RawTable } from "./planilha";
 import { jsonCanonico, sha256Hex, type FonteProva } from "./prova-conciliacao";
-import { colunasDoLayout, convertWithLayout, headerOf, layoutSignature, validateLayout, type Layout, type TipoLayout } from "./layout-conciliacao";
+import { colunasDoLayout, convertWithLayout, headerOf, layoutSignature, moedaDoLayout, validateLayout, type Layout, type TipoLayout } from "./layout-conciliacao";
+import { MOEDAS, isMoeda, type Moeda } from "./moeda";
+import { parseCotacao, parseToleranciaPct, type Cotacao } from "./cambio";
 
 export type FieldError = { campo: string; mensagem: string };
 
@@ -21,6 +23,10 @@ export type ReconciliationInput = {
   options: ReconcileOptions;
   /** Para a prova: hash do arquivo enviado (ou do JSON canônico da lista) e cabeçalho. */
   fontes: { esperados: FonteProva; banco: FonteProva };
+  /** Moeda de cada lado (padrão BRL; planilha com layout salvo usa a moeda do layout). */
+  moedas: { esperados: Moeda; extrato: Moeda };
+  /** Só quando as moedas diferem. informadaPor é preenchido pela rota (a chave da API). */
+  cambio?: { cotacao: Cotacao; toleranciaPct: number };
 };
 
 /** status 422: planilha sem layout salvo na instituição. */
@@ -109,7 +115,7 @@ function fromTable(tipo: TipoLayout, campo: ApiFileField, ctx: ApiContext, error
     return void errors.push({ campo, mensagem: SEM_LAYOUT });
   }
   try {
-    return { entries: convertWithLayout(t, v.layout), formato: t.formato, cabecalho: header, colunas: colunasDoLayout(v.layout, header) };
+    return { entries: convertWithLayout(t, v.layout), formato: t.formato, cabecalho: header, colunas: colunasDoLayout(v.layout, header), moeda: moedaDoLayout(v.layout) };
   } catch (e) {
     errors.push({ campo, mensagem: e instanceof BankFileError ? e.message : "Não foi possível converter o arquivo." });
   }
@@ -127,6 +133,7 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
   let expected: ExpectedEntry[] = [];
   let expectedFileName = "api.json";
   let fonteEsp: Omit<FonteProva, "arquivo"> = { formato: "JSON", sha256: "" };
+  let moedaLayoutEsp: Moeda | undefined;
   const esp = body.esperados;
   if (esp !== undefined && body.arquivoEsperados !== undefined) errors.push({ campo: "esperados", mensagem: "Envie exatamente um: esperados ou arquivoEsperados." });
   else if (body.arquivoEsperados !== undefined) {
@@ -137,6 +144,7 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
       const r = fromTable("esperados", "arquivoEsperados", ctx, errors, flags);
       if (r) {
         expected = r.entries as ExpectedEntry[];
+        moedaLayoutEsp = r.moeda;
         fonteEsp = { formato: r.formato, sha256: sha256Hex(f.buf), cabecalho: r.cabecalho, colunas: r.colunas };
       }
     }
@@ -173,6 +181,7 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
   let bankFileName = "";
   let bankFormat = "";
   let fonteBanco: Omit<FonteProva, "arquivo" | "formato"> = { sha256: "" };
+  let moedaLayoutExt: Moeda | undefined;
   const banco = body.banco;
   if (banco !== undefined && body.arquivoBanco !== undefined) errors.push({ campo: "banco", mensagem: "Envie exatamente um: banco ou arquivoBanco." });
   else if (body.arquivoBanco !== undefined) {
@@ -196,6 +205,7 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
         if (r) {
           entries = r.entries as BankEntry[];
           bankFormat = r.formato;
+          moedaLayoutExt = r.moeda;
           fonteBanco = { ...fonteBanco, cabecalho: r.cabecalho, colunas: r.colunas };
         }
       }
@@ -260,7 +270,29 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
     };
   }
 
+  // Moedas e câmbio (campos opcionais): sem eles, tudo em BRL como antes. A cotação nunca é buscada.
+  const moedaDe = (campo: "moedaEsperados" | "moedaExtrato", doLayout: Moeda | undefined): Moeda => {
+    const v = body[campo];
+    if (v === undefined) return doLayout ?? "BRL";
+    if (!isMoeda(v)) {
+      errors.push({ campo, mensagem: `Use um de: ${MOEDAS.join(", ")}.` });
+      return "BRL";
+    }
+    if (doLayout && v !== doLayout) errors.push({ campo, mensagem: `O layout salvo desta planilha está em ${doLayout}.` });
+    return v;
+  };
+  const moedas = { esperados: moedaDe("moedaEsperados", moedaLayoutEsp), extrato: moedaDe("moedaExtrato", moedaLayoutExt) };
+  let cambio: ReconciliationInput["cambio"];
+  if (moedas.esperados !== moedas.extrato) {
+    const cotacao = body.cotacao === undefined ? undefined : parseCotacao(body.cotacao);
+    const toleranciaPct = parseToleranciaPct(body.toleranciaCambioPct);
+    if (body.cotacao === undefined) errors.push({ campo: "cotacao", mensagem: "Moedas diferentes: informe a cotação (R$ por US$ 1). O sistema não busca câmbio." });
+    else if (!cotacao) errors.push({ campo: "cotacao", mensagem: "Número positivo com até 6 casas decimais (ex.: \"5.4321\")." });
+    if (toleranciaPct === null) errors.push({ campo: "toleranciaCambioPct", mensagem: "Número de 0 a 10, com até 2 casas decimais." });
+    if (cotacao && toleranciaPct !== null) cambio = { cotacao, toleranciaPct };
+  }
+
   if (errors.length) return { ok: false, errors: errors.slice(0, 50), ...(flags.semLayout ? { status: 422 as const } : {}) };
   const fontes = { esperados: { arquivo: expectedFileName, ...fonteEsp }, banco: { arquivo: bankFileName, formato: bankFormat, ...fonteBanco } };
-  return { ok: true, value: { name, expected, expectedFileName, bankFileName, bankFormat, entries, options, fontes } };
+  return { ok: true, value: { name, expected, expectedFileName, bankFileName, bankFormat, entries, options, fontes, moedas, ...(cambio ? { cambio } : {}) } };
 }

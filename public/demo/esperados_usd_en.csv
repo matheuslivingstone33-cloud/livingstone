@@ -1,0 +1,16 @@
+Invoice No,Customer,Amount,Due Date,Payment Method
+INV-2601,Acme Corp,"1,234.56",10/05/2026,ACH
+INV-2602,Globex LLC,"2,500.00",10/06/2026,Wire
+INV-2603,Initech Inc,"1,000.00",10/07/2026,ACH
+INV-2604,Umbrella Co,"4,850.25",10/08/2026,Credit Card
+INV-2605,Stark Industries,"12,000.00",10/13/2026,Wire
+INV-2606,Wayne Enterprises,750.00,10/14/2026,ACH
+INV-2607,Hooli,"3,200.00",10/15/2026,ACH
+INV-2608,Soylent Corp,640.50,10/16/2026,Check
+INV-2609,Vandelay Industries,"1,875.00",10/19/2026,ACH
+INV-2610,Pied Piper,"2,150.75",10/20/2026,Wire
+INV-2611,Dunder Mifflin,980.40,10/21/2026,ACH
+INV-2612,Wonka Industries,"5,600.00",10/22/2026,Wire
+INV-2613,Cyberdyne Systems,"1,120.00",10/23/2026,ACH
+INV-2614,Tyrell Corp,"2,990.00",10/26/2026,ACH
+INV-2615,Oscorp,415.00,10/27/2026,Check

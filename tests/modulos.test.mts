@@ -1748,7 +1748,7 @@ test("Layout: validação estrita recusa chaves extras, colunas inexistentes, en
   bad({ ...layoutAlt, extra: 1 });
   bad({ ...layoutAlt, tipo: "outro" });
   bad({ ...layoutAlt, formatoData: "dd/mm/aa" });
-  bad({ ...layoutAlt, formatoValor: "us" });
+  bad({ ...layoutAlt, formatoValor: "eua" });
   bad({ ...layoutAlt, separador: "x" });
   bad({ ...layoutAlt, linhaCabecalho: 11 });
   bad({ ...layoutAlt, linhaCabecalho: 1.5 });
@@ -2110,7 +2110,7 @@ test("Prova: grupos da tela e frase de cada caso", () => {
 test("Prova: lib pura (sem banco nem Next) e gerador de demos determinístico", () => {
   const src = readFileSync(new URL("../src/lib/prova-conciliacao.ts", import.meta.url), "utf8");
   const imports = [...src.matchAll(/^import .* from "([^"]+)";$/gm)].map((m) => m[1]);
-  assert.deepEqual(imports.sort(), ["./mascara", "./reconcile", "node:crypto"]);
+  assert.deepEqual(imports.sort(), ["./mascara", "./moeda", "./reconcile", "node:crypto"]);
   assert.ok(!/@\/lib\/db|next\//.test(src));
   for (const f of ["mascara.ts", "pedidos.ts"]) {
     const s = readFileSync(new URL(`../src/lib/${f}`, import.meta.url), "utf8");
@@ -2805,4 +2805,420 @@ test("Biblioteca: sugerirLayout leva as dicas da biblioteca como dados não conf
   assert.match(prompt, /<dados_nao_confiaveis tipo="descricoes_colunas">\nQuantia: Valor do título em reais\n<\/dados_nao_confiaveis>/);
   await sugerirLayout("esperados", t, 0, { call });
   assert.ok(!prompt.includes("descricoes_colunas"));
+});
+
+// ---------- Planilhas em inglês, formato dos EUA, dólar e câmbio manual ----------
+import { FORMATOS_DATA as FD_MOEDA, FORMATOS_VALOR as FV_MOEDA, MOEDAS, fmtCentavos, fmtMoeda } from "../src/lib/moeda";
+import { FORMATOS_DATA as FD_LAYOUT, FORMATOS_VALOR as FV_LAYOUT, detectarMoeda, formatoValorDa, layoutDiff, moedaDaTabela, moedaDoLayout, parseDateAs } from "../src/lib/layout-conciliacao";
+import { parseMoneyUs } from "../src/lib/reconcile";
+import { converterCentavos, converterEntradas, explicadoCambio, parseCotacao, parseToleranciaPct, TOLERANCIA_CAMBIO_PADRAO } from "../src/lib/cambio";
+import { fmtBRL } from "../src/lib/format";
+
+const NB = " ";
+const semNb = (s: string) => s.replace(/ /g, " ");
+
+test("Moeda: fmtMoeda segue o idioma da interface e a moeda do dado; fmtBRL é alias e não muda", () => {
+  assert.deepEqual([...MOEDAS], ["BRL", "USD"]);
+  assert.equal(fmtMoeda(1234.56, "BRL", "pt"), `R$${NB}1.234,56`);
+  assert.equal(fmtMoeda(1234.56, "USD", "pt"), `US$${NB}1.234,56`);
+  assert.equal(fmtMoeda(1234.56, "USD", "en"), "US$1,234.56");
+  assert.equal(fmtMoeda(1234.56, "BRL", "en"), "R$1,234.56");
+  assert.equal(fmtCentavos(54321, "BRL"), `R$${NB}543,21`);
+  for (const n of [0, 0.1, 1234.56, -150, 1e9]) {
+    assert.equal(fmtBRL(n), n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
+    assert.equal(fmtMoeda(n), n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
+  }
+  // Constantes movidas para moeda.ts e reexportadas; formatos novos só no fim
+  assert.equal(FD_LAYOUT, FD_MOEDA);
+  assert.equal(FV_LAYOUT, FV_MOEDA);
+  assert.deepEqual([...FV_MOEDA], ["br", "ponto", "us"]);
+  assert.deepEqual(FD_MOEDA.slice(0, 6), ["dd/mm/aaaa", "aaaa-mm-dd", "mm/dd/aaaa", "dd-mm-aaaa", "dd.mm.aaaa", "aaaammdd"]);
+  assert.deepEqual(FD_MOEDA.slice(6), ["mmm dd, aaaa", "dd-mmm-aaaa"]);
+  // moeda.ts vai para o navegador: nada de node:crypto; a cópia das constantes saiu do componente
+  const src = readFileSync(new URL("../src/lib/moeda.ts", import.meta.url), "utf8");
+  assert.ok(!/from "node:|from "\.\//.test(src));
+  const comp = readFileSync(new URL("../src/components/NovaConciliacao.tsx", import.meta.url), "utf8");
+  assert.ok(!/const FORMATOS_DATA\s*=/.test(comp));
+  assert.ok(!/from "@\/lib\/layout-conciliacao"/.test(comp.replace(/import type [^;]+;/g, "")), "o componente só importa tipos de layout-conciliacao");
+});
+
+test("Valores US: prefixos, milhar, parênteses; br e ofx sem mudança", () => {
+  const ok: [string, number][] = [
+    ["1,234.56", 1234.56], ["1,234", 1234], ["1234.5", 1234.5], ["-150.00", -150], ["(150.00)", -150], ["$1,234.56", 1234.56],
+    ["US$ 1,234.56", 1234.56], ["USD 980.00", 980], ["U$ 12.5", 12.5], ["-$150.00", -150], ["($80.00)", -80], ["1,234,567.89", 1234567.89], ["0.99", 0.99],
+  ];
+  for (const [s, n] of ok) assert.equal(parseMoneyUs(s), n, s);
+  for (const s of ["1.234,56", "12,34", "1,23", "abc", "", "1,2345.00", "((1.00))", "-(1.00)", "1.234.567", "R$ 10,00"]) assert.equal(parseMoneyUs(s), null, s);
+  // Regressão: br e ofx continuam iguais
+  assert.equal(parseMoney("1.234,56", "br"), 1234.56);
+  assert.equal(parseMoney("1.500", "br"), 1500);
+  assert.equal(parseMoney("1234.56", "br"), 1234.56);
+  assert.equal(parseMoney("R$ 12,5", "br"), 12.5);
+  assert.equal(parseMoney("1,234.56", "br"), null);
+  assert.equal(parseMoney("1500.00", "ofx"), 1500);
+  assert.equal(parseMoney("1.234,56", "ofx"), 1234.56);
+  assert.equal(parseMoney("$10.00", "ofx"), null);
+});
+
+const grade = (cab: string[], ...linhas: string[][]) => ({ linhas: [cab, ...linhas], numeros: [cab, ...linhas].map((_, i) => i + 1) });
+
+test("Layout: ambiguidade de valor e de data vira pergunta, nunca escolha silenciosa", () => {
+  // Valor: "1.5" (br e ponto: 1,5) e "2.000" (br: 2000; ponto: 2000) leem igual → sem pergunta
+  const igual = guessLayout("esperados", ["ref", "valor"], grade(["ref", "valor"], ["1", "150.00"], ["2", "1.500"]), 0);
+  assert.equal(igual.formatoValor, "br");
+  assert.equal(igual.perguntas, undefined);
+  // "1,234" só o us lê
+  const us = guessLayout("esperados", ["ref", "amount"], grade(["ref", "amount"], ["1", "1,234"], ["2", "$980.00"]), 0);
+  assert.equal(us.formatoValor, "us");
+  const pv = guessLayout("esperados", ["ref", "valor"], grade(["ref", "valor"], ["1", "1.25"], ["2", "1,25"]), 0);
+  assert.equal(pv.formatoValor, "br"); // "1,25" só br lê
+  const conflito = guessLayout("esperados", ["ref", "valor"], grade(["ref", "valor"], ["1", "12.50"], ["2", "1,234"]), 0);
+  assert.equal(conflito.formatoValor, "us"); // br não lê "1,234"
+  // Data: dd/mm × mm/dd sem dia > 12 → pergunta; com dia > 12 decide
+  const d1 = guessLayout("esperados", ["ref", "valor", "data"], grade(["ref", "valor", "data"], ["1", "10,00", "05/10/2026"], ["2", "10,00", "06/10/2026"]), 0);
+  assert.equal(d1.formatoData, undefined);
+  assert.deepEqual(d1.perguntas?.data, ["dd/mm/aaaa", "mm/dd/aaaa"]);
+  assert.equal(d1.confianca, "baixa");
+  const d2 = guessLayout("esperados", ["ref", "valor", "data"], grade(["ref", "valor", "data"], ["1", "10,00", "25/10/2026"]), 0);
+  assert.equal(d2.formatoData, "dd/mm/aaaa");
+  assert.equal(d2.perguntas, undefined);
+  const d3 = guessLayout("esperados", ["ref", "valor", "data"], grade(["ref", "valor", "data"], ["1", "10,00", "10/25/2026"], ["2", "10,00", "10/05/2026"]), 0);
+  assert.equal(d3.formatoData, "mm/dd/aaaa");
+  // Mesmo dia nas duas leituras (05/05) também é dúvida: o resto do arquivo pode ter 05/10
+  const d4 = guessLayout("esperados", ["ref", "valor", "data"], grade(["ref", "valor", "data"], ["1", "10,00", "05/05/2026"]), 0);
+  assert.deepEqual(d4.perguntas?.data, ["dd/mm/aaaa", "mm/dd/aaaa"]);
+});
+
+test("Layout: formato de valor com leitores que discordam vira pergunta (undefined + perguntas.valor)", () => {
+  assert.deepEqual(formatoValorDa(["1.234", "10.5"]), { formato: "br" });
+  assert.deepEqual(formatoValorDa(["1,234.56"]), { formato: "us" });
+  assert.deepEqual(formatoValorDa(["abc"]), {});
+  // Com os leitores atuais nenhum texto é lido por dois formatos com números diferentes; o critério é conferido com um leitor injetado
+  const ler = (raw: string, f: string) => (f === "br" ? 1000 : f === "us" ? 1 : null);
+  assert.deepEqual(formatoValorDa(["1.000"], ler), { pergunta: ["br", "us"] });
+  const mesmo = (raw: string, f: string) => (f === "ponto" ? null : 7);
+  assert.deepEqual(formatoValorDa(["7"], mesmo), { formato: "br" });
+});
+
+test("Datas: ISO com T, mês por extenso e abreviado, dd-mmm-aaaa; formatos antigos iguais", () => {
+  const dia = (s: string, f: (typeof FD_MOEDA)[number]) => parseDateAs(s, f)?.toISOString().slice(0, 10);
+  assert.equal(dia("2026-10-27T23:30:00-03:00", "dd/mm/aaaa"), "2026-10-27");
+  assert.equal(dia("2026-10-27T00:00:00Z", "mm/dd/aaaa"), "2026-10-27");
+  assert.equal(dia("2026-10-27T14:30:00.123+0100", "aaaa-mm-dd"), "2026-10-27");
+  assert.equal(dia("2026-10-27 14:30", "dd/mm/aaaa"), "2026-10-27");
+  assert.equal(parseDateAs("2026-10-27T25", "dd/mm/aaaa"), null);
+  for (const [s, f] of [["Oct 27, 2026", "mmm dd, aaaa"], ["October 27, 2026", "mmm dd, aaaa"], ["Oct. 27, 2026", "mmm dd, aaaa"], ["oct 27 2026", "mmm dd, aaaa"], ["27-Oct-2026", "dd-mmm-aaaa"], ["27-October-2026", "dd-mmm-aaaa"], ["27-Oct-2026", "mmm dd, aaaa"], ["Sept 1, 2026", "dd-mmm-aaaa"]] as const)
+    assert.equal(dia(s, f), s.startsWith("Sept") ? "2026-09-01" : "2026-10-27", `${s} ${f}`);
+  for (const s of ["Feb 30, 2026", "Foo 27, 2026", "27-Out-2026", "27/Oct/2026"]) assert.equal(parseDateAs(s, "mmm dd, aaaa"), null, s);
+  assert.equal(parseDateAs("Oct 27, 2026", "dd/mm/aaaa"), null);
+  assert.equal(dia("05/10/2026", "dd/mm/aaaa"), "2026-10-05");
+  assert.equal(dia("05/10/2026", "mm/dd/aaaa"), "2026-05-10");
+  assert.equal(dia("20261005", "aaaammdd"), "2026-10-05");
+  // Coluna misturando os dois formatos com mês e ISO: sem pergunta
+  const g = guessLayout("extrato", ["ref", "valor", "data"], grade(["ref", "valor", "data"], ["1", "10.00", "Oct 05, 2026"], ["2", "10.00", "06-Oct-2026"], ["3", "10.00", "2026-10-07T10:00:00Z"]), 0);
+  assert.equal(g.formatoData, "mmm dd, aaaa");
+  assert.equal(g.perguntas, undefined);
+});
+
+test("Planilha: data nativa do XLSX não muda de dia com o fuso", async () => {
+  const serial = (Date.UTC(2026, 9, 27) - Date.UTC(1899, 11, 30)) / 86_400_000;
+  const tzAntes = process.env.TZ;
+  try {
+    for (const tz of ["America/Sao_Paulo", "Pacific/Kiritimati", "Pacific/Pago_Pago", "UTC"]) {
+      process.env.TZ = tz;
+      const t = await readTable("d.xlsx", buildXlsx([{ name: "A", rows: [["Date", "Amount"], [{ date: serial }, 10]] }]));
+      assert.equal(t.linhas[1][0], "2026-10-27", tz);
+      assert.equal(parseDateAs(t.linhas[1][0], "mm/dd/aaaa")?.toISOString(), "2026-10-27T00:00:00.000Z", tz);
+    }
+    process.env.TZ = "America/Sao_Paulo";
+    assert.equal(cellText(new Date(Date.UTC(2026, 9, 27))), "2026-10-27");
+  } finally {
+    if (tzAntes === undefined) delete process.env.TZ;
+    else process.env.TZ = tzAntes;
+  }
+});
+
+test("Layout: sinônimos em inglês e desempates (type, id, datas, credit/debit)", () => {
+  const sug = (tipo: "esperados" | "extrato", cab: string[], ...l: string[][]) => guessLayout(tipo, cab, grade(cab, ...l), 0);
+  const e = sug("esperados", ["Invoice No", "Customer", "Amount", "Due Date", "Payment Method"], ["INV-1", "Acme", "1,234.56", "10/15/2026", "Credit Card"]);
+  assert.deepEqual(e.layout, { referencia: "Invoice No", pagador: "Customer", valor: "Amount", data: "Due Date", forma: "Payment Method" });
+  assert.equal(e.confianca, "alta", e.motivos.join("; "));
+  assert.equal(e.formatoValor, "us");
+  assert.equal(e.formatoData, "mm/dd/aaaa");
+  for (const [h, campo] of [["Reference", "referencia"], ["Invoice", "referencia"], ["Invoice Number", "referencia"], ["Value", "valor"], ["Total", "valor"], ["Payer", "pagador"], ["Client", "pagador"], ["Name", "pagador"], ["Payment Date", "data"], ["Transaction Date", "data"], ["Posted Date", "data"], ["Date", "data"]] as const)
+  {
+    // Cada sinônimo sozinho, ao lado de colunas que não competem com ele
+    const cab = campo === "referencia" ? [h, "Amount"] : campo === "valor" ? ["Ref", h] : ["Ref", "Amount", h];
+    const linha = campo === "referencia" ? ["INV-1", "1.00"] : campo === "valor" ? ["1", "1.00"] : ["1", "1.00", campo === "data" ? "2026-10-05" : "Acme"];
+    assert.equal(sug("esperados", cab, linha).layout[campo], h, h);
+  }
+  const x = sug("extrato", ["Date", "Details", "Ref", "Amount", "Dr/Cr"], ["2026-10-05", "ACH", "1", "10.00", "CR"]);
+  assert.equal(x.layout.descricao, "Details");
+  assert.equal(x.layout.sinal, "Dr/Cr");
+  assert.equal(sug("extrato", ["Ref", "Amount", "Description", "Debit Credit"], ["1", "1.00", "x", "C"]).layout.sinal, "Debit Credit");
+  assert.equal(sug("esperados", ["Ref", "Amount", "Method"], ["1", "1.00", "ACH"]).layout.forma, "Method");
+  assert.equal(sug("esperados", ["Ref", "Amount", "Card Type"], ["1", "1.00", "Visa"]).layout.forma, "Card Type");
+  // "Type": sinal só com ≥ 80% de DR/CR/D/C/debit/credit
+  const tipo = (vals: string[]) => sug("extrato", ["Ref", "Amount", "Type"], ...vals.map((v, i) => [String(i), "1.00", v])).layout.sinal;
+  assert.equal(tipo(["CR", "DR", "Credit", "debit", "C"]), "Type");
+  assert.equal(tipo(["CR", "CR", "CR", "CR", "ACH"]), "Type"); // 80%
+  assert.equal(tipo(["CR", "CR", "CR", "ACH", "ACH"]), undefined); // 60%
+  assert.equal(tipo(["ACH", "WIRE", "CHECK"]), undefined);
+  // "Type" vira forma só se os valores parecem formas de pagamento
+  const forma = (vals: string[]) => sug("esperados", ["Ref", "Amount", "Type"], ...vals.map((v, i) => [String(i), "1.00", v])).layout.forma;
+  assert.equal(forma(["Credit Card", "ACH", "Wire", "Check"]), "Type");
+  assert.equal(forma(["Service", "Product"]), undefined);
+  assert.equal(forma(["CR", "DR"]), undefined);
+  // "id" perde para invoice/reference; sozinho continua valendo
+  assert.equal(sug("esperados", ["ID", "Invoice", "Amount"], ["1", "INV-1", "1.00"]).layout.referencia, "Invoice");
+  assert.equal(sug("esperados", ["Id", "Reference", "Amount"], ["1", "R-1", "1.00"]).layout.referencia, "Reference");
+  assert.equal(sug("esperados", ["Id", "Amount"], ["1", "1.00"]).layout.referencia, "Id");
+  // Empates antigos em português continuam sendo dúvida
+  assert.equal(sug("esperados", ["ID", "Documento", "Valor"], ["1", "2", "1,00"]).layout.referencia, undefined);
+  assert.equal(sug("esperados", ["Ref", "Valor", "Data", "Vencimento"], ["1", "1,00", "2026-10-01", "2026-10-05"]).layout.data, undefined);
+  // Várias datas: esperados → due; extrato → posted/transaction; empate → pergunta (motivo, sem coluna)
+  const datas = ["Ref", "Amount", "Invoice Date", "Due Date", "Payment Date"];
+  assert.equal(sug("esperados", datas, ["1", "1.00", "2026-10-01", "2026-10-05", "2026-10-06"]).layout.data, "Due Date");
+  assert.equal(sug("extrato", ["Ref", "Amount", "Transaction Date", "Value Date"], ["1", "1.00", "2026-10-01", "2026-10-02"]).layout.data, "Transaction Date");
+  assert.equal(sug("extrato", ["Ref", "Amount", "Posted Date", "Payment Date"], ["1", "1.00", "2026-10-01", "2026-10-02"]).layout.data, "Posted Date");
+  const emp = sug("extrato", ["Ref", "Amount", "Date", "Payment Date"], ["1", "1.00", "2026-10-01", "2026-10-02"]);
+  assert.equal(emp.layout.data, undefined);
+  assert.equal(emp.confianca, "baixa");
+  assert.ok(emp.motivos.some((m) => /Mais de uma coluna pode ser data/.test(m)));
+  // credit e debit sozinhos não são valor
+  const cd = sug("extrato", ["Ref", "Credit", "Debit"], ["1", "10.00", ""]);
+  assert.equal(cd.layout.valor, undefined);
+  assert.ok(cd.motivos.includes("Nenhuma coluna reconhecida como valor"));
+  // Português continua igual
+  const pt = sug("esperados", ["Nosso Número", "Cliente", "Vlr Pago", "Dt Venc"], ["1", "A", "1.234,56", "25/10/2026"]);
+  assert.deepEqual(pt.layout, { referencia: "Nosso Número", pagador: "Cliente", valor: "Vlr Pago", data: "Dt Venc" });
+});
+
+test("Moeda: detecção pelos símbolos; validateLayout aceita moeda; layout antigo é BRL; assinatura igual", () => {
+  assert.equal(detectarMoeda(["Ref", "Amount"], [["1", "$1,234.56"]]), "USD");
+  assert.equal(detectarMoeda(["Ref", "Amount (USD)"], [["1", "1,234.56"]]), "USD");
+  assert.equal(detectarMoeda(["Ref", "Valor"], [["1", "US$ 10,00"]]), "USD");
+  assert.equal(detectarMoeda(["Ref", "Valor"], [["1", "U$ 10,00"]]), "USD");
+  assert.equal(detectarMoeda(["Ref", "Valor"], [["1", "R$ 10,00"]]), "BRL");
+  assert.equal(detectarMoeda(["Ref", "Valor (BRL)"], [["1", "10,00"]]), "BRL");
+  assert.equal(detectarMoeda(["Ref", "Valor"], [["1", "10,00"]]), undefined);
+  assert.equal(detectarMoeda(["Ref", "Valor"], [["1", "R$ 10,00"], ["2", "$ 3.00"]]), undefined);
+  assert.equal(detectarMoeda(["Ref", "Status"], [["1", "USDA"]]), undefined);
+  const h = ["Nosso Número", "Cliente", "Vlr Pago", "Dt Venc", "Obs"];
+  const comMoeda = validateLayout({ ...layoutAlt, moeda: "USD" }, h);
+  assert.ok(comMoeda.ok && comMoeda.layout.moeda === "USD");
+  assert.ok(!validateLayout({ ...layoutAlt, moeda: "EUR" }, h).ok);
+  assert.ok(!validateLayout({ ...layoutAlt, moeda: "" }, h).ok);
+  assert.ok(validateLayout({ ...layoutAlt, formatoValor: "us", formatoData: "mmm dd, aaaa" }, h).ok);
+  const antigo = validateLayout(JSON.parse(JSON.stringify(layoutAlt)), h);
+  assert.ok(antigo.ok && antigo.layout.moeda === undefined && moedaDoLayout(antigo.layout) === "BRL");
+  assert.deepEqual(layoutDiff(layoutAlt, { ...layoutAlt, moeda: "USD" }), ["moeda: BRL → USD"]);
+  assert.deepEqual(layoutDiff(layoutAlt, { ...layoutAlt, moeda: "BRL" }), []);
+  // A assinatura do cabeçalho não depende de moeda nem formato
+  assert.equal(layoutSignature("esperados", h), layoutSignature("esperados", [...h]));
+  const antes = layoutSignature("esperados", h);
+  validateLayout({ ...layoutAlt, moeda: "USD" }, h);
+  assert.equal(layoutSignature("esperados", h), antes);
+});
+
+test("Câmbio: cotação, tolerância e conversão só com inteiros", () => {
+  assert.deepEqual(parseCotacao("5,4321"), { texto: "5.4321", micro: BigInt(5432100) });
+  assert.deepEqual(parseCotacao("5.432100"), { texto: "5.4321", micro: BigInt(5432100) });
+  assert.equal(parseCotacao(5.4321)?.texto, "5.4321");
+  assert.equal(parseCotacao("0.000001")?.micro, BigInt(1));
+  for (const x of ["0", "0,000000", "-5", "5,1234567", "1.234,56", "5e3", "", "abc", " ", null, undefined, {}, "1234567"]) assert.equal(parseCotacao(x), null, String(x));
+  assert.equal(parseToleranciaPct(undefined), TOLERANCIA_CAMBIO_PADRAO);
+  assert.equal(parseToleranciaPct(""), 0.5);
+  assert.equal(parseToleranciaPct("1,25"), 1.25);
+  assert.equal(parseToleranciaPct(0), 0);
+  for (const x of ["-1", "10.5", "11", "0.125", "x", {}]) assert.equal(parseToleranciaPct(x), null, String(x));
+  const c = parseCotacao("5,4321")!;
+  assert.equal(converterCentavos(10000, "USD", "BRL", c), 54321); // US$ 100,00 × 5,4321 = R$ 543,21
+  assert.equal(converterCentavos(54321, "BRL", "USD", c), 10000);
+  assert.equal(converterCentavos(75000, "USD", "BRL", c), 407408); // 4074,075 → meio para cima
+  assert.equal(converterCentavos(123456, "USD", "BRL", c), 670625);
+  assert.equal(converterCentavos(-10000, "USD", "BRL", c), -54321);
+  assert.equal(converterCentavos(999, "BRL", "BRL", c), 999);
+  // Valor grande sem perder precisão (float erraria nas últimas casas)
+  assert.equal(converterCentavos(99_999_999_999_99, "USD", "BRL", parseCotacao("5.123457")!), 51_234_569_999_995);
+  assert.throws(() => converterCentavos(1.5, "USD", "BRL", c), RangeError);
+  const { entries, originaisCentavos } = converterEntradas([{ amount: 100, reference: "A" }, { amount: 0.01, reference: "B" }], "USD", "BRL", c);
+  assert.deepEqual(entries, [{ amount: 543.21, reference: "A" }, { amount: 0.05, reference: "B" }]);
+  assert.deepEqual(originaisCentavos, [10000, 1]);
+});
+
+test("Câmbio: explicadoCambio é só pista, dentro da tolerância e só em DIVERGENTE", () => {
+  const it = (status: "CONCILIADO" | "DIVERGENTE" | "PENDENTE" | "NAO_ESPERADO", e?: number, r?: number) => ({ status, expectedAmount: e, receivedAmount: r });
+  assert.equal(explicadoCambio(it("DIVERGENTE", 65000, 65185.2), 0.5), true); // 0,28%
+  assert.equal(explicadoCambio(it("DIVERGENTE", 1000, 1005), 0.5), true); // exatamente 0,5%
+  assert.equal(explicadoCambio(it("DIVERGENTE", 1000, 1005.01), 0.5), false);
+  assert.equal(explicadoCambio(it("DIVERGENTE", 1000, 995), 0.5), true); // a menos também
+  assert.equal(explicadoCambio(it("DIVERGENTE", 5432.1, 5323.46), 0.5), false); // 2%
+  assert.equal(explicadoCambio(it("DIVERGENTE", 1000, 1003), 0), false);
+  assert.equal(explicadoCambio(it("CONCILIADO", 1000, 1000.02), 0.5), false);
+  assert.equal(explicadoCambio(it("PENDENTE", 1000), 0.5), false);
+  assert.equal(explicadoCambio(it("NAO_ESPERADO", undefined, 10), 0.5), false);
+});
+
+test("Prova em USD: frases na moeda do dado, câmbio cita a cotação e quem informou; prova antiga com o mesmo hash", () => {
+  // Prova antiga (BRL, sem câmbio): conteúdo e hash idênticos aos de antes desta versão
+  const csv = demo("titulos_esperados.csv");
+  const ret = demo("retorno_cnab400.ret");
+  const expected = parseExpectedCsv(csv.toString());
+  const { entries } = parseBankFile("r.ret", ret.toString());
+  const opts = { toleranciaCentavos: 2, casarPorValorData: true, toleranciaDias: 3 };
+  const items = reconcileWith(expected, entries, opts);
+  const fe: FonteProva = { arquivo: "titulos_esperados.csv", formato: "CSV", sha256: sha256Hex(csv), cabecalho: csvHeader(csv.toString()) };
+  const fb: FonteProva = { arquivo: "r.ret", formato: "CNAB400", sha256: sha256Hex(ret) };
+  const taxas: TaxaRecebimento[] = [{ tipo: "credito", rotulo: "Crédito", pct: 0.0299, fixoCentavos: 0, toleranciaCentavos: 2 }];
+  const provas = (moeda?: { base: "BRL" }) => items.map((i) => montarProva(i, { ...fe, entries: expected }, { ...fb, entries }, opts, classificarTaxa(i, "credito", taxas), moeda));
+  // Hashes calculados com o código anterior a esta versão (mesmos dados, mesmas opções)
+  const HASH_PROVAS = "fea0db91e19bd99aec821d2c326e115c7f3b888518f46c3d927800c28c28b3da";
+  const HASH_FRASES_REGRA = "c616bc1c1ae481156d6cf5c6a478222768b026941e55a4485604d985064005fe";
+  const HASH_FRASES_ITEM = "797b5340ee7856da45de5ca15d577c90c8333555700354303b1e1dfbbe715efe";
+  const HASH_NOTAS = "779a61e7dab5fcc05336f39a0987cfba5476b9f77040b850d0986c0d34d33eba";
+  for (const p of [provas(), provas({ base: "BRL" })]) {
+    assert.equal(sha256Hex(jsonCanonico(p)), HASH_PROVAS);
+    assert.equal(sha256Hex(JSON.stringify(p.map((x) => fraseRegra(x.regra)))), HASH_FRASES_REGRA);
+    assert.ok(p.every((x) => !("moeda" in x.regra) && !("cambio" in x.regra)));
+  }
+  assert.equal(sha256Hex(JSON.stringify(items.map((i) => fraseItem(i)))), HASH_FRASES_ITEM);
+  assert.equal(sha256Hex(JSON.stringify(items.map((i) => fraseItem(i, { moeda: "BRL" })))), HASH_FRASES_ITEM);
+  assert.equal(sha256Hex(JSON.stringify(items.map((i) => i.note))), HASH_NOTAS);
+
+  // USD: notas, frases do item e da regra em US$
+  const usd = reconcileWith([{ reference: "INV-1", amount: 1000 }], [{ reference: "INV-1", amount: 980 }], { moeda: "USD" });
+  assert.match(usd[0].note ?? "", /Diferença de -US\$\s20,00/);
+  assert.equal(semNb(fraseItem({ ...usd[0], status: "DIVERGENTE" }, { moeda: "USD" })), "Boleto INV-1: esperado US$ 1.000,00, caiu US$ 980,00.");
+  const p = montarProva(usd[0], { arquivo: "e.csv", formato: "CSV", sha256: "a", entries: [{ reference: "INV-1", amount: 1000 }] }, { arquivo: "b.csv", formato: "CSV", sha256: "b", entries: [{ reference: "INV-1", amount: 980 }] }, {}, undefined, { base: "USD" });
+  assert.equal(p.regra.moeda, "USD");
+  assert.ok(fraseRegra(p.regra).some((f) => f === "Diferença de US$ 20,00 a menos, acima da tolerância de 0 centavo(s)."));
+
+  // Câmbio: cita valor original, convertido, cotação e quem informou; Badge/pista só no explicado
+  const cambio = { moedaOriginal: "USD" as const, valorOriginalCentavos: 1200000, valorConvertidoCentavos: 6518520, cotacao: "5.4321", toleranciaPct: 0.5, informadaPor: "Ana Souza", explicadoCambio: true };
+  const it = reconcileWith([{ reference: "INV-2605", amount: 65000 }], [{ reference: "INV-2605", amount: 65185.2 }])[0];
+  const pc = montarProva(it, { arquivo: "e.csv", formato: "CSV", sha256: "a", entries: [{ reference: "INV-2605", amount: 65000 }] }, { arquivo: "b.csv", formato: "CSV", sha256: "b", entries: [{ reference: "INV-2605", amount: 65185.2 }] }, {}, undefined, { base: "BRL", cambio });
+  assert.equal(pc.regra.moeda, undefined);
+  assert.deepEqual(pc.regra.cambio, cambio);
+  const fr = fraseRegra(pc.regra);
+  assert.ok(fr.includes("Crédito de US$ 12.000,00 no extrato, convertido para R$ 65.185,20 pela cotação de 5,4321 (R$ por US$ 1) informada por Ana Souza."), fr.join("\n"));
+  assert.ok(fr.some((f) => /tolerância de câmbio de 0,5%: pista de diferença de câmbio/.test(f)));
+  assert.ok(!fraseRegra({ ...pc.regra, cambio: { ...cambio, explicadoCambio: false } }).some((f) => /pista de diferença de câmbio/.test(f)));
+  // Item sem crédito do banco não leva câmbio na prova
+  const pend = reconcileWith([{ reference: "X", amount: 1 }], [])[0];
+  assert.equal(montarProva(pend, { arquivo: "e", formato: "CSV", sha256: "a", entries: [{ reference: "X", amount: 1 }] }, { arquivo: "b", formato: "CSV", sha256: "b", entries: [] }, {}, undefined, { base: "BRL", cambio }).regra.cambio, undefined);
+});
+
+/** Lê uma demo em planilha pelo layout sugerido, com a moeda escolhida (como na tela). */
+async function porLayout(arquivo: string, tipo: "esperados" | "extrato", moeda: "BRL" | "USD") {
+  const t = await tab(arquivo);
+  const lh = findHeaderLine(t.linhas);
+  const header = headerOf(t.linhas, lh);
+  const g = guessLayout(tipo, header, t, lh);
+  assert.equal(g.confianca, "alta", `${arquivo}: ${g.motivos.join("; ")}`);
+  const v = validateLayout({ tipo, colunas: g.layout, formatoData: g.formatoData, formatoValor: g.formatoValor, linhaCabecalho: lh, moeda, ...(t.separador ? { separador: t.separador } : {}) }, header);
+  assert.ok(v.ok, !v.ok ? v.erro : "");
+  return { t, lh, header, g, layout: v.layout, entries: convertWithLayout(t, v.layout) };
+}
+
+test("Ponta a ponta: demos em dólar (inglês, mm/dd, 1,234.56, parênteses, datas por extenso)", async () => {
+  const esp = await porLayout("esperados_usd_en.csv", "esperados", "USD");
+  assert.equal(esp.g.formatoValor, "us");
+  assert.equal(esp.g.formatoData, "mm/dd/aaaa");
+  assert.equal(esp.g.layout.forma, "Payment Method");
+  assert.equal(esp.entries.length, 15);
+  assert.ok((esp.entries as ExpectedEntryT[]).some((e) => e.forma === "Credit Card"));
+  assert.equal(moedaDaTabela(esp.t, esp.lh), undefined); // sem símbolo: o usuário escolhe
+  const ext = await porLayout("bank_statement_usd.csv", "extrato", "USD");
+  assert.equal(ext.g.formatoValor, "us");
+  assert.equal(ext.g.formatoData, "mmm dd, aaaa");
+  assert.equal(ext.g.layout.sinal, "Type");
+  assert.equal(moedaDaTabela(ext.t, ext.lh), "USD");
+  // Débitos "(150.00)" e "(80.00)" ignorados; datas por extenso, dd-mmm-aaaa e ISO com T
+  const prev = previewRows(ext.t, ext.layout, 20);
+  assert.deepEqual(prev.filter((l) => l.ignorada).map((l) => l.linha), [8, 15]);
+  assert.ok(prev.every((l) => !l.erro), JSON.stringify(prev.filter((l) => l.erro)));
+  const porRef = new Map((ext.entries as BankEntryT[]).map((e) => [e.reference, e]));
+  assert.equal(porRef.get("INV-2601")?.paidAt?.toISOString().slice(0, 10), "2026-10-05");
+  assert.equal(porRef.get("INV-2603")?.paidAt?.toISOString().slice(0, 10), "2026-10-07");
+  assert.equal(porRef.get("INV-2604")?.paidAt?.toISOString().slice(0, 10), "2026-10-08");
+  assert.equal(porRef.get("INV-2605")?.amount, 12000);
+  const items = reconcileWith(esp.entries as ExpectedEntryT[], ext.entries as BankEntryT[], { moeda: "USD" });
+  const n = (st: string) => items.filter((i) => i.status === st).map((i) => i.reference).sort();
+  assert.deepEqual(n("CONCILIADO"), ["INV-2601", "INV-2602", "INV-2605", "INV-2606", "INV-2608", "INV-2609", "INV-2610", "INV-2612", "INV-2613"]);
+  assert.deepEqual(n("DIVERGENTE"), ["INV-2603", "INV-2604"]);
+  assert.deepEqual(n("PENDENTE"), ["INV-2607", "INV-2611", "INV-2614", "INV-2615"]);
+  assert.deepEqual(n("NAO_ESPERADO"), ["ZX-9001"]);
+  assert.match(items.find((i) => i.reference === "INV-2603")?.note ?? "", /US\$/);
+});
+
+type ExpectedEntryT = ReturnType<typeof parseExpectedCsv>[number];
+type BankEntryT = ReturnType<typeof parseBankFile>["entries"][number];
+
+test("Ponta a ponta: cenário misto (esperados em BRL, extrato em USD) com cotação manual", async () => {
+  const espCsv = demo("esperados_brl_cambio.csv").toString();
+  assert.ok(isLegacyCsv("esperados", espCsv), "esperados em real no formato antigo");
+  const expected = parseExpectedCsv(espCsv);
+  const ext = await porLayout("bank_statement_usd.csv", "extrato", "USD");
+  const cot = parseCotacao("5,4321")!;
+  const { entries, originaisCentavos } = converterEntradas(ext.entries as BankEntryT[], "USD", "BRL", cot);
+  const items = reconcileWith(expected, entries, { moeda: "BRL" });
+  const st = Object.fromEntries(items.map((i) => [i.reference, i.status]));
+  assert.equal(st["INV-2601"], "CONCILIADO"); // US$ 1.234,56 → R$ 6.706,25
+  assert.equal(st["INV-2606"], "CONCILIADO"); // US$ 750,00 → R$ 4.074,08 (meio para cima)
+  assert.equal(st["INV-2605"], "DIVERGENTE");
+  assert.equal(st["INV-2603"], "DIVERGENTE");
+  assert.equal(st["INV-2607"], "PENDENTE");
+  const pista = items.filter((i) => explicadoCambio(i, 0.5)).map((i) => i.reference);
+  assert.deepEqual(pista, ["INV-2605"]); // 0,28%: pista; INV-2603 (2%) não
+  // A pista não muda o status: continua DIVERGENTE
+  assert.equal(items.find((i) => i.reference === "INV-2605")?.status, "DIVERGENTE");
+  const i2605 = items.find((i) => i.reference === "INV-2605")!;
+  assert.equal(originaisCentavos[i2605.receivedIndex!], 1200000);
+  assert.equal(i2605.receivedAmount, 65185.2);
+});
+
+test("API: sem moeda é BRL; moedas diferentes exigem cotação (400); moeda e cotação validadas", () => {
+  const base = demoBody();
+  const v = validateReconciliationBody(base);
+  assert.ok(v.ok);
+  assert.deepEqual(v.value.moedas, { esperados: "BRL", extrato: "BRL" });
+  assert.equal(v.value.cambio, undefined);
+  assert.ok(validateReconciliationBody({ ...base, moedaEsperados: "USD", moedaExtrato: "USD" }).ok);
+  const sem = validateReconciliationBody({ ...base, moedaExtrato: "USD" });
+  assert.ok(!sem.ok && sem.status === undefined && sem.errors.some((e) => e.campo === "cotacao"));
+  const ruim = validateReconciliationBody({ ...base, moedaExtrato: "USD", cotacao: "abc" });
+  assert.ok(!ruim.ok && ruim.errors.some((e) => e.campo === "cotacao"));
+  const tol = validateReconciliationBody({ ...base, moedaExtrato: "USD", cotacao: "5.4321", toleranciaCambioPct: 50 });
+  assert.ok(!tol.ok && tol.errors.some((e) => e.campo === "toleranciaCambioPct"));
+  const eur = validateReconciliationBody({ ...base, moedaEsperados: "EUR" });
+  assert.ok(!eur.ok && eur.errors.some((e) => e.campo === "moedaEsperados"));
+  const ok = validateReconciliationBody({ ...base, moedaExtrato: "USD", cotacao: 5.4321 });
+  assert.ok(ok.ok);
+  assert.equal(ok.value.cambio?.cotacao.texto, "5.4321");
+  assert.equal(ok.value.cambio?.toleranciaPct, 0.5);
+  // Mesmo corpo sem campos novos: o resultado da validação é o mesmo de antes (fora moedas)
+  assert.deepEqual(Object.keys(v.value).sort(), ["bankFileName", "bankFormat", "entries", "expected", "expectedFileName", "fontes", "moedas", "name", "options"]);
+});
+
+test("Câmbio: a IA nunca define moeda nem cotação; prompt cita us e os formatos novos", async () => {
+  const t = await tab("esperados_ruim.csv");
+  let prompt = "";
+  const call = (async (_s: string, p: string) => {
+    prompt = p;
+    return { ok: true, data: { colunas: {}, formatoData: "dd/mm/aaaa", formatoValor: "br", moeda: "USD", cotacao: "9" } };
+  }) as unknown as AiCall;
+  const r = await sugerirLayout("esperados", t, 0, { call });
+  assert.match(prompt, /"us" \(1,234\.56/);
+  assert.match(prompt, /mmm dd, aaaa/);
+  assert.match(prompt, /dd-mmm-aaaa/);
+  assert.match(prompt, /Não informe moeda nem cotação/);
+  assert.equal((r.layout as { moeda?: string } | undefined)?.moeda, undefined);
+  // Pergunta de formato não é decidida pela IA
+  const amb = grade(["ref", "valor", "data", "x"], ["1", "10,00", "05/10/2026", "a"]);
+  const call2 = (async () => ({ ok: true, data: { colunas: { referencia: "ref", valor: "valor", data: "data" }, formatoData: "mm/dd/aaaa", formatoValor: "br" } })) as unknown as AiCall;
+  const r2 = await sugerirLayout("esperados", amb, 0, { call: call2 });
+  assert.equal(r2.sugestao.formatoData, undefined);
+  assert.deepEqual(r2.sugestao.perguntas?.data, ["dd/mm/aaaa", "mm/dd/aaaa"]);
+  assert.equal(r2.layout, undefined);
 });

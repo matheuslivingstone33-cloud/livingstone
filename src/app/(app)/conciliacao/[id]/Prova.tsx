@@ -73,6 +73,7 @@ export function ProvaView({ prova, frase }: { prova: Prova | null; frase: string
         <h3 className="flex flex-wrap items-center gap-2 font-medium text-ink-900">
           Regra aplicada
           {prova.regra.explicadoTaxa && <Badge tone="info">Explicado pela taxa</Badge>}
+          {prova.regra.cambio?.explicadoCambio && <Badge tone="info">Diferença de câmbio</Badge>}
         </h3>
         <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-ink-700">
           {fraseRegra(prova.regra).map((f) => <li key={f}>{f}</li>)}

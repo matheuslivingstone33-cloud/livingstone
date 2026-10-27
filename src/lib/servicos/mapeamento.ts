@@ -20,7 +20,7 @@ export type SugestaoLayout = {
 };
 
 const SISTEMA =
-  "Você identifica as colunas de uma planilha financeira brasileira (títulos a receber ou extrato bancário). Os valores da amostra estão mascarados: dígitos viram 9 e letras viram a; use só os nomes das colunas e a forma dos valores.";
+  "Você identifica as colunas de uma planilha financeira, brasileira ou em inglês no formato dos EUA (títulos a receber ou extrato bancário). Os valores da amostra estão mascarados: dígitos viram 9 e letras viram a; use só os nomes das colunas e a forma dos valores.";
 
 type Resposta = { colunas: Record<string, string>; formatoData: string; formatoValor: string };
 
@@ -48,7 +48,8 @@ export async function sugerirLayout(tipo: TipoLayout, t: Tabela, linhaCabecalho:
       SISTEMA,
       `Arquivo de ${tipo === "esperados" ? "títulos esperados (a receber)" : "extrato bancário"}.
 Escolha, entre os nomes exatos do cabeçalho, a coluna de cada campo: referencia (identificador do título; obrigatório), valor (obrigatório), data, pagador${tipo === "extrato" ? ", descricao, sinal (coluna D/C de débito ou crédito, se existir)" : ", forma (forma de recebimento do título, como cartão de crédito, débito, Pix ou boleto, se existir)"}. Omita o campo que não existir.
-formatoData: um de ${FORMATOS_DATA.join(", ")}. formatoValor: "br" (vírgula decimal) ou "ponto" (ponto decimal).
+formatoData: um de ${FORMATOS_DATA.join(", ")} ("mmm dd, aaaa" = Oct 27, 2026; "dd-mmm-aaaa" = 27-Oct-2026; meses em inglês). formatoValor: "br" (1.234,56, vírgula decimal), "ponto" (1234.56, ponto decimal sem milhar) ou "us" (1,234.56, formato dos EUA, com $ ou US$ opcional).
+Não informe moeda nem cotação: isso é escolha do usuário.
 Retorne JSON {"colunas": {"referencia": string, "valor": string, ...}, "formatoData": string, "formatoValor": string}.
 
 ${untrusted("planilha_mascarada", JSON.stringify(amostra), 20_000)}${
@@ -70,6 +71,23 @@ ${untrusted("descricoes_colunas", opts.dicas.slice(0, 50).join("\n"), 8_000)}` :
     header,
   );
   if (!v.ok) return { ...base, status: "rejeitada", usageId: r.usageId, motivo: `Sugestão da IA recusada: ${v.erro}` };
+  // Dúvida de formato (dd/mm × mm/dd, ponto × vírgula) é do usuário: a IA não decide no lugar dele
+  const p = sugestao.perguntas;
+  if (p?.data || p?.valor)
+    return {
+      sugestao: {
+        layout: v.layout.colunas,
+        formatoData: p.data ? undefined : v.layout.formatoData,
+        formatoValor: p.valor ? undefined : v.layout.formatoValor,
+        confianca: "baixa",
+        motivos: ["Sugerido pela IA; confira antes de confirmar", ...sugestao.motivos],
+        perguntas: p,
+      },
+      layout: undefined,
+      origem: "ia",
+      status: "usada",
+      usageId: r.usageId,
+    };
   return {
     sugestao: { layout: v.layout.colunas, formatoData: v.layout.formatoData, formatoValor: v.layout.formatoValor, confianca: "baixa", motivos: ["Sugerido pela IA; confira antes de confirmar"] },
     layout: v.layout,

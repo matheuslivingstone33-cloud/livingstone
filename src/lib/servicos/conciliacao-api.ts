@@ -4,6 +4,11 @@ import type { Reconciliation, ReconciliationItem } from "@prisma/client";
 const n = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 const d = (v: Date | null | undefined) => (v ? v.toISOString().slice(0, 10) : null);
 
+const cambioDe = (o: unknown) => {
+  const c = o && typeof o === "object" && !Array.isArray(o) ? (o as Record<string, unknown>).cambio : undefined;
+  return c && typeof c === "object" ? c : null;
+};
+
 export function reconciliationJson(r: Reconciliation) {
   return {
     id: r.id,
@@ -20,6 +25,9 @@ export function reconciliationJson(r: Reconciliation) {
       excedente: n(r.totalExcess),
     },
     opcoes: r.options,
+    // Campos novos: moeda base (a dos esperados) e o câmbio manual usado; "BRL" e null em conciliações antigas ou sem câmbio
+    currency: r.currency,
+    cambio: cambioDe(r.options),
     // Campos de saída novos (opcionais): hash SHA-256 dos arquivos enviados; nulo em conciliações antigas
     hashArquivoBanco: r.bankFileSha256 ?? null,
     hashArquivoEsperados: r.expectedFileSha256 ?? null,
@@ -49,6 +57,9 @@ export function itemJson(i: ReconciliationItem, todos: ReconciliationItem[] = []
     formaPagamento: i.formaPagamento ?? null,
     taxaEsperada: n(i.taxaEsperada),
     explicadoPelaTaxa: i.explicadoTaxa,
+    // Câmbio manual (pista; não muda a situação): valor do crédito na moeda do extrato; nulo/false sem câmbio
+    valorOriginal: n(i.amountOriginal),
+    explicadoPeloCambio: i.explicadoCambio,
     // Prova: linhas usadas dos dois arquivos (CPF/CNPJ mascarados) e a regra; nulo em conciliações antigas
     prova: i.evidence ?? null,
   };

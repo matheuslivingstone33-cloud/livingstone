@@ -123,6 +123,7 @@ model Reconciliation {
   updatedAt     DateTime?
   bankFileSha256     String? // SHA-256 do arquivo do banco como foi enviado (o arquivo não é guardado)
   expectedFileSha256 String? // SHA-256 da lista de esperados como foi enviada
+  currency      String       @default("BRL") // moeda base (a dos esperados); câmbio manual fica em options.cambio
   items         ReconciliationItem[]
 }
 
@@ -153,6 +154,9 @@ model ReconciliationItem {
   formaPagamento   String?
   taxaEsperada     Decimal?       @db.Decimal(14, 2)
   explicadoTaxa    Boolean        @default(false)
+  // Câmbio manual (pista; não muda o status): valor do crédito na moeda do extrato, antes da conversão
+  amountOriginal   Decimal?       @db.Decimal(14, 2)
+  explicadoCambio  Boolean        @default(false)
 }
 
 model ReconciliationItemEvent {

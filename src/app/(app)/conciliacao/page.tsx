@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { brl, dt } from "@/lib/format";
+import { dt } from "@/lib/format";
+import { moedaDe, valorNa } from "./[id]/itens";
 import { confirmLayoutAndReconcile, deleteLayout, previewReconciliation } from "../../actions-conciliacao";
 import { NovaConciliacao } from "@/components/NovaConciliacao";
 import { PageTitle, EmptyHelp, CardHeader } from "@/components/ui";
@@ -43,7 +44,7 @@ export default async function ConciliacaoPage() {
                 <tr key={r.id}>
                   <td><Link className="link-action" href={`/conciliacao/${r.id}`}>{r.name}</Link></td>
                   <td><span className="rounded-md bg-paper-2 px-1.5 py-0.5 font-mono text-xs text-ink-600">{r.bankFormat}</span></td>
-                  <td className="num font-medium">{brl(r.totalReceived)}</td>
+                  <td className="num font-medium">{valorNa(moedaDe(r.currency))(r.totalReceived)}</td>
                   <td className="num text-emerald-700">{r.matched}</td>
                   <td className="num text-amber-700">{r.divergent}</td>
                   <td className="num text-red-700">{r.missing}</td>

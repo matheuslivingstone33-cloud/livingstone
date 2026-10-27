@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import { DEFAULT_CNAB400, normRef, parseDate, parseMoney, type BankEntry, type Cnab400Layout, type ExpectedEntry, type MatchedItem, type Origem, type ReconcileOptions } from "./reconcile";
 import { mascararDocs } from "./mascara";
+import { fmtMoeda, type Moeda } from "./moeda";
 
 export const PROVA_LIMITES = { celula: 200, colunas: 50, bruto: 1000, itemBytes: 8 * 1024, totalBytes: 5_000_000 } as const;
 
@@ -33,6 +34,22 @@ export type Regra = {
   brutoCentavos?: number;
   taxaCentavos?: number;
   explicadoTaxa?: boolean;
+  /** Moeda dos valores da regra. Ausente = BRL (provas antigas e conciliações em real ficam com o mesmo conteúdo e hash). */
+  moeda?: Moeda;
+  /** Câmbio manual: só quando as moedas dos dois arquivos diferem e o item tem crédito do banco. */
+  cambio?: RegraCambio;
+};
+export type RegraCambio = {
+  /** Moeda e valor do crédito como vieram no extrato, antes da conversão. */
+  moedaOriginal: Moeda;
+  valorOriginalCentavos: number;
+  /** O mesmo crédito na moeda base, depois da conversão. */
+  valorConvertidoCentavos: number;
+  /** Reais por 1 dólar, em texto ("5.4321"). */
+  cotacao: string;
+  toleranciaPct: number;
+  informadaPor: string;
+  explicadoCambio: boolean;
 };
 /** omitida: a conciliação passou do teto de tamanho e esta prova não foi guardada. */
 export type Prova = { v: 1; esperado?: Lado; banco?: Lado; regra: Regra; omitida?: true };
@@ -183,6 +200,8 @@ export function montarProva(
   options: OpcoesProva = {},
   /** Resultado de classificarTaxa (taxa-recebimento.ts) para o item, se houver. */
   taxa?: { formaPagamento?: string; taxaEsperada?: number; explicadoTaxa: boolean },
+  /** Moeda base e câmbio do item (só entram na prova quando existem). */
+  moeda?: { base: Moeda; cambio?: RegraCambio },
 ): Prova {
   const cnab400 = options.cnab400 ?? DEFAULT_CNAB400;
   const e = item.expectedIndex !== undefined ? esperados.entries[item.expectedIndex] : undefined;
@@ -204,6 +223,8 @@ export function montarProva(
     regra.taxaCentavos = cents(taxa.taxaEsperada);
     regra.explicadoTaxa = taxa.explicadoTaxa;
   }
+  if (moeda && moeda.base !== "BRL") regra.moeda = moeda.base;
+  if (b && moeda?.cambio) regra.cambio = moeda.cambio;
   const prova: Prova = { v: 1, regra };
   if (e) prova.esperado = lado(esperados, e, e.dueAt, cnab400);
   if (b) prova.banco = lado(banco, b, b.paidAt, cnab400);
@@ -244,7 +265,8 @@ export function grupoDe(status: string, originalStatus?: string | null): Grupo {
   return "nao_chegou";
 }
 
-const brl = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }).replace(/ /g, " ");
+/** Valor na moeda do dado, com espaço comum no lugar do NBSP (em BRL, o mesmo texto de antes). */
+const brl = (n: number, moeda: Moeda = "BRL") => fmtMoeda(n, moeda).replace(/ /g, " ");
 /** dd/mm de uma data de calendário (meia-noite UTC), sem virar o dia anterior no fuso local. */
 export const diaMes = (d: Date) => `${String(d.getUTCDate()).padStart(2, "0")}/${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 
@@ -266,7 +288,9 @@ export type ItemFrase = {
 };
 
 /** `pagas`: referências (normRef) dos títulos que já tiveram pagamento, para apontar possível duplicidade. */
-export function fraseItem(item: ItemFrase, ctx: { pagas?: Set<string> } = {}): string {
+/** `moeda`: moeda base da conciliação (padrão BRL). */
+export function fraseItem(item: ItemFrase, ctx: { pagas?: Set<string>; moeda?: Moeda } = {}): string {
+  const brlItem = (n: number) => brl(n, ctx.moeda);
   const st = item.status === "BAIXADO" ? item.originalStatus ?? "PENDENTE" : item.status;
   const quem = item.payer ? `, ${item.payer}` : "";
   const em = item.paidAt ? ` em ${diaMes(item.paidAt)}` : "";
@@ -275,16 +299,16 @@ export function fraseItem(item: ItemFrase, ctx: { pagas?: Set<string> } = {}): s
   let f: string;
   if (st === "NAO_ESPERADO" || st === "VINCULADO") {
     const nome = item.reference ? `Crédito ${item.reference}${quem}` : `Crédito sem referência${quem}`;
-    if (st === "VINCULADO") f = `${nome}: entrou ${brl(rec)}${em}, ligado manualmente a um boleto.`;
-    else if (item.reference && ctx.pagas?.has(normRef(item.reference))) f = `${nome}: entrou ${brl(rec)}${em}, possível duplicidade do boleto ${item.reference}.`;
-    else f = `${nome}: entrou ${brl(rec)}${em} sem cobrança correspondente.`;
+    if (st === "VINCULADO") f = `${nome}: entrou ${brlItem(rec)}${em}, ligado manualmente a um boleto.`;
+    else if (item.reference && ctx.pagas?.has(normRef(item.reference))) f = `${nome}: entrou ${brlItem(rec)}${em}, possível duplicidade do boleto ${item.reference}.`;
+    else f = `${nome}: entrou ${brlItem(rec)}${em} sem cobrança correspondente.`;
   } else {
     const nome = `Boleto ${item.reference}${quem}`;
-    if (st === "PENDENTE") f = `${nome}: esperado ${brl(esp)}${item.dueAt ? ` com vencimento ${diaMes(item.dueAt)}` : ""}, não chegou.`;
-    else if (cents(rec) !== cents(esp)) f = `${nome}: esperado ${brl(esp)}, caiu ${brl(rec)}${em}${st === "CONCILIADO" ? " (diferença aceita)" : ""}.`;
+    if (st === "PENDENTE") f = `${nome}: esperado ${brlItem(esp)}${item.dueAt ? ` com vencimento ${diaMes(item.dueAt)}` : ""}, não chegou.`;
+    else if (cents(rec) !== cents(esp)) f = `${nome}: esperado ${brlItem(esp)}, caiu ${brlItem(rec)}${em}${st === "CONCILIADO" ? " (diferença aceita)" : ""}.`;
     else {
       const d = atraso(item.dueAt, item.paidAt);
-      f = `${nome}: pago ${brl(rec)}${em}${d > 0 ? `, com ${d} ${d === 1 ? "dia" : "dias"} de atraso` : ""}.`;
+      f = `${nome}: pago ${brlItem(rec)}${em}${d > 0 ? `, com ${d} ${d === 1 ? "dia" : "dias"} de atraso` : ""}.`;
     }
     if (item.rule === "VALOR_DATA") f = f.replace(/\.$/, " (casado por valor e data, sem referência no banco).");
   }
@@ -301,21 +325,28 @@ const REGRA_TXT: Record<string, string> = {
 /** Regra aplicada em frases simples. */
 export function fraseRegra(r: Regra): string[] {
   const out: string[] = [];
+  const m = (n: number) => brl(n, r.moeda);
   if (r.rule) out.push(REGRA_TXT[r.rule] ?? r.rule);
   if (r.diferencaCentavos !== undefined) {
     const d = Math.abs(r.diferencaCentavos);
     if (d === 0) out.push("Valor igual ao esperado.");
-    else if (d <= r.toleranciaCentavos) out.push(`Diferença de ${brl(d / 100)}, dentro da tolerância de ${r.toleranciaCentavos} centavo(s): conta como pago.`);
-    else out.push(`Diferença de ${brl(d / 100)} ${r.diferencaCentavos > 0 ? "a mais" : "a menos"}, acima da tolerância de ${r.toleranciaCentavos} centavo(s).`);
+    else if (d <= r.toleranciaCentavos) out.push(`Diferença de ${m(d / 100)}, dentro da tolerância de ${r.toleranciaCentavos} centavo(s): conta como pago.`);
+    else out.push(`Diferença de ${m(d / 100)} ${r.diferencaCentavos > 0 ? "a mais" : "a menos"}, acima da tolerância de ${r.toleranciaCentavos} centavo(s).`);
   }
   if (r.brutoCentavos !== undefined && r.taxaCentavos !== undefined) {
     const liquido = r.brutoCentavos - r.taxaCentavos;
-    out.push(`${r.formaPagamento ? `Forma de recebimento: ${r.formaPagamento}. ` : ""}Bruto esperado ${brl(r.brutoCentavos / 100)}, taxa ${brl(r.taxaCentavos / 100)}, líquido esperado ${brl(liquido / 100)}.`);
+    out.push(`${r.formaPagamento ? `Forma de recebimento: ${r.formaPagamento}. ` : ""}Bruto esperado ${m(r.brutoCentavos / 100)}, taxa ${m(r.taxaCentavos / 100)}, líquido esperado ${m(liquido / 100)}.`);
     if (r.explicadoTaxa) out.push("Diferença explicada pela taxa da forma de recebimento. É uma pista: a aceitação continua manual.");
     else if (r.diferencaCentavos !== undefined && Math.abs(r.diferencaCentavos) > r.toleranciaCentavos) {
       const alem = r.brutoCentavos + r.diferencaCentavos - liquido;
-      out.push(alem === 0 ? "Valor igual ao líquido esperado." : `Diferença além da taxa: ${brl(Math.abs(alem) / 100)} ${alem > 0 ? "a mais" : "a menos"} que o líquido esperado.`);
+      out.push(alem === 0 ? "Valor igual ao líquido esperado." : `Diferença além da taxa: ${m(Math.abs(alem) / 100)} ${alem > 0 ? "a mais" : "a menos"} que o líquido esperado.`);
     }
+  }
+  if (r.cambio) {
+    const c = r.cambio;
+    const cot = c.cotacao.replace(".", ",");
+    out.push(`Crédito de ${brl(c.valorOriginalCentavos / 100, c.moedaOriginal)} no extrato, convertido para ${m(c.valorConvertidoCentavos / 100)} pela cotação de ${cot} (R$ por US$ 1) informada por ${c.informadaPor}.`);
+    if (c.explicadoCambio) out.push(`Diferença dentro da tolerância de câmbio de ${String(c.toleranciaPct).replace(".", ",")}%: pista de diferença de câmbio. É uma pista: a aceitação continua manual.`);
   }
   if (r.atrasoDias) out.push(`Pago ${r.atrasoDias} ${r.atrasoDias === 1 ? "dia" : "dias"} depois do vencimento.`);
   if (!r.rule) out.push(r.casarPorValorData ? `Nenhum par encontrado pela referência nem por valor e data (±${r.toleranciaDias} dia(s)).` : "Nenhum par encontrado pela referência.");

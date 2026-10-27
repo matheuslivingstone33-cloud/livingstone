@@ -6,11 +6,28 @@ import { SubmitButton } from "@/components/SubmitButton";
 import { FileSizeGuard } from "@/components/FileSizeGuard";
 import { CardHeader, Notice } from "@/components/ui";
 import type { PreviaArquivo, ResultadoPrevia, TipoLayout } from "@/lib/layout-conciliacao";
+import { FORMATOS_DATA, FORMATOS_VALOR, MOEDAS, ROTULO_MOEDA, fmtMoeda, isMoeda, type FormatoData, type FormatoValor, type Moeda } from "@/lib/moeda";
 
 type Acao = (form: FormData) => Promise<ResultadoPrevia>;
-type Escolha = { colunas: Record<string, string>; formatoData: string; formatoValor: string };
+/** moeda: "" até o usuário escolher (só vem marcada quando o sistema detectou os símbolos). */
+type Escolha = { colunas: Record<string, string>; formatoData: string; formatoValor: string; moeda: string };
+const VAZIA: Escolha = { colunas: {}, formatoData: "", formatoValor: "", moeda: "" };
 
-const FORMATOS_DATA = ["dd/mm/aaaa", "aaaa-mm-dd", "mm/dd/aaaa", "dd-mm-aaaa", "dd.mm.aaaa", "aaaammdd"];
+const ROTULO_DATA: Record<FormatoData, string> = {
+  "dd/mm/aaaa": "dd/mm/aaaa (dia primeiro: 05/10/2026 é 5 de outubro)",
+  "aaaa-mm-dd": "aaaa-mm-dd (2026-10-05)",
+  "mm/dd/aaaa": "mm/dd/aaaa (mês primeiro, como nos EUA: 10/05/2026 é 5 de outubro)",
+  "dd-mm-aaaa": "dd-mm-aaaa (05-10-2026)",
+  "dd.mm.aaaa": "dd.mm.aaaa (05.10.2026)",
+  aaaammdd: "aaaammdd (20261005)",
+  "mmm dd, aaaa": "mmm dd, aaaa (Oct 05, 2026)",
+  "dd-mmm-aaaa": "dd-mmm-aaaa (05-Oct-2026)",
+};
+const ROTULO_VALOR: Record<FormatoValor, string> = {
+  br: "1.234,56 (vírgula decimal)",
+  ponto: "1234.56 (ponto decimal, sem milhar)",
+  us: "1,234.56 (formato dos EUA)",
+};
 const CAMPOS: Record<TipoLayout, { k: string; rotulo: string; obrigatorio?: boolean }[]> = {
   esperados: [
     { k: "referencia", rotulo: "Referência (nosso número)", obrigatorio: true },
@@ -58,6 +75,7 @@ const faltando = (tipo: TipoLayout, e: Escolha) => [
   ...CAMPOS[tipo].filter((c) => c.obrigatorio && !e.colunas[c.k]).map((c) => c.rotulo.toLowerCase()),
   ...(e.formatoData ? [] : ["formato da data"]),
   ...(e.formatoValor ? [] : ["formato do valor"]),
+  ...(e.moeda ? [] : ["moeda da planilha"]),
 ];
 
 const TITULO: Record<TipoLayout, string> = { esperados: "1. O que você esperava receber", extrato: "2. O que caiu no banco" };
@@ -67,21 +85,36 @@ const escolhaDe = (p: PreviaArquivo): Escolha => ({
   colunas: Object.fromEntries(Object.entries(p.colunas).filter(([, v]) => v)) as Record<string, string>,
   formatoData: p.formatoData ?? "",
   formatoValor: p.formatoValor ?? "",
+  moeda: p.moeda ?? "",
 });
 
-const brl = (n?: number) => (n === undefined ? "" : n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
+const valorEm = (n: number | undefined, moeda: string) => (n === undefined ? "" : fmtMoeda(n, isMoeda(moeda) ? moeda : "BRL"));
 
 export function NovaConciliacao({ preview, confirm }: { preview: Acao; confirm: Acao }) {
   const [envio, setEnvio] = useState<FormData | null>(null);
   const [previas, setPrevias] = useState<PreviaArquivo[]>([]);
   const [escolhas, setEscolhas] = useState<Partial<Record<TipoLayout, Escolha>>>({});
   const [erro, setErro] = useState<string | null>(null);
+  const [moedasFixas, setMoedasFixas] = useState<Partial<Record<TipoLayout, Moeda>>>({});
+  const [precisaCotacao, setPrecisaCotacao] = useState(false);
+  const [cotacao, setCotacao] = useState("");
+  const [toleranciaCambio, setToleranciaCambio] = useState("0,5");
+
+  // Moeda de cada lado: a escolhida na prévia ou a do arquivo já conhecido (OFX/CNAB/CSV antigo/layout salvo)
+  const moedaDe = (tipo: TipoLayout) => (previas.some((p) => p.tipo === tipo) ? escolhas[tipo]?.moeda ?? "" : moedasFixas[tipo] ?? "");
+  const moedaEsp = moedaDe("esperados");
+  const moedaExt = moedaDe("extrato");
+  const difere = !!moedaEsp && !!moedaExt && moedaEsp !== moedaExt;
+  // Confirmação bloqueada enquanto faltar campo obrigatório, formato, moeda ou (com moedas diferentes) a cotação
+  const bloqueado = previas.some((p) => faltando(p.tipo, escolhas[p.tipo] ?? VAZIA).length > 0) || (difere && !cotacao.trim());
 
   const aplicar = (r: ResultadoPrevia, manter = false) => {
     if (!r) return;
     if (!r.ok) return setErro(r.erro);
     setErro(null);
     setPrevias(r.previas);
+    setMoedasFixas(r.moedasFixas ?? {});
+    setPrecisaCotacao(!!r.precisaCotacao);
     if (!manter) setEscolhas(Object.fromEntries(r.previas.map((p) => [p.tipo, escolhaDe(p)])));
   };
 
@@ -94,12 +127,19 @@ export function NovaConciliacao({ preview, confirm }: { preview: Acao; confirm: 
       const e = escolhas[p.tipo];
       if (e) fd.set(LAYOUT_CAMPO[p.tipo], JSON.stringify(e));
     }
+    fd.delete("cotacao");
+    fd.delete("toleranciaCambioPct");
+    if (difere) {
+      fd.set("cotacao", cotacao.trim());
+      fd.set("toleranciaCambioPct", toleranciaCambio.trim());
+    }
     return fd;
   };
 
   async function enviar(fd: FormData) {
     setEnvio(fd);
     setPrevias([]);
+    setPrecisaCotacao(false);
     aplicar(await preview(fd));
   }
   async function atualizar() {
@@ -109,11 +149,8 @@ export function NovaConciliacao({ preview, confirm }: { preview: Acao; confirm: 
     if (envio && !bloqueado) aplicar(await confirm(comLayouts(envio)), true);
   }
 
-  // Confirmação bloqueada enquanto faltar campo obrigatório ou formato em algum arquivo
-  const bloqueado = previas.some((p) => faltando(p.tipo, escolhas[p.tipo] ?? { colunas: {}, formatoData: "", formatoValor: "" }).length > 0);
-
   const mudar = (tipo: TipoLayout, f: (e: Escolha) => Escolha) =>
-    setEscolhas((s) => ({ ...s, [tipo]: f(s[tipo] ?? { colunas: {}, formatoData: "", formatoValor: "" }) }));
+    setEscolhas((s) => ({ ...s, [tipo]: f(s[tipo] ?? VAZIA) }));
 
   return (
     <div className="mb-8 grid gap-4">
@@ -173,16 +210,18 @@ export function NovaConciliacao({ preview, confirm }: { preview: Acao; confirm: 
         </div>
       </form>
 
-      {previas.length > 0 && (
+      {(previas.length > 0 || precisaCotacao) && (
         <section className="card grid gap-6" aria-labelledby="previa-titulo">
           <div>
-            <h2 id="previa-titulo" className="text-lg font-semibold">Confira as colunas</h2>
+            <h2 id="previa-titulo" className="text-lg font-semibold">{previas.length ? "Confira as colunas" : "Informe a cotação"}</h2>
             <p className="hint">
-              É a primeira vez que este formato de planilha aparece. Confira o campo de cada coluna, corrija o que estiver errado e veja as primeiras linhas. A conciliação só roda depois de você salvar o layout; os próximos arquivos com as mesmas colunas são conciliados direto.
+              {previas.length
+                ? "É a primeira vez que este formato de planilha aparece. Confira o campo de cada coluna, corrija o que estiver errado e veja as primeiras linhas. A conciliação só roda depois de você salvar o layout; os próximos arquivos com as mesmas colunas são conciliados direto."
+                : "Os dois arquivos já são conhecidos, mas estão em moedas diferentes."}
             </p>
           </div>
           {previas.map((p) => {
-            const e = escolhas[p.tipo] ?? { colunas: {}, formatoData: "", formatoValor: "" };
+            const e = escolhas[p.tipo] ?? VAZIA;
             return (
               <div key={p.tipo} className="grid gap-3">
                 <h3 className="font-semibold">
@@ -236,13 +275,49 @@ export function NovaConciliacao({ preview, confirm }: { preview: Acao; confirm: 
                 {p.tipo === "esperados" && !e.colunas.forma && (
                   <Notice tone="warning">Nenhuma coluna de forma de recebimento: sem ela, a taxa de cartão não é aplicada nesta conciliação.</Notice>
                 )}
+                <fieldset className="grid gap-1">
+                  <legend className="label">Esta planilha está em: *</legend>
+                  <div className="flex flex-wrap gap-4">
+                    {MOEDAS.map((m) => (
+                      <label key={m} className="flex min-h-10 items-center gap-2 text-sm text-ink-700">
+                        <input type="radio" name={`${p.tipo}-moeda`} value={m} checked={e.moeda === m} onChange={() => mudar(p.tipo, (x) => ({ ...x, moeda: m }))} className="size-4 accent-brand-600" />
+                        {ROTULO_MOEDA[m]}
+                      </label>
+                    ))}
+                  </div>
+                  <p className="hint">{p.moeda ? "Marcado pelos símbolos de moeda encontrados no arquivo; confira." : "Não encontramos símbolo de moeda no arquivo: escolha uma opção."}</p>
+                </fieldset>
+                {p.perguntas?.data && (
+                  <fieldset className="grid gap-1 rounded-xl border border-amber-300 bg-amber-50/70 px-4 py-3">
+                    <legend className="label px-1">Como estão escritas as datas? *</legend>
+                    <p className="hint">Pela amostra não dá para saber o formato com certeza (por exemplo, se o dia vem antes ou depois do mês). Escolha o formato do arquivo.</p>
+                    {p.perguntas.data.map((f) => (
+                      <label key={f} className="flex min-h-10 items-center gap-2 text-sm text-ink-700">
+                        <input type="radio" name={`${p.tipo}-pdata`} value={f} checked={e.formatoData === f} onChange={() => mudar(p.tipo, (x) => ({ ...x, formatoData: f }))} className="size-4 accent-brand-600" />
+                        {ROTULO_DATA[f]}
+                      </label>
+                    ))}
+                  </fieldset>
+                )}
+                {p.perguntas?.valor && (
+                  <fieldset className="grid gap-1 rounded-xl border border-amber-300 bg-amber-50/70 px-4 py-3">
+                    <legend className="label px-1">Como estão escritos os valores? *</legend>
+                    <p className="hint">Os valores podem ser lidos de mais de um jeito, com resultados diferentes. Escolha o formato do arquivo.</p>
+                    {p.perguntas.valor.map((f) => (
+                      <label key={f} className="flex min-h-10 items-center gap-2 text-sm text-ink-700">
+                        <input type="radio" name={`${p.tipo}-pvalor`} value={f} checked={e.formatoValor === f} onChange={() => mudar(p.tipo, (x) => ({ ...x, formatoValor: f }))} className="size-4 accent-brand-600" />
+                        {ROTULO_VALOR[f]}
+                      </label>
+                    ))}
+                  </fieldset>
+                )}
                 <div className="grid gap-3 md:grid-cols-3">
                   <div>
                     <label className="label" htmlFor={`${p.tipo}-fdata`}>Formato da data</label>
                     <select id={`${p.tipo}-fdata`} className="input" value={e.formatoData} onChange={(ev) => mudar(p.tipo, (x) => ({ ...x, formatoData: ev.target.value }))}>
                       <option value="">Escolha</option>
                       {FORMATOS_DATA.map((f) => (
-                        <option key={f} value={f}>{f}</option>
+                        <option key={f} value={f}>{ROTULO_DATA[f]}</option>
                       ))}
                     </select>
                   </div>
@@ -250,8 +325,9 @@ export function NovaConciliacao({ preview, confirm }: { preview: Acao; confirm: 
                     <label className="label" htmlFor={`${p.tipo}-fvalor`}>Formato do valor</label>
                     <select id={`${p.tipo}-fvalor`} className="input" value={e.formatoValor} onChange={(ev) => mudar(p.tipo, (x) => ({ ...x, formatoValor: ev.target.value }))}>
                       <option value="">Escolha</option>
-                      <option value="br">1.234,56 (vírgula decimal)</option>
-                      <option value="ponto">1234.56 (ponto decimal)</option>
+                      {FORMATOS_VALOR.map((f) => (
+                        <option key={f} value={f}>{ROTULO_VALOR[f]}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -268,7 +344,7 @@ export function NovaConciliacao({ preview, confirm }: { preview: Acao; confirm: 
                           <tr key={l.linha}>
                             <td className="num">{l.linha}</td>
                             <td>{l.referencia}</td>
-                            <td className="num">{brl(l.valor)}</td>
+                            <td className="num">{valorEm(l.valor, e.moeda)}</td>
                             <td>{l.data ? l.data.split("-").reverse().join("/") : ""}</td>
                             <td>{l.pagador}</td>
                             <td className={l.erro ? "text-red-700" : "text-ink-500"}>{l.erro ?? (l.ignorada ? `Ignorada (${l.ignorada})` : "OK")}</td>
@@ -281,13 +357,37 @@ export function NovaConciliacao({ preview, confirm }: { preview: Acao; confirm: 
               </div>
             );
           })}
+          {difere && (
+            <div className="grid gap-3 rounded-xl border border-line bg-paper/50 px-4 py-3">
+              <h3 className="font-semibold">Câmbio</h3>
+              <p className="hint">
+                Os esperados estão em {ROTULO_MOEDA[moedaEsp as Moeda]} e o extrato em {ROTULO_MOEDA[moedaExt as Moeda]}. A conciliação fica na moeda dos esperados, e o extrato é convertido pela cotação abaixo.
+                {" "}Informe a cotação usada; o sistema não busca câmbio automaticamente.
+              </p>
+              <div className="grid gap-3 md:grid-cols-3">
+                <div>
+                  <label className="label" htmlFor="cotacao">Cotação (R$ por US$ 1) *</label>
+                  <input className="input" id="cotacao" inputMode="decimal" placeholder="Ex.: 5,4321" value={cotacao} onChange={(ev) => setCotacao(ev.target.value)} maxLength={20} required />
+                </div>
+                <div>
+                  <label className="label" htmlFor="toleranciaCambioPct">Tolerância de câmbio (%)</label>
+                  <input className="input" id="toleranciaCambioPct" inputMode="decimal" value={toleranciaCambio} onChange={(ev) => setToleranciaCambio(ev.target.value)} maxLength={5} />
+                  <p className="hint">Diferenças até esse percentual ganham a pista Diferença de câmbio. O item continua com valor diferente até alguém aceitar.</p>
+                </div>
+              </div>
+            </div>
+          )}
           {erro && <Notice tone="danger" role="alert">{erro}</Notice>}
           <div className="flex flex-wrap items-center justify-end gap-3 border-t border-line pt-4">
-            <form action={atualizar}>
-              <SubmitButton variant="link" pending="Atualizando...">Atualizar prévia</SubmitButton>
-            </form>
+            {previas.length > 0 && (
+              <form action={atualizar}>
+                <SubmitButton variant="link" pending="Atualizando...">Atualizar prévia</SubmitButton>
+              </form>
+            )}
             <form action={confirmar}>
-              <SubmitButton pending="Conciliando..." hint="Salvando o layout e conciliando os arquivos." disabled={bloqueado}>Está certo, salvar layout</SubmitButton>
+              <SubmitButton pending="Conciliando..." hint={previas.length ? "Salvando o layout e conciliando os arquivos." : "Conciliando os arquivos."} disabled={bloqueado}>
+                {previas.length ? "Está certo, salvar layout" : "Conciliar"}
+              </SubmitButton>
             </form>
           </div>
         </section>

@@ -1,4 +1,5 @@
 // Leitura de arquivos bancários e conciliação contra os títulos esperados.
+import { fmtCentavos, type Moeda } from "./moeda";
 
 /** De onde veio o lançamento: número da linha e as células (CSV/planilha) ou o trecho bruto (OFX/CNAB/JSON). */
 export type Origem = { linha: number; celulas?: string[]; bruto?: string };
@@ -47,6 +48,34 @@ export function parseMoney(raw: string, mode: "br" | "ofx" = "br"): number | nul
   if (/^-?\d{1,3}(\.\d{3})+$/.test(s)) return Number(s.replace(/\./g, ""));
   if (/^-?\d+(\.\d{1,2})?$/.test(s)) return Number(s);
   return null;
+}
+
+/**
+ * Valor no formato dos EUA → número, ou null se ilegível. Aceita os prefixos "$", "US$", "USD" e "U$",
+ * vírgula de milhar e ponto decimal ("1,234.56", "1,234", "1234.5"), "-" inicial e parênteses contábeis
+ * ("(150.00)" = -150). "1.234,56" (formato BR) e "12,34" → null.
+ */
+export function parseMoneyUs(raw: string): number | null {
+  let s = raw.trim().replace(/\s/g, "");
+  let neg = false;
+  const par = s.match(/^\((.*)\)$/);
+  if (par) {
+    neg = true;
+    s = par[1];
+  }
+  if (s.startsWith("-")) {
+    if (neg) return null;
+    neg = true;
+    s = s.slice(1);
+  }
+  s = s.replace(/^(US\$|USD|U\$|\$)/i, "");
+  if (s.startsWith("-") && !neg) {
+    neg = true;
+    s = s.slice(1);
+  }
+  if (!/^\d{1,3}(,\d{3})+(\.\d{1,2})?$/.test(s) && !/^\d+(\.\d{1,2})?$/.test(s)) return null;
+  const n = Number(s.replace(/,/g, ""));
+  return neg ? -n : n;
 }
 
 /** Tamanho máximo de uma referência (acima disso é erro; truncar poderia casar títulos diferentes). */
@@ -278,15 +307,17 @@ export type ReconcileOptions = {
   /** Liga a 2ª passada: sem referência, casa por valor exato e data dentro de ±toleranciaDias */
   casarPorValorData: boolean;
   toleranciaDias: number;
+  /** Moeda das notas de diferença (padrão BRL). Não muda nenhuma decisão. */
+  moeda?: Moeda;
 };
 
 export const DEFAULT_RECONCILE: ReconcileOptions = { toleranciaCentavos: 0, casarPorValorData: false, toleranciaDias: 0 };
 
 const DAY = 86_400_000;
-const money = (c: number) => (c / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 export function reconcileWith(expected: ExpectedEntry[], received: BankEntry[], options: Partial<ReconcileOptions> = {}): MatchedItem[] {
   const opts = { ...DEFAULT_RECONCILE, ...options };
+  const money = (c: number) => fmtCentavos(c, opts.moeda ?? "BRL");
   const pool = received.map((r, j) => ({ r, j, key: normRef(r.reference), used: false }));
   const hits: ({ r: BankEntry; j: number; rule: MatchRule } | undefined)[] = [];
 

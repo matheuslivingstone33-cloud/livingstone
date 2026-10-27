@@ -2,14 +2,14 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { brl, day, dt } from "@/lib/format";
+import { day, dt } from "@/lib/format";
 import { Badge, Notice, PageTitle, Stat, StatusBadge, TableCard } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import type { ReconcileOptions } from "@/lib/reconcile";
 import { GRUPOS, ROTULO_GRUPO, fraseItem, grupoDe, lerProva, type Grupo } from "@/lib/prova-conciliacao";
 import { ResolverItem } from "./ResolverItem";
 import { ProvaView } from "./Prova";
-import { filtroTaxaDe, linhasTaxa, paraFrase, referenciasPagas } from "./itens";
+import { cambioDe, filtroCambioDe, filtroTaxaDe, linhasTaxa, moedaDe, paraFrase, referenciasPagas, valorNa } from "./itens";
 
 const resolucaoLabel: Record<string, string> = { MANUAL_VINCULO: "Vínculo manual", ACEITE_DIVERGENCIA: "Divergência aceita", BAIXA: "Resolvido manualmente" };
 const acaoLabel: Record<string, string> = { VINCULAR: "Vinculou", ACEITAR_DIVERGENCIA: "Aceitou divergência", BAIXAR: "Baixou", REABRIR: "Reabriu" };
@@ -21,7 +21,7 @@ export default async function ConciliacaoDetalhe({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tipo?: string; item?: string; taxa?: string }>;
+  searchParams: Promise<{ tipo?: string; item?: string; taxa?: string; cambio?: string }>;
 }) {
   const s = await requireSession();
   const { id } = await params;
@@ -29,6 +29,11 @@ export default async function ConciliacaoDetalhe({
   const tipo = GRUPOS.find((g) => g === sp.tipo);
   const r = await db.reconciliation.findFirst({ where: { id, orgId: s.orgId } });
   if (!r) notFound();
+  // Valores na moeda da conciliação (a dos esperados); conciliação antiga é BRL
+  const moeda = moedaDe(r.currency);
+  const brl = valorNa(moeda);
+  const cambio = cambioDe(r.options);
+  const original = cambio ? valorNa(cambio.moedaExtrato) : undefined;
   const todos = await db.reconciliationItem.findMany({ where: { reconciliationId: r.id }, omit: { evidence: true }, orderBy: [{ status: "asc" }, { reference: "asc" }] });
   const pagas = referenciasPagas(todos);
   const contagem = Object.fromEntries(GRUPOS.map((g) => [g, 0])) as Record<Grupo, number>;
@@ -38,7 +43,12 @@ export default async function ConciliacaoDetalhe({
   const comTaxa = tipo === "diferente" && doGrupo.some((i) => i.explicadoTaxa || i.taxaEsperada !== null);
   const taxa = comTaxa ? filtroTaxaDe(sp.taxa) : undefined;
   const explicados = doGrupo.filter((i) => i.explicadoTaxa).length;
-  const items = taxa ? doGrupo.filter((i) => (taxa === "explicada") === i.explicadoTaxa) : doGrupo;
+  const porTaxa = taxa ? doGrupo.filter((i) => (taxa === "explicada") === i.explicadoTaxa) : doGrupo;
+  // Subfiltro "Diferença de câmbio": também é só pista; o status continua DIVERGENTE
+  const comCambio = tipo === "diferente" && !!cambio;
+  const filtroCambio = comCambio ? filtroCambioDe(sp.cambio) : undefined;
+  const explicadosCambio = porTaxa.filter((i) => i.explicadoCambio).length;
+  const items = filtroCambio ? porTaxa.filter((i) => (filtroCambio === "explicada") === i.explicadoCambio) : porTaxa;
 
   // Prova: só depois de a conciliação ter sido validada pela instituição da sessão
   const itemId = typeof sp.item === "string" ? sp.item.slice(0, 40) : "";
@@ -55,10 +65,11 @@ export default async function ConciliacaoDetalhe({
     opts.toleranciaCentavos ? `tolerância de ${opts.toleranciaCentavos} centavo(s)` : "",
     opts.casarPorValorData ? `valor e data (±${opts.toleranciaDias ?? 0} dia(s))` : "",
   ].filter(Boolean).join(", ");
-  const link = (q: { tipo?: string; item?: string; taxa?: string }) => {
+  const link = (q: { tipo?: string; item?: string; taxa?: string; cambio?: string }) => {
     const p = new URLSearchParams();
     if (q.tipo) p.set("tipo", q.tipo);
     if (q.tipo && q.taxa) p.set("taxa", q.taxa);
+    if (q.tipo && q.cambio) p.set("cambio", q.cambio);
     if (q.item) p.set("item", q.item);
     const t = p.toString();
     return t ? `?${t}` : "?";
@@ -89,6 +100,11 @@ export default async function ConciliacaoDetalhe({
         {Number(r.totalExcess) > 0 && <> · pago a maior <b>{brl(r.totalExcess)}</b></>}
         {rules && <> · regras: {rules}</>}
       </p>
+      {cambio && (
+        <p className="-mt-4 mb-6 text-sm text-ink-600">
+          Câmbio: esperados em {cambio.moedaEsperados}, extrato em {cambio.moedaExtrato} convertido para {cambio.base} pela cotação de <b>{cambio.cotacao.replace(".", ",")}</b> (R$ por US$ 1), informada por {cambio.informadaPor}{cambio.informadaEm ? <> em {dt(cambio.informadaEm)}</> : null} · tolerância de câmbio {String(cambio.toleranciaPct).replace(".", ",")}%. O sistema não busca câmbio automaticamente.
+        </p>
+      )}
 
       {aberto && (
         <section id="prova" className="mb-6 rounded-2xl border border-line bg-white/60 p-4 md:p-5" aria-label="Prova do item">
@@ -96,10 +112,10 @@ export default async function ConciliacaoDetalhe({
             <h2 className="font-display text-lg font-semibold text-ink-900">Prova</h2>
             <div className="flex gap-2">
               <Link className="btn-ghost" href={`/conciliacao/${r.id}/prova/${aberto.id}`}><Icon name="file" size={16} />Imprimir / salvar PDF</Link>
-              <Link className="btn-ghost" href={link({ tipo, taxa })}><Icon name="close" size={16} />Fechar</Link>
+              <Link className="btn-ghost" href={link({ tipo, taxa, cambio: filtroCambio })}><Icon name="close" size={16} />Fechar</Link>
             </div>
           </div>
-          <ProvaView prova={lerProva(aberto.evidence)} frase={fraseItem(paraFrase(aberto), { pagas })} />
+          <ProvaView prova={lerProva(aberto.evidence)} frase={fraseItem(paraFrase(aberto), { pagas, moeda })} />
         </section>
       )}
 
@@ -114,17 +130,34 @@ export default async function ConciliacaoDetalhe({
         </div>
       )}
 
+      {comCambio && (
+        <div className="mb-4 grid gap-2">
+          <nav aria-label="Filtrar valor diferente pela diferença de câmbio" className="flex flex-wrap items-center gap-2 text-sm">
+            <Link className={filtroCambio === undefined ? "btn" : "btn-ghost"} href={link({ tipo, taxa })} aria-current={filtroCambio === undefined ? "page" : undefined}>Todos ({porTaxa.length})</Link>
+            <Link className={filtroCambio === "explicada" ? "btn" : "btn-ghost"} href={link({ tipo, taxa, cambio: "explicada" })} aria-current={filtroCambio === "explicada" ? "page" : undefined}>{explicadosCambio} com diferença de câmbio</Link>
+            <Link className={filtroCambio === "outras" ? "btn" : "btn-ghost"} href={link({ tipo, taxa, cambio: "outras" })} aria-current={filtroCambio === "outras" ? "page" : undefined}>{porTaxa.length - explicadosCambio} para resolver</Link>
+          </nav>
+          <Notice tone="info">&quot;Diferença de câmbio&quot; é uma pista: a diferença, depois da conversão pela cotação informada, fica dentro da tolerância de câmbio. A situação não muda e a aceitação continua manual, item a item.</Notice>
+        </div>
+      )}
+
       <TableCard title={tipo ? ROTULO_GRUPO[tipo] : "Todos os itens"} meta={`${items.length} item(ns)`}>
         <ul className="divide-y divide-line">
           {items.map((i) => (
             <li key={i.id} className={`flex flex-col gap-2 px-4 py-3 md:flex-row md:items-start md:justify-between ${aberto?.id === i.id ? "bg-brand-50/60" : ""}`}>
               <div className="min-w-0 text-sm">
-                <p className="text-ink-900">{fraseItem(paraFrase(i), { pagas })}</p>
+                <p className="text-ink-900">{fraseItem(paraFrase(i), { pagas, moeda })}</p>
                 <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-ink-500">
                   <StatusBadge status={i.status} />
                   {i.explicadoTaxa && <Badge tone="info">Explicado pela taxa</Badge>}
-                  <Link className="link-action" href={`${link({ tipo, taxa, item: i.id })}#prova`}>Ver prova</Link>
+                  {i.explicadoCambio && <Badge tone="info">Diferença de câmbio</Badge>}
+                  <Link className="link-action" href={`${link({ tipo, taxa, cambio: filtroCambio, item: i.id })}#prova`}>Ver prova</Link>
                 </p>
+                {original && i.amountOriginal !== null && (
+                  <p className="mt-1 text-xs text-ink-600">
+                    No extrato: <span className="num">{original(i.amountOriginal)}</span> · convertido: <span className="num">{brl(i.receivedAmount)}</span>
+                  </p>
+                )}
                 {(() => {
                   const t = i.status === "DIVERGENTE" ? linhasTaxa(i) : null;
                   if (!t) return null;

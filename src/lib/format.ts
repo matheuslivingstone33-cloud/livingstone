@@ -1,4 +1,5 @@
 import { fmtData, fmtDataHora, fmtDiaCalendario } from "./tz";
+import { fmtMoeda } from "./moeda";
 
 export const brl = (v: unknown) =>
   v === null || v === undefined
@@ -15,4 +16,4 @@ export const day = (d: Date | string | null | undefined) => (d ? fmtDiaCalendari
 export const dayInst = (d: Date | string | null | undefined) => (d ? fmtData(d) : "—");
 
 /** Moeda em reais para textos gerados (mensagens, dossiês, pareceres). Mesmo formato em todo lugar, para a conferência da IA bater. */
-export const fmtBRL = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+export const fmtBRL = (n: number) => fmtMoeda(n, "BRL", "pt");
