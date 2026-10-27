@@ -10,3 +10,13 @@ export async function pdfText(data: Buffer): Promise<string> {
     return "";
   }
 }
+
+/** Número de páginas pelo leitor de PDF. null = protegido por senha ou corrompido. */
+export async function pdfPaginas(data: Buffer): Promise<number | null> {
+  try {
+    const pdf = await getDocumentProxy(new Uint8Array(data));
+    return pdf.numPages;
+  } catch {
+    return null;
+  }
+}

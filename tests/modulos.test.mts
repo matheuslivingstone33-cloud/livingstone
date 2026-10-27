@@ -2282,7 +2282,7 @@ test("Assistente: corpo com cache no fim do system, ferramentas em ordem estáve
   assert.match(b.system.at(-1)!.text, /dados_nao_confiaveis/);
   // Sem prefill: a última mensagem é do usuário
   assert.equal(b.messages.at(-1)?.role, "user");
-  assert.deepEqual(b.tools.map((t) => t.name), ["consultar_painel", "buscar_contrato", "casos_pld_vencendo", "resultado_conciliacao", "uso_ia_hoje", "propor_acao", "registrar_entendimento"]);
+  assert.deepEqual(b.tools.map((t) => t.name), ["consultar_painel", "buscar_contrato", "casos_pld_vencendo", "resultado_conciliacao", "uso_ia_hoje", "propor_acao", "registrar_entendimento", "registrar_documento"]);
   assert.equal(JSON.stringify(toolsPara("ADMIN").map(toolDef)), JSON.stringify(defs));
   assert.equal((defs[1].input_schema as { additionalProperties: boolean }).additionalProperties, false);
   // Guia estático: nenhuma data no prefixo do cache
@@ -2381,7 +2381,8 @@ test("Pedidos: registrar_entendimento só para quem opera e com entrada validada
   const nomes = (r: string) => toolsPara(r).map((t) => t.nome);
   assert.ok(nomes("ADMIN").includes("registrar_entendimento") && nomes("ANALISTA").includes("registrar_entendimento"));
   assert.ok(!nomes("AUDITOR").includes("registrar_entendimento"));
-  assert.equal(TOOLS.at(-1)?.nome, "registrar_entendimento");
+  assert.equal(TOOLS.at(-2)?.nome, "registrar_entendimento");
+  assert.equal(TOOLS.at(-1)?.nome, "registrar_documento");
   assert.ok(validarEntrada("registrar_entendimento", ENT).ok);
   const falta: Record<string, string> = { ...ENT };
   delete falta.novo;
@@ -2625,4 +2626,183 @@ test("Taxa: validarTaxas e merge sem conciliacao", () => {
   assert.deepEqual(merge(DEFAULTS, { ai: { dailyLimitUsd: 1 } }).conciliacao.taxas, []);
   assert.deepEqual(merge(DEFAULTS, { conciliacao: { taxas: TAXAS } }).conciliacao.taxas, TAXAS);
   assert.equal(validateSettings(merge(DEFAULTS, { conciliacao: { taxas: [{ ...CREDITO, pct: 0.5 }] } })), 'Taxas de recebimento: o percentual de "credito" deve ficar entre 0 e 20%.');
+});
+
+// ---------- Biblioteca de documentos ----------
+import {
+  AnexoError,
+  BIBLIOTECA_LIMITES,
+  anexoCabeNoTeto,
+  assinaturaDocumento,
+  chaveBase,
+  chaveRascunho,
+  contarPaginasPdf,
+  dicasDeColunas,
+  estimarTokensAnexo,
+  prepararAnexo,
+  resumoParaContexto,
+  validarDocumento,
+} from "../src/lib/biblioteca";
+import { tipoPorBytes } from "../src/lib/upload";
+import { headerOf as headerOfB } from "../src/lib/layout-conciliacao";
+
+const arq = (name: string, data: Buffer, mime = "application/octet-stream") => ({ name, mime, data });
+const pdfSintetico = (paginas: number) =>
+  Buffer.from(
+    `%PDF-1.4\n${Array.from({ length: paginas }, (_, i) => `${i + 3} 0 obj << /Type /Page /Parent 2 0 R >> endobj\n`).join("")}2 0 obj << /Type /Pages /Count ${paginas} >> endobj\ntrailer << >>\n%%E` + "OF\n",
+    "latin1",
+  );
+const textoDoAnexo = (a: { blocos: { type: string; text?: unknown }[] }) => a.blocos.map((b) => (typeof b.text === "string" ? b.text : "")).join("\n");
+const jsonDoAnexo = (texto: string) => JSON.parse(texto.split("\n").slice(1, -1).join("\n"));
+
+test("Biblioteca: lib pura (sem banco, sessão, Next ou rede) e upload.ts sem dependências de servidor", () => {
+  const imp = (f: string) => [...readFileSync(new URL(`../src/lib/${f}`, import.meta.url), "utf8").matchAll(/^import .* from "([^"]+)";$/gm)].map((m) => m[1]);
+  for (const i of imp("biblioteca.ts")) assert.ok(!/db|auth|next|ai-meter|servicos|settings/.test(i), i);
+  assert.deepEqual(imp("upload.ts").sort(), ["./ai", "./upload-limits"]);
+  assert.match(readFileSync(new URL("../src/lib/upload.ts", import.meta.url), "utf8"), /import type \{ AiFile \} from "\.\/ai"/);
+});
+
+test("Biblioteca: assinatura estável entre ; e , e diferente para outro layout", async () => {
+  const pv = demo("titulos_esperados.csv");
+  const virg = Buffer.from(pv.toString("utf8").replaceAll(";", ","));
+  const a = await prepararAnexo(arq("titulos.csv", pv));
+  const b = await prepararAnexo(arq("titulos.csv", virg));
+  const alt = await prepararAnexo(arq("alt.csv", demo("esperados_layout_alt.csv")));
+  assert.equal(a.formato, "PLANILHA");
+  assert.match(a.assinatura ?? "", /^[0-9a-f]{64}$/);
+  assert.equal(a.assinatura, b.assinatura);
+  assert.notEqual(a.assinatura, alt.assinatura);
+  assert.equal(a.assinatura, assinaturaDocumento(["Referência", "PAGADOR", "valor", "vencimento"]));
+});
+
+test("Biblioteca: prepararAnexo lê os XLSX de demonstração como planilha em dados não confiáveis", async () => {
+  for (const f of ["extrato_cooperativa.xlsx", "extrato_planilha.xlsx"]) {
+    const a = await prepararAnexo(arq(f, demo(f)));
+    assert.equal(a.formato, "PLANILHA", f);
+    assert.ok((a.cabecalho?.length ?? 0) >= 2, f);
+    assert.equal(a.blocos.length, 1);
+    assert.match(textoDoAnexo(a), /^<dados_nao_confiaveis tipo="planilha_anexada">/);
+    assert.ok(jsonDoAnexo(textoDoAnexo(a)).amostra_mascarada.length <= BIBLIOTECA_LIMITES.linhasAmostra);
+  }
+});
+
+test("Biblioteca: amostra sem CPF/CNPJ, nomes, telefones nem valores originais", async () => {
+  const c = textoDoAnexo(await prepararAnexo(arq("carteira.csv", demo("carteira_inadimplentes.csv"))));
+  for (const proibido of ["321.654.987-11", "456.789.123-22", "Roberto", "Fernanda", "4200,00", "1850,40", "98765-4321", "exemplo.com", "CT-2024-0101"]) assert.ok(!c.includes(proibido), proibido);
+  assert.ok(c.includes("cpf_cnpj") && c.includes("devedor"), "cabeçalho em claro");
+  const p = textoDoAnexo(await prepararAnexo(arq("pld.csv", demo("transacoes_pld.csv"))));
+  for (const proibido of ["111.444.777-35", "11.222.333/0001-44", "Ana Paula", "5200,00", "Hospital", "Imobiliária"]) assert.ok(!p.includes(proibido), proibido);
+  // Valor curto repetido, sem dígitos e sem cara de nome, fica em claro (ex.: pep = N)
+  const linhas: string[][] = jsonDoAnexo(p).amostra_mascarada;
+  assert.ok(linhas.length === 5 && linhas.every((l) => l[4] === "N"), "coluna pep em claro");
+});
+
+test("Biblioteca: ZIP com nome .csv e texto sem .csv recusados; PDF acima de 10 páginas recusado; PNG vira bloco image", async () => {
+  const zip = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(40, 1)]);
+  assert.equal(tipoPorBytes(zip, "planilha.csv"), null);
+  await assert.rejects(prepararAnexo(arq("planilha.csv", zip)), AnexoError);
+  await assert.rejects(prepararAnexo(arq("notas.txt", Buffer.from("a;b\n1;2"))), AnexoError);
+  assert.equal(contarPaginasPdf(pdfSintetico(12)), 12);
+  await assert.rejects(prepararAnexo(arq("doze.pdf", pdfSintetico(12))), /12 páginas/);
+  await assert.rejects(prepararAnexo(arq("tres.pdf", pdfSintetico(3)), { paginas: 11 }), /11 páginas/);
+  await assert.rejects(prepararAnexo(arq("senha.pdf", Buffer.from("%PDF-1.4\n/Encrypt 5 0 R\n%%E" + "OF", "latin1"))), /senha/);
+  await assert.rejects(prepararAnexo(arq("quebrado.pdf", Buffer.from("%PDF-1.4\n1 0 obj", "latin1"))), /corrompido/);
+  const pdf = await prepararAnexo(arq("tres.pdf", pdfSintetico(3)));
+  assert.equal(pdf.formato, "PDF");
+  assert.equal(pdf.paginas, 3);
+  assert.equal(pdf.blocos.find((b) => b.type === "document")?.title, "tres.pdf");
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32, 7)]);
+  const img = await prepararAnexo(arq("foto.png", png));
+  assert.equal(img.formato, "IMAGEM");
+  const bloco = img.blocos.find((b) => b.type === "image") as unknown as { source: { type: string; media_type: string; data: string } };
+  assert.deepEqual(bloco.source, { type: "base64", media_type: "image/png", data: png.toString("base64") });
+  assert.match(textoDoAnexo(img), /^<dados_nao_confiaveis tipo="documento_anexado">/);
+  const gif = Buffer.concat([Buffer.from("GIF89a", "latin1"), Buffer.from([1, 0, 1, 0, 0, 0, 0])]);
+  await assert.rejects(prepararAnexo(arq("x.gif", gif)), AnexoError);
+});
+
+test("Biblioteca: estimativa de tokens e pré-checagem contra o teto por mensagem", () => {
+  assert.equal(estimarTokensAnexo({ formato: "PDF", blocos: [], paginas: 10 }), 30_000);
+  assert.equal(estimarTokensAnexo({ formato: "IMAGEM", blocos: [] }), 1600);
+  assert.equal(estimarTokensAnexo({ formato: "PLANILHA", blocos: [{ type: "text", text: "x".repeat(300) }] }), 100);
+  assert.ok(anexoCabeNoTeto(30_000, 20_000, {}), "Haiku: 10 páginas cabem");
+  assert.equal(anexoCabeNoTeto(30_000, 0, { AI_MODEL_ASSISTENTE: "claude-opus-5-5" }), false, "modelo caro estoura o teto");
+  assert.equal(anexoCabeNoTeto(10_000_000, 0, {}), false);
+});
+
+test("Biblioteca: validarDocumento corta, só aceita colunas do cabeçalho e mascara CPF/CNPJ", () => {
+  const header = ["referencia", "pagador", "valor", "vencimento"];
+  const r = validarDocumento(
+    {
+      titulo: "Títulos a receber",
+      explicacao: "Lista de títulos. Exemplo do cliente 123.456.789-09.",
+      tipo: "titulos",
+      colunas: JSON.stringify([
+        { nome: "Referência", significado: "Nosso número" },
+        { nome: "valor", significado: "x".repeat(500) },
+        { nome: "inventada", significado: "não existe" },
+        { nome: "valor", significado: "duplicada" },
+      ]),
+      frequencia: "Diária",
+      uso: "Conciliação",
+    },
+    header,
+  );
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.equal(r.doc.explicacao, "Lista de títulos. Exemplo do cliente ***.456.789-**.");
+  assert.deepEqual(
+    r.doc.colunas.map((c) => c.nome),
+    ["referencia", "valor"],
+  );
+  assert.equal(r.doc.colunas[1].significado.length, BIBLIOTECA_LIMITES.colunaSignificado);
+  assert.equal(r.doc.frequencia, "Diária");
+  assert.equal(validarDocumento({ titulo: "ab", explicacao: "x" }).ok, false);
+  assert.equal(validarDocumento({ titulo: "abc", explicacao: "" }).ok, false);
+  const lixo = validarDocumento({ titulo: "Doc", explicacao: "e", colunas: "não é json" });
+  assert.ok(lixo.ok && lixo.doc.colunas.length === 0);
+  const pdf = validarDocumento({ titulo: "Boleto", explicacao: "e", colunas: { "Linha digitável": "código" } }, null);
+  assert.ok(pdf.ok && pdf.doc.colunas[0].nome === "Linha digitável");
+  assert.equal(chaveBase(chaveRascunho("abc", "u1")), "abc");
+  const ctx = resumoParaContexto(Array.from({ length: 40 }, (_, i) => ({ titulo: `Doc ${i}`, formato: "PDF", explicacao: "e" })));
+  assert.match(ctx, /^<dados_nao_confiaveis tipo="biblioteca_documentos">/);
+  assert.equal(jsonDoAnexo(ctx).length, BIBLIOTECA_LIMITES.resumosContexto);
+  assert.deepEqual(dicasDeColunas([{ nome: "valor", significado: "Valor pago" }, { nome: "outra", significado: "x" }], header), ["valor: Valor pago"]);
+});
+
+test("Biblioteca: registrar_documento encerra o laço como documento; auditor não tem a ferramenta", async () => {
+  const DOC = { titulo: "Extrato", explicacao: "Extrato do banco.", tipo: "extrato", colunas: '[{"nome":"valor","significado":"Valor"}]' };
+  assert.equal(TOOLS.at(-1)?.nome, "registrar_documento");
+  const executou: string[] = [];
+  const r = await rodarLoop({ call: async () => ferramenta("registrar_documento", DOC), executar: async (n) => (executou.push(n), null), tools: toolsPara("ANALISTA"), mensagens: [] });
+  assert.equal(r.fim, "documento");
+  assert.equal(r.documento?.titulo, "Extrato");
+  assert.equal(r.entendimento, undefined);
+  assert.deepEqual(executou, []);
+  assert.ok(!toolsPara("AUDITOR").some((t) => t.nome === "registrar_documento"));
+  const aud = await rodarLoop({ call: roteiro([ferramenta("registrar_documento", DOC), final("Seu perfil só permite consultar.")]), executar: async () => null, tools: toolsPara("AUDITOR"), mensagens: [] });
+  assert.equal(aud.fim, "resposta");
+  assert.equal(aud.documento, undefined);
+  // Anexo entra na última mensagem do usuário, antes da pergunta
+  const msgs = montarMensagens([], "O que é?", "ctx", [{ type: "image", source: { type: "base64", media_type: "image/png", data: "AA==" } }]);
+  const content = msgs[0].content as { type: string; text?: string }[];
+  assert.deepEqual(
+    content.map((b) => b.type),
+    ["text", "image", "text"],
+  );
+  assert.equal(content.at(-1)?.text, "O que é?");
+  assert.match(SYSTEM_ASSISTENTE[0], /É isso\?/);
+});
+
+test("Biblioteca: sugerirLayout leva as dicas da biblioteca como dados não confiáveis", async () => {
+  const t = await tab("esperados_ruim.csv");
+  let prompt = "";
+  const call = (async (_s: string, p: string) => {
+    prompt = p;
+    return { ok: false, reason: "http", detail: "x" };
+  }) as AiCall;
+  await sugerirLayout("esperados", t, 0, { call, dicas: dicasDeColunas([{ nome: "Quantia", significado: "Valor do título em reais" }], headerOfB(t.linhas, 0)) });
+  assert.match(prompt, /<dados_nao_confiaveis tipo="descricoes_colunas">\nQuantia: Valor do título em reais\n<\/dados_nao_confiaveis>/);
+  await sugerirLayout("esperados", t, 0, { call });
+  assert.ok(!prompt.includes("descricoes_colunas"));
 });

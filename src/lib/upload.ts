@@ -9,7 +9,8 @@ export type UploadKind = "text" | "pdf" | "image" | "xlsx";
 
 export class UploadError extends Error {}
 
-function sniff(buf: Buffer, name = ""): { kind: UploadKind; mime: string } | null {
+/** Tipo pelo conteúdo (assinatura dos bytes); null se não for aceito. */
+export function tipoPorBytes(buf: Buffer, name = ""): { kind: UploadKind; mime: string } | null {
   // Planilha .xlsx: assinatura ZIP (PK 03 04) e extensão .xlsx; outro ZIP não é aceito
   if (buf.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])))
     return name.toLowerCase().endsWith(".xlsx") ? { kind: "xlsx", mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" } : null;
@@ -30,7 +31,7 @@ export async function readUpload(entry: FormDataEntryValue | null, allowed: Uplo
   // Planilha protegida por senha (ou .xls antigo) é um contêiner OLE, não ZIP
   if (allowed.includes("xlsx") && data.subarray(0, 4).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0])))
     throw new UploadError(`O arquivo "${entry.name}" está protegido por senha ou no formato antigo .xls. Remova a senha e salve como .xlsx.`);
-  const t = sniff(data, entry.name);
+  const t = tipoPorBytes(data, entry.name);
   if (!t || !allowed.includes(t.kind))
     throw new UploadError(`O arquivo "${entry.name}" não é de um tipo aceito aqui (${allowed.join(", ")}).`);
   const name = entry.name.replace(/[^\w.\- ()À-ú]/g, "_").slice(0, 120);

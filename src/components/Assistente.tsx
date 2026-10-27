@@ -1,19 +1,26 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { confirmarPlano, enviarMensagem, type EntendimentoTela, type PlanoTela } from "@/app/actions-assistente";
+import { confirmarDocumento, confirmarPlano, enviarMensagem, type DocumentoTela, type EntendimentoTela, type PlanoTela } from "@/app/actions-assistente";
 import { ajustarEntendimento, confirmarEntendimento } from "@/app/actions-pedidos";
 import { blocosDoTexto, protocoloDe } from "@/lib/assistente-formato";
 import { fmtDataHora } from "@/lib/tz";
+import { MAX_UPLOAD_BYTES, formatBytes, uploadSizeError } from "@/lib/upload-limits";
 import { Icon } from "./Icon";
 
 type Comprovante = { protocolo: string; quando: string; por: string };
 type EstadoEntendimento = "pendente" | "confirmado" | "ajustando";
+type EstadoDocumento = "pendente" | "salvo" | "ajustando";
+const ACEITOS = ".csv,.xlsx,.pdf,.png,.jpg,.jpeg,.webp";
+const AVISO_ANEXO = "PDF e imagem são lidos inteiros pela IA; evite documentos com dados pessoais desnecessários.";
+const ROTULO_FORMATO: Record<string, string> = { PLANILHA: "Planilha", PDF: "PDF", IMAGEM: "Imagem" };
 type Msg = {
   role: "user" | "assistant";
   texto: string;
   plano?: PlanoTela & { estado: "pendente" | "feito" | "cancelado"; comprovante?: Comprovante };
   entendimento?: EntendimentoTela & { estado: EstadoEntendimento };
+  documento?: DocumentoTela & { estado: EstadoDocumento };
+  anexo?: string;
   erro?: boolean;
 };
 
@@ -56,6 +63,11 @@ export function Assistente({
   const [pensando, setPensando] = useState(false);
   // Pedido em andamento (modo pedido/descoberta): vai no FormData até haver consenso
   const [pedidoId, setPedidoId] = useState<string | null>(null);
+  // Anexo escolhido (vai só no próximo envio) e rascunho de documento em ajuste (vai por id, sem reenviar o arquivo)
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [erroArquivo, setErroArquivo] = useState("");
+  const [documentoId, setDocumentoId] = useState<string | null>(null);
+  const seletor = useRef<HTMLInputElement>(null);
   const painel = useRef<HTMLDivElement>(null);
   const campo = useRef<HTMLTextAreaElement>(null);
   const botao = useRef<HTMLButtonElement>(null);
@@ -102,20 +114,42 @@ export function Assistente({
     return () => document.removeEventListener("keydown", onKey);
   }, [aberto, fechar]);
 
+  function escolherArquivo(f: File | null) {
+    setErroArquivo("");
+    if (seletor.current) seletor.current.value = "";
+    if (!f) return setArquivo(null);
+    if (f.size > MAX_UPLOAD_BYTES) {
+      setArquivo(null);
+      setErroArquivo(uploadSizeError(f.name, f.size));
+      return;
+    }
+    setArquivo(f);
+  }
+
   async function enviar(pergunta: string) {
-    const q = pergunta.trim();
+    const anexo = podeConfirmar ? arquivo : null;
+    const q = pergunta.trim() || (anexo ? "O que é este documento?" : "");
     if (!q || pensando) return;
     setAtalhos(false);
     const historico = msgs.filter((m) => !m.erro).map((m) => ({ role: m.role, texto: m.texto }));
-    setMsgs((m) => [...m, { role: "user", texto: q }]);
+    setMsgs((m) => [...m, { role: "user", texto: q, anexo: anexo ? `${anexo.name} · ${formatBytes(anexo.size)}` : undefined }]);
     setTexto("");
+    setArquivo(null);
+    setErroArquivo("");
     setPensando(true);
     try {
       const fd = new FormData();
       fd.set("mensagem", q);
       fd.set("historico", JSON.stringify(historico));
       if (pedidoId) fd.set("pedidoId", pedidoId);
+      if (anexo) fd.set("arquivo", anexo);
+      else if (documentoId) fd.set("documentoId", documentoId);
       const r = await enviarMensagem(fd);
+      if (r.ok && r.documento) {
+        const id = r.documento.id;
+        setDocumentoId(null);
+        setMsgs((m) => m.map((x) => (x.documento?.id === id && x.documento.estado === "pendente" ? { ...x, documento: { ...x.documento, estado: "ajustando" } } : x)));
+      }
       if (r.ok && r.entendimento) {
         const id = r.entendimento.pedidoId;
         setPedidoId(id);
@@ -125,7 +159,7 @@ export function Assistente({
       setMsgs((m) => [
         ...m,
         r.ok
-          ? { role: "assistant", texto: r.texto, plano: r.plano ? { ...r.plano, estado: "pendente" } : undefined, entendimento: r.entendimento ? { ...r.entendimento, estado: "pendente" } : undefined }
+          ? { role: "assistant", texto: r.texto, plano: r.plano ? { ...r.plano, estado: "pendente" } : undefined, entendimento: r.entendimento ? { ...r.entendimento, estado: "pendente" } : undefined, documento: r.documento ? { ...r.documento, estado: "pendente" } : undefined }
           : { role: "assistant", texto: r.erro, erro: true },
       ]);
     } catch {
@@ -199,9 +233,39 @@ export function Assistente({
     }
   }
 
+  const marcarDoc = (id: string, estado: EstadoDocumento) =>
+    setMsgs((m) => m.map((x) => (x.documento?.id === id && x.documento.estado !== "salvo" ? { ...x, documento: { ...x.documento, estado } } : x)));
+
+  async function confirmarDoc(d: DocumentoTela) {
+    if (pensando) return;
+    setPensando(true);
+    try {
+      const r = await confirmarDocumento(d.id);
+      if (r.ok) {
+        marcarDoc(d.id, "salvo");
+        setDocumentoId(null);
+      }
+      setMsgs((m) => [...m, r.ok ? { role: "assistant", texto: r.texto } : { role: "assistant", texto: r.erro, erro: true }]);
+    } catch {
+      setMsgs((m) => [...m, { role: "assistant", texto: "Não consegui salvar agora. Tente de novo.", erro: true }]);
+    } finally {
+      setPensando(false);
+    }
+  }
+
+  function ajustarDoc(d: DocumentoTela) {
+    marcarDoc(d.id, "ajustando");
+    setDocumentoId(d.id);
+    setMsgs((m) => [...m, { role: "assistant", texto: "Diga o que ajustar no entendimento do documento. Não precisa anexar de novo." }]);
+    campo.current?.focus();
+  }
+
   const limpar = () => {
     setMsgs([]);
     setPedidoId(null);
+    setDocumentoId(null);
+    setArquivo(null);
+    setErroArquivo("");
   };
 
   return (
@@ -282,7 +346,15 @@ export function Assistente({
             {msgs.map((m, i) =>
               m.role === "user" ? (
                 <div key={i} className="flex justify-end">
-                  <div className="max-w-[85%] whitespace-pre-line rounded-2xl rounded-br-md bg-ink-900 px-3.5 py-2.5 leading-relaxed text-white">{m.texto}</div>
+                  <div className="max-w-[85%] whitespace-pre-line rounded-2xl rounded-br-md bg-ink-900 px-3.5 py-2.5 leading-relaxed text-white">
+                    {m.anexo && (
+                      <span className="mb-1.5 flex items-center gap-1.5 rounded-lg bg-white/10 px-2 py-1 text-xs text-white/85">
+                        <Icon name="file" size={12} />
+                        <span className="min-w-0 truncate">{m.anexo}</span>
+                      </span>
+                    )}
+                    {m.texto}
+                  </div>
                 </div>
               ) : (
                 <div key={i} className="flex items-start gap-2.5">
@@ -299,6 +371,9 @@ export function Assistente({
                     </div>
                     {m.entendimento && (
                       <EntendimentoCartao e={m.entendimento} podeConfirmar={podeConfirmar} pensando={pensando} onConfirmar={() => confirmarEnt(m.entendimento!)} onAjustar={() => ajustarEnt(m.entendimento!)} />
+                    )}
+                    {m.documento && (
+                      <DocumentoCartao d={m.documento} podeConfirmar={podeConfirmar} pensando={pensando} onConfirmar={() => confirmarDoc(m.documento!)} onAjustar={() => ajustarDoc(m.documento!)} />
                     )}
                     {m.plano?.comprovante &&<ComprovanteCartao titulo={m.plano.titulo} descricao={m.plano.descricao} c={m.plano.comprovante} />}
                     {m.plano && !m.plano.comprovante && (
@@ -390,6 +465,32 @@ export function Assistente({
                 )}
               </div>
             )}
+            {podeConfirmar && (arquivo || erroArquivo) && (
+              <div className="mb-2 space-y-1.5">
+                {arquivo && (
+                  <div className="flex items-center gap-2 rounded-xl border border-line bg-paper px-3 py-2 text-xs text-ink-700">
+                    <Icon name="file" size={14} className="shrink-0 text-ink-500" />
+                    <span className="min-w-0 flex-1 truncate font-medium text-ink-900">{arquivo.name}</span>
+                    <span className="shrink-0 tabular-nums text-ink-500">{formatBytes(arquivo.size)}</span>
+                    <button type="button" onClick={() => escolherArquivo(null)} className="grid size-6 shrink-0 place-items-center rounded-md text-ink-500 hover:bg-white hover:text-ink-900" aria-label="Remover anexo">
+                      <Icon name="close" size={12} />
+                    </button>
+                  </div>
+                )}
+                {arquivo && (
+                  <p className="flex items-start gap-1.5 px-1 text-[11px] leading-snug text-ink-600">
+                    <Icon name="info" size={12} className="mt-px shrink-0" />
+                    {AVISO_ANEXO}
+                  </p>
+                )}
+                {erroArquivo && (
+                  <p role="alert" className="px-1 text-[11px] leading-snug text-red-700">
+                    {erroArquivo}
+                  </p>
+                )}
+              </div>
+            )}
+            {documentoId && !arquivo && <p className="mb-2 px-1 text-[11px] leading-snug text-ink-600">Ajustando o documento: diga o que mudar.</p>}
             <form
               className="flex items-end gap-2 rounded-2xl border border-line-strong bg-white p-1.5 pl-3 transition-colors focus-within:border-brand-600 focus-within:ring-4 focus-within:ring-brand-100"
               onSubmit={(e) => {
@@ -397,6 +498,21 @@ export function Assistente({
                 enviar(texto);
               }}
             >
+              {podeConfirmar && (
+                <>
+                  <input ref={seletor} type="file" accept={ACEITOS} className="sr-only" tabIndex={-1} aria-hidden onChange={(e) => escolherArquivo(e.target.files?.[0] ?? null)} />
+                  <button
+                    type="button"
+                    onClick={() => seletor.current?.click()}
+                    disabled={pensando}
+                    className="grid size-9 shrink-0 place-items-center self-end rounded-xl text-ink-600 transition-colors hover:bg-paper hover:text-ink-900 disabled:cursor-not-allowed disabled:opacity-60"
+                    aria-label="Anexar documento"
+                    title="Anexar documento (CSV, XLSX, PDF ou imagem, até 4 MB)"
+                  >
+                    <Icon name="file" size={16} />
+                  </button>
+                </>
+              )}
               <label htmlFor="assistente-campo" className="sr-only">
                 Sua pergunta
               </label>
@@ -420,7 +536,7 @@ export function Assistente({
               <button
                 type="submit"
                 className="grid size-9 shrink-0 place-items-center rounded-xl bg-brand-600 text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-ink-500/40"
-                disabled={pensando || !texto.trim()}
+                disabled={pensando || (!texto.trim() && !arquivo)}
                 aria-label="Enviar pergunta"
               >
                 <EnviarIcone />
@@ -591,6 +707,86 @@ function EntendimentoCartao({
               Registrado para a equipe avaliar
             </p>
           ) : e.estado === "ajustando" ? (
+            <p className="text-xs text-ink-500">Em ajuste. A próxima versão aparece abaixo.</p>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Entendimento de um documento anexado, no formato de recibo: "É isso?" com Sim e Ajustar. Só texto. */
+function DocumentoCartao({
+  d,
+  podeConfirmar,
+  pensando,
+  onConfirmar,
+  onAjustar,
+}: {
+  d: DocumentoTela & { estado: EstadoDocumento };
+  podeConfirmar: boolean;
+  pensando: boolean;
+  onConfirmar: () => void;
+  onAjustar: () => void;
+}) {
+  return (
+    <div className="mt-2 drop-shadow-[0_4px_10px_rgba(10,31,44,0.12)]">
+      <div className="comprovante bg-white" role="group" aria-label="Entendimento do documento">
+        <div className="flex items-center gap-3 px-4 pb-3 pt-4">
+          <span aria-hidden className={`grid size-9 shrink-0 place-items-center rounded-full ${d.estado === "salvo" ? "bg-brand-600 text-white" : "bg-ink-900 text-gold-300"}`}>
+            <Icon name={d.estado === "salvo" ? "check" : "file"} size={16} />
+          </span>
+          <div className="min-w-0">
+            <p className="font-display text-[15px] font-semibold leading-tight text-ink-900">{d.titulo}</p>
+            <p className="text-xs text-ink-600">{ROTULO_FORMATO[d.formato] ?? d.formato} · É isso?</p>
+          </div>
+        </div>
+        <p className="whitespace-pre-line px-4 pb-3 text-[13px] leading-relaxed text-ink-700">{d.explicacao}</p>
+        <div aria-hidden className="comprovante-picote" />
+        {d.colunas.length > 0 && (
+          <dl className="space-y-1.5 px-4 py-3 text-[13px]">
+            {d.colunas.slice(0, 20).map((c) => (
+              <div key={c.nome} className="flex justify-between gap-3">
+                <dt className="shrink-0 font-medium text-ink-900">{c.nome}</dt>
+                <dd className="min-w-0 text-right text-ink-700">{c.significado || "—"}</dd>
+              </div>
+            ))}
+            {d.colunas.length > 20 && <p className="text-xs text-ink-500">e mais {d.colunas.length - 20} colunas</p>}
+          </dl>
+        )}
+        {(d.frequencia || d.uso) && (
+          <dl className="space-y-1.5 px-4 pb-3 text-[13px]">
+            {d.frequencia && (
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-500">Frequência</dt>
+                <dd className="text-right text-ink-900">{d.frequencia}</dd>
+              </div>
+            )}
+            {d.uso && (
+              <div className="flex justify-between gap-3">
+                <dt className="shrink-0 text-ink-500">Uso</dt>
+                <dd className="text-right text-ink-900">{d.uso}</dd>
+              </div>
+            )}
+          </dl>
+        )}
+        <div className="px-4 pb-5">
+          {d.estado === "pendente" && podeConfirmar ? (
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="btn" disabled={pensando} onClick={onConfirmar}>
+                <Icon name="check" size={14} />
+                Sim, é isso
+              </button>
+              <button type="button" className="btn-ghost" disabled={pensando} onClick={onAjustar}>
+                Ajustar
+              </button>
+            </div>
+          ) : d.estado === "salvo" ? (
+            <p className="flex items-center justify-center gap-1.5 rounded-lg bg-brand-50 px-2 py-1.5 text-xs font-medium text-brand-800">
+              <Icon name="check" size={12} />
+              Salvo na biblioteca
+            </p>
+          ) : d.estado === "ajustando" ? (
             <p className="text-xs text-ink-500">Em ajuste. A próxima versão aparece abaixo.</p>
           ) : null}
         </div>

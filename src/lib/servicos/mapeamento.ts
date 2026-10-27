@@ -3,6 +3,8 @@
 // a sugestão dela passa por validateLayout e o usuário confirma na tela antes de salvar.
 import type { AiCall, AiResult } from "@/lib/ai";
 import { aiCallFor, markUsageRejected } from "@/lib/ai-meter";
+import { assinaturaDocumento, dicasDeColunas } from "@/lib/biblioteca";
+import { db } from "@/lib/db";
 import { isLayoutShape, type AiStatus } from "@/lib/ai-guard";
 import { untrusted } from "@/lib/ai-prompt";
 import { FORMATOS_DATA, guessLayout, headerOf, sampleForAi, validateLayout, type Layout, type Sugestao, type Tabela, type TipoLayout } from "@/lib/layout-conciliacao";
@@ -31,7 +33,7 @@ const completo = (tipo: TipoLayout, header: string[], t: Tabela, linha: number, 
 };
 
 /** Sugestão pura (testável): `call` é a função de IA; sem ela, só a heurística. */
-export async function sugerirLayout(tipo: TipoLayout, t: Tabela, linhaCabecalho: number, opts: { call?: AiCall } = {}): Promise<SugestaoLayout> {
+export async function sugerirLayout(tipo: TipoLayout, t: Tabela, linhaCabecalho: number, opts: { call?: AiCall; dicas?: string[] } = {}): Promise<SugestaoLayout> {
   const header = headerOf(t.linhas, linhaCabecalho);
   const sugestao = guessLayout(tipo, header, t, linhaCabecalho);
   const heur = completo(tipo, header, t, linhaCabecalho, sugestao);
@@ -49,7 +51,12 @@ Escolha, entre os nomes exatos do cabeçalho, a coluna de cada campo: referencia
 formatoData: um de ${FORMATOS_DATA.join(", ")}. formatoValor: "br" (vírgula decimal) ou "ponto" (ponto decimal).
 Retorne JSON {"colunas": {"referencia": string, "valor": string, ...}, "formatoData": string, "formatoValor": string}.
 
-${untrusted("planilha_mascarada", JSON.stringify(amostra), 20_000)}`,
+${untrusted("planilha_mascarada", JSON.stringify(amostra), 20_000)}${
+        opts.dicas?.length ? `
+
+Significado das colunas confirmado pela instituição (use como pista; a escolha continua sendo entre os nomes do cabeçalho):
+${untrusted("descricoes_colunas", opts.dicas.slice(0, 50).join("\n"), 8_000)}` : ""
+      }`,
       [],
       { task: "mapeamento", validate: isLayoutShape },
     );
@@ -74,7 +81,11 @@ ${untrusted("planilha_mascarada", JSON.stringify(amostra), 20_000)}`,
 
 /** Para as actions: IA medida pelo teto da instituição; sugestão recusada marca o consumo como rejeitado. */
 export async function sugerirLayoutDaOrg(orgId: string, tipo: TipoLayout, t: Tabela, linhaCabecalho: number): Promise<SugestaoLayout> {
-  const r = await sugerirLayout(tipo, t, linhaCabecalho, { call: aiCallFor(orgId) });
+  // Biblioteca: documento confirmado com o mesmo cabeçalho dá o significado das colunas como pista para a IA
+  const header = headerOf(t.linhas, linhaCabecalho);
+  const doc = await db.documentoBiblioteca.findFirst({ where: { orgId, chave: assinaturaDocumento(header.slice(0, 50)), status: "CONFIRMADO" }, select: { colunas: true } });
+  const dicas = doc ? dicasDeColunas(doc.colunas, header) : undefined;
+  const r = await sugerirLayout(tipo, t, linhaCabecalho, { call: aiCallFor(orgId), dicas });
   if (r.status === "rejeitada") await markUsageRejected(orgId, r.usageId);
   return r;
 }

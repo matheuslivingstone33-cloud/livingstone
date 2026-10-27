@@ -91,12 +91,15 @@ export async function markUsageRejected(orgId: string, usageId: string | undefin
  * Chamada de mensagens do assistente, medida por passo: mesma trava e mesmo teto diário da instituição,
  * com o usuário registrado na linha de consumo. Nunca guarda texto. `opts.call` substitui a chamada real.
  */
-export function meteredMessages(orgId: string, userId: string, opts: { now?: () => Date; call?: MessagesCall } = {}): MessagesCall {
+export function meteredMessages(orgId: string, userId: string, opts: { now?: () => Date; call?: MessagesCall; anexoTokens?: number } = {}): MessagesCall {
   const inner = opts.call ?? ((b) => claudeMessages(b));
   const clock = opts.now ?? (() => new Date());
+  const extra = Math.max(0, opts.anexoTokens ?? 0);
   return async (body): Promise<MessagesResult> => {
     const model = modelFor("assistente");
-    const reserve = reserveCost("assistente", JSON.stringify(body).length);
+    // Anexo PDF/imagem: o base64 não conta como texto; entra a estimativa de tokens do anexo (3 caracteres por token)
+    const chars = extra ? JSON.stringify(body, (k, v) => (k === "data" && typeof v === "string" ? "" : v)).length : JSON.stringify(body).length;
+    const reserve = reserveCost("assistente", chars + extra * 3);
     const gate = await reservar(orgId, userId, "assistente", model, reserve, clock);
     if (gate.verdict !== "ok") return { ok: false, reason: "limite", detail: LIMIT_TEXT[gate.verdict] ?? "Teto de IA atingido", model, usageId: gate.id };
     let r: MessagesResult;

@@ -29,11 +29,32 @@ import { gerarPropostaServico } from "@/lib/servicos/cobranca";
 import { pausarReguaServico } from "@/lib/servicos/regua";
 import { atualizarResumoServico } from "@/lib/servicos/resumo";
 import { diaSP, inicioDoDiaSP } from "@/lib/tz";
+import { UploadError, assertUploadTotal, readUpload } from "@/lib/upload";
+import { pdfPaginas } from "@/lib/pdf";
+import {
+  AnexoError,
+  BIBLIOTECA_LIMITES,
+  anexoCabeNoTeto,
+  chaveBase,
+  chaveRascunho,
+  chaveTipo,
+  colunasSalvas,
+  estimarTokensAnexo,
+  prepararAnexo,
+  resumoParaContexto,
+  validarDocumento,
+  type Anexo,
+  type ColunaDoc,
+  type FormatoDoc,
+} from "@/lib/biblioteca";
 
 export type PlanoTela = { id: string; titulo: string; descricao: string };
 export type EntendimentoTela = Entendimento & { pedidoId: string; versao: number };
-export type RespostaAssistente = { ok: true; texto: string; plano?: PlanoTela; entendimento?: EntendimentoTela; executadoEm?: string } | { ok: false; erro: string };
+export type DocumentoTela = { id: string; titulo: string; explicacao: string; formato: FormatoDoc; colunas: ColunaDoc[]; frequencia?: string; uso?: string };
+export type RespostaAssistente = { ok: true; texto: string; plano?: PlanoTela; entendimento?: EntendimentoTela; documento?: DocumentoTela; executadoEm?: string } | { ok: false; erro: string };
 
+const TEXTO_DOCUMENTO = "Registrei meu entendimento do documento abaixo. É isso?";
+const SO_CONSULTA_ANEXO = "Seu perfil só permite consultar. Anexar documentos é para analistas e administradores.";
 const TEXTO_ENTENDIMENTO = "Registrei meu entendimento abaixo. Confirme se é isso — fica registrado para a equipe avaliar.";
 
 const MAX_PERGUNTA = 1000;
@@ -63,7 +84,14 @@ async function descreverPlano(s: Session, p: Plano): Promise<{ descricao: string
 export async function enviarMensagem(form: FormData): Promise<RespostaAssistente> {
   const s = await requireSession();
   const now = new Date();
-  const pergunta = String(form.get("mensagem") ?? "").trim();
+  const arquivo = form.get("arquivo");
+  const temArquivo = arquivo instanceof File && arquivo.size > 0;
+  const docRaw = temArquivo ? "" : String(form.get("documentoId") ?? "");
+  if (docRaw && !ID_RE.test(docRaw)) return { ok: false, erro: "Documento não encontrado." };
+  const operam = s.role === "ADMIN" || s.role === "ANALISTA";
+  // Anexo e ajuste de documento: só quem opera
+  if ((temArquivo || docRaw) && !operam) return { ok: false, erro: SO_CONSULTA_ANEXO };
+  const pergunta = String(form.get("mensagem") ?? "").trim() || (temArquivo ? "O que é este documento?" : "");
   if (!pergunta) return { ok: false, erro: "Escreva sua pergunta." };
   if (pergunta.length > MAX_PERGUNTA) return { ok: false, erro: `A pergunta pode ter até ${MAX_PERGUNTA} caracteres.` };
   let bruto: unknown = [];
@@ -85,11 +113,37 @@ export async function enviarMensagem(form: FormData): Promise<RespostaAssistente
   }
 
   if (aiProvider() !== "claude") {
+    if (temArquivo || docRaw) return { ok: false, erro: "Para ler documentos, a IA precisa estar configurada na instituição." };
     await audit(s, "assistente.mensagem", "Sem IA: resposta pelo guia da plataforma");
     return { ok: true, texto: responderSemIa(pergunta) };
   }
 
-  const operam = s.role === "ADMIN" || s.role === "ANALISTA";
+  // Anexo: tipo conferido pelos bytes; planilha vira cabeçalho + amostra mascarada, PDF/imagem vão inteiros
+  let anexo: Anexo | null = null;
+  if (temArquivo) {
+    try {
+      assertUploadTotal([arquivo]);
+      const f = await readUpload(arquivo, ["text", "xlsx", "pdf", "image"]);
+      if (f) {
+        let paginas: number | undefined;
+        if (f.mime === "application/pdf" && !/\/Encrypt\b/.test(f.data.toString("latin1"))) {
+          const n = await pdfPaginas(f.data);
+          if (n === null) return { ok: false, erro: "Não consegui abrir o PDF. Ele pode estar protegido por senha ou corrompido; remova a senha ou gere o arquivo de novo." };
+          paginas = n;
+        }
+        anexo = await prepararAnexo(f, { paginas });
+      }
+    } catch (e) {
+      if (e instanceof UploadError || e instanceof AnexoError) return { ok: false, erro: e.message };
+      throw e;
+    }
+  }
+  // Ajuste: só o rascunho da própria pessoa, da mesma instituição, ainda válido. O arquivo não é reenviado.
+  const rascunho = docRaw
+    ? await db.documentoBiblioteca.findFirst({ where: { id: docRaw, orgId: s.orgId, criadoPor: s.userId, status: "RASCUNHO", expiresAt: { gt: now } } })
+    : null;
+  if (docRaw && !rascunho) return { ok: false, erro: "Este rascunho expirou ou não foi encontrado. Anexe o documento de novo." };
+
   // Pedido em andamento: só da mesma pessoa, da mesma instituição, ainda sem consenso
   const pedido =
     pedidoRaw && operam
@@ -97,20 +151,88 @@ export async function enviarMensagem(form: FormData): Promise<RespostaAssistente
       : null;
   const atual = pedido ? versaoAtual(pedido.versoes) : null;
   // A versão atual vai como dado não confiável na mensagem do usuário, nunca no system (o prefixo do cache fica fixo)
-  const contexto = contextoSessao(s.name, s.role, now) + (atual ? `\nPedido em andamento, versão ${atual.n} (reescreva a versão inteira ao ajustar):\n${untrusted("pedido_atual", JSON.stringify(atual))}` : "");
+  let contexto = contextoSessao(s.name, s.role, now) + (atual ? `\nPedido em andamento, versão ${atual.n} (reescreva a versão inteira ao ajustar):\n${untrusted("pedido_atual", JSON.stringify(atual))}` : "");
+  // Reconhecimento: planilha pela assinatura do cabeçalho; PDF/imagem comparados com até 30 resumos confirmados
+  if (anexo?.assinatura) {
+    const conhecido = await db.documentoBiblioteca.findFirst({ where: { orgId: s.orgId, chave: anexo.assinatura, status: "CONFIRMADO" } });
+    if (conhecido) contexto += `\nEste documento já está na biblioteca da instituição:\n${resumoParaContexto([conhecido], "documento_conhecido")}`;
+  } else if (anexo) {
+    const docs = await db.documentoBiblioteca.findMany({
+      where: { orgId: s.orgId, status: "CONFIRMADO", formato: { in: ["PDF", "IMAGEM"] } },
+      orderBy: { updatedAt: "desc" },
+      take: BIBLIOTECA_LIMITES.resumosContexto,
+    });
+    if (docs.length) contexto += `\nDocumentos já confirmados na biblioteca (diga se o anexo for um deles):\n${resumoParaContexto(docs)}`;
+  }
+  if (rascunho)
+    contexto += `\nDocumento em ajuste (reescreva a versão inteira com registrar_documento):\n${untrusted(
+      "documento_rascunho",
+      JSON.stringify({ formato: rascunho.formato, titulo: rascunho.titulo, explicacao: rascunho.explicacao, cabecalho: rascunho.cabecalho, colunas: colunasSalvas(rascunho.colunas), frequencia: rascunho.frequencia, uso: rascunho.uso }),
+      20_000,
+    )}`;
+
+  // Pré-checagem de custo: o anexo não pode estourar o teto por mensagem já no primeiro passo
+  const anexoTokens = anexo ? estimarTokensAnexo(anexo) : 0;
+  if (anexo && !anexoCabeNoTeto(anexoTokens, SYSTEM_ASSISTENTE.join("\n").length + contexto.length + pergunta.length + JSON.stringify(historico).length)) {
+    await audit(s, "assistente.anexo_recusado", `Anexo ${anexo.formato} acima do teto de custo por mensagem (~${anexoTokens} tokens)`);
+    return { ok: false, erro: "Este documento é grande demais para o assistente ler. Envie menos páginas ou um arquivo menor." };
+  }
 
   const tools = toolsPara(s.role);
   const defs = tools.map(toolDef);
-  const call = meteredMessages(s.orgId, s.userId);
+  // PDF/imagem: a reserva usa a estimativa por página/imagem em vez do tamanho do base64
+  const call = meteredMessages(s.orgId, s.userId, { anexoTokens: anexo && anexo.formato !== "PLANILHA" ? anexoTokens : 0 });
   const r = await rodarLoop({
     call: (m) => call(requestBodyAssistente(SYSTEM_ASSISTENTE, defs, m)),
     executar: (nome, e) => executarConsulta(s.orgId, nome, e, now),
     tools,
-    mensagens: montarMensagens(historico, pergunta, contexto),
+    mensagens: montarMensagens(historico, pergunta, contexto, anexo?.blocos),
   });
-  // Só metadados: nunca a pergunta nem a resposta
-  await audit(s, "assistente.mensagem", `Passos ${r.passos} · ferramentas ${r.ferramentas.join(", ") || "nenhuma"} · custo US$ ${r.custoUsd.toFixed(4)} · fim ${r.fim}`.slice(0, 500));
+  // Só metadados: nunca a pergunta, a resposta nem o conteúdo do anexo
+  const meta = anexo ? ` · anexo ${anexo.formato}${anexo.paginas ? ` (${anexo.paginas} pág.)` : ""}` : rascunho ? " · ajuste de documento" : "";
+  await audit(s, "assistente.mensagem", `Passos ${r.passos} · ferramentas ${r.ferramentas.join(", ") || "nenhuma"} · custo US$ ${r.custoUsd.toFixed(4)} · fim ${r.fim}${meta}`.slice(0, 500));
   if (r.fim === "limite") await audit(s, "assistente.limite", "Teto diário de IA da instituição atingido");
+
+  if (r.fim === "documento" && r.documento) {
+    if (!operam) return { ok: true, texto: SO_CONSULTA_ANEXO };
+    const formato = (anexo?.formato ?? rascunho?.formato) as FormatoDoc | undefined;
+    if (!formato) return { ok: true, texto: "Anexe o documento para eu registrar o que ele significa." };
+    const cabecalho = anexo ? (anexo.cabecalho ?? null) : Array.isArray(rascunho?.cabecalho) ? (rascunho.cabecalho as string[]) : null;
+    const v = validarDocumento(r.documento, cabecalho);
+    if (!v.ok) return { ok: true, texto: "Não consegui montar o entendimento do documento. Tente de novo." };
+    const d = v.doc;
+    const expiresAt = new Date(now.getTime() + BIBLIOTECA_LIMITES.rascunhoMs);
+    const dados = { titulo: d.titulo, explicacao: d.explicacao, colunas: d.colunas, frequencia: d.frequencia ?? null, uso: d.uso ?? null, atualizadoPor: s.userId, expiresAt };
+    let id: string;
+    if (rascunho) {
+      const up = await db.documentoBiblioteca.updateMany({ where: { id: rascunho.id, orgId: s.orgId, criadoPor: s.userId, status: "RASCUNHO" }, data: dados });
+      if (up.count !== 1) return { ok: false, erro: "Este rascunho expirou ou não foi encontrado. Anexe o documento de novo." };
+      id = rascunho.id;
+    } else {
+      // Rascunhos vencidos da instituição saem antes de criar o novo
+      await db.documentoBiblioteca.deleteMany({ where: { orgId: s.orgId, status: "RASCUNHO", expiresAt: { lte: now } } });
+      const base = formato === "PLANILHA" && anexo?.assinatura ? anexo.assinatura : chaveTipo(formato, d.tipo);
+      const existente = await db.documentoBiblioteca.findFirst({ where: { orgId: s.orgId, chave: base }, select: { status: true, criadoPor: true } });
+      // Chave já usada por outro registro (confirmado ou de outra pessoa): o rascunho fica separado até a confirmação
+      const meu = existente?.status === "RASCUNHO" && existente.criadoPor === s.userId;
+      const chave = existente && !meu ? chaveRascunho(base, s.userId) : base;
+      const row = await db.documentoBiblioteca.upsert({
+        where: { orgId_chave: { orgId: s.orgId, chave } },
+        create: { orgId: s.orgId, formato, chave, status: "RASCUNHO", ...(cabecalho ? { cabecalho } : {}), criadoPor: s.userId, ...dados },
+        update: { ...dados, ...(cabecalho ? { cabecalho } : {}) },
+        select: { id: true, status: true, criadoPor: true },
+      });
+      if (row.status !== "RASCUNHO" || row.criadoPor !== s.userId) return { ok: false, erro: "Não consegui guardar o rascunho agora. Tente de novo." };
+      id = row.id;
+    }
+    await audit(s, "documento.rascunho", `Documento ${id} · ${formato} · ${d.colunas.length} colunas`);
+    const texto = (r.texto || TEXTO_DOCUMENTO).slice(0, 2000);
+    return {
+      ok: true,
+      texto,
+      documento: { id, formato, titulo: d.titulo, explicacao: d.explicacao, colunas: d.colunas, ...(d.frequencia ? { frequencia: d.frequencia } : {}), ...(d.uso ? { uso: d.uso } : {}) },
+    };
+  }
 
   if (r.fim === "plano" && r.plano) {
     if (s.role !== "ADMIN" && s.role !== "ANALISTA") return { ok: true, texto: "Seu perfil só permite consultar. Peça a um analista ou administrador." };
@@ -208,4 +330,35 @@ export async function confirmarPlano(planId: string): Promise<RespostaAssistente
   }
   await audit(s, "assistente.acao_confirmada", `${plano.acao} ${plano.alvo ?? "-"} via assistente`);
   return { ok: true, texto, executadoEm: now.toISOString() };
+}
+
+/** "Sim, é isso": promove o rascunho da própria pessoa a confirmado; um confirmado de mesma chave é substituído. */
+export async function confirmarDocumento(id: string): Promise<RespostaAssistente> {
+  const s = await requireSession(["ADMIN", "ANALISTA"]);
+  const now = new Date();
+  const NAO = "Rascunho não encontrado ou expirado. Anexe o documento de novo.";
+  if (typeof id !== "string" || !ID_RE.test(id)) return { ok: false, erro: NAO };
+  const d = await db.documentoBiblioteca.findFirst({
+    where: { id, orgId: s.orgId, criadoPor: s.userId, status: "RASCUNHO", expiresAt: { gt: now } },
+    select: { id: true, chave: true, formato: true },
+  });
+  if (!d) return { ok: false, erro: NAO };
+  const base = chaveBase(d.chave);
+  let substituiu = 0;
+  try {
+    await db.$transaction(async (tx) => {
+      const del = await tx.documentoBiblioteca.deleteMany({ where: { orgId: s.orgId, chave: base, id: { not: d.id } } });
+      substituiu = del.count;
+      const up = await tx.documentoBiblioteca.updateMany({
+        where: { id: d.id, orgId: s.orgId, criadoPor: s.userId, status: "RASCUNHO", expiresAt: { gt: now } },
+        data: { chave: base, status: "CONFIRMADO", expiresAt: null, atualizadoPor: s.userId },
+      });
+      if (up.count !== 1) throw new Error("rascunho mudou");
+    });
+  } catch {
+    return { ok: false, erro: NAO };
+  }
+  await audit(s, "biblioteca.confirmar", `Documento ${d.id} · ${d.formato}${substituiu ? " · substituiu o registro anterior" : ""}`);
+  revalidatePath("/biblioteca");
+  return { ok: true, texto: "Salvo na biblioteca. Da próxima vez, reconheço este documento." };
 }

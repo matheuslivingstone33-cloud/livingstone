@@ -36,6 +36,7 @@ model Organization {
   aiUsages   AiUsage[]
   assistantPlans AssistantPlan[]
   featureRequests FeatureRequest[]
+  documentos DocumentoBiblioteca[]
   // Trava do lote de propostas com IA (um lote por vez na instituição)
   aiBatchLockUntil DateTime?
   // Trava da execução da régua de cobrança (uma por vez na instituição)
@@ -505,4 +506,30 @@ model FeatureRequest {
 
   @@index([orgId, status, updatedAt])
   @@index([orgId, userId, status])
+}
+
+// Biblioteca de documentos: o que cada tipo de arquivo da instituição significa, confirmado por uma pessoa.
+// Rascunho vem do assistente e expira em 24h; só o CONFIRMADO é usado como referência.
+model DocumentoBiblioteca {
+  id            String       @id @default(cuid())
+  orgId         String
+  org           Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  formato       String // PLANILHA | PDF | IMAGEM
+  // Planilha: assinatura do cabeçalho; PDF/imagem: tipo normalizado. Rascunho que colide com outro registro usa chave+":r:"+userId
+  chave         String
+  status        String       @default("RASCUNHO") // RASCUNHO | CONFIRMADO
+  titulo        String
+  explicacao    String
+  cabecalho     Json?
+  colunas       Json         @default("[]")
+  frequencia    String?
+  uso           String?
+  criadoPor     String
+  atualizadoPor String?
+  expiresAt     DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@unique([orgId, chave])
+  @@index([orgId, status, updatedAt])
 }

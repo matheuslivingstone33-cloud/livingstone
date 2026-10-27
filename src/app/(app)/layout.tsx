@@ -19,6 +19,7 @@ const nav = [
   { href: "/cobranca", label: "Cobrança", icon: "cobranca" },
   { href: "/pld", label: "PLD / COAF", icon: "pld" },
   { href: "/legado", label: "Código legado", icon: "legado" },
+  { href: "/biblioteca", label: "Biblioteca", icon: "file" },
   { href: "/auditoria", label: "Auditoria", icon: "auditoria", roles: ["ADMIN", "AUDITOR"] },
   { href: "/usuarios", label: "Usuários", icon: "usuarios", roles: ["ADMIN"] },
   { href: "/configuracoes", label: "Configurações", icon: "configuracoes", roles: ["ADMIN"] },

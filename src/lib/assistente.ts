@@ -83,6 +83,26 @@ export const TOOLS: ToolSpec[] = [
       novo: { tipo: "texto", obrigatorio: true, min: 1, max: 600, descricao: "O que seria novo." },
     },
   },
+  {
+    nome: "registrar_documento",
+    tipo: "registro",
+    perfis: OPERAM,
+    descricao:
+      "Registra o seu entendimento de um documento anexado (o que é e o que cada coluna significa), para a pessoa confirmar na tela e salvar na biblioteca. Não salva nada sozinho. Sempre envie a versão inteira, reescrita.",
+    campos: {
+      titulo: { tipo: "texto", obrigatorio: true, min: 3, max: 80, descricao: "Nome curto do documento (ex.: Extrato do banco em planilha)." },
+      explicacao: { tipo: "texto", obrigatorio: true, min: 1, max: 600, descricao: "O que é o documento, em até 4 frases." },
+      tipo: { tipo: "texto", obrigatorio: true, min: 2, max: 60, descricao: "Tipo do documento em poucas palavras, sempre o mesmo para o mesmo tipo (ex.: extrato bancario)." },
+      colunas: {
+        tipo: "texto",
+        min: 2,
+        max: 8000,
+        descricao: 'JSON com a lista de colunas e o significado: [{"nome": "nome exato da coluna", "significado": "..."}]. Para PDF ou imagem, os campos principais.',
+      },
+      frequencia: { tipo: "texto", min: 1, max: 80, descricao: "Com que frequência o documento chega (se a pessoa disse)." },
+      uso: { tipo: "texto", min: 1, max: 300, descricao: "Para que a instituição usa o documento na plataforma." },
+    },
+  },
 ];
 
 const schemaDe = (c: Campo): Record<string, unknown> => {
@@ -170,6 +190,11 @@ const INSTRUCOES = [
   "Quando a pessoa pedir ajuste, pergunte o que mudar se ela não disse e então chame registrar_entendimento de novo com a versão inteira reescrita, não só o trecho alterado.",
   "No registro, não copie CPF, CNPJ, nomes de pessoas ou valores reais: descreva de forma genérica.",
   "Se a ferramenta registrar_entendimento não estiver disponível, diga que o perfil da pessoa só permite consultar.",
+  "Documentos anexados: explique o que é o documento em até 4 frases, sem copiar dados pessoais, e chame registrar_documento com título, explicação, tipo e o significado de cada coluna, usando os nomes exatos do cabeçalho. Termine perguntando: É isso?",
+  "Os valores da amostra de planilha estão mascarados (dígitos viram 9 e letras viram a); use os nomes das colunas e a forma dos valores.",
+  "Se o contexto disser que o documento já está na biblioteca, diga que ele já é conhecido e use o significado salvo; só registre de novo se a pessoa pedir ajuste.",
+  "Se a pessoa pedir um uso do documento que a plataforma não tem, diga isso e use registrar_entendimento para registrar a necessidade.",
+  "Quando a pessoa pedir ajuste do documento, chame registrar_documento de novo com a versão inteira reescrita.",
 ].join("\n");
 
 /** Blocos do system: fixos para todas as chamadas (sem nome, data ou perfil). */
@@ -208,7 +233,7 @@ export function limparHistorico(raw: unknown, lim = { msgs: ASSISTENTE.historico
 }
 
 /** Mensagens para a API: contexto + histórico limpo + pergunta nova, com papéis alternados. */
-export function montarMensagens(historico: MsgCliente[], pergunta: string, contexto: string): ApiMessage[] {
+export function montarMensagens(historico: MsgCliente[], pergunta: string, contexto: string, anexo?: MsgBlock[]): ApiMessage[] {
   const seq: MsgCliente[] = [...historico, { role: "user", texto: pergunta }];
   const out: { role: "user" | "assistant"; textos: string[] }[] = [];
   for (const m of seq) {
@@ -216,16 +241,18 @@ export function montarMensagens(historico: MsgCliente[], pergunta: string, conte
     if (ult && ult.role === m.role) ult.textos.push(m.texto);
     else out.push({ role: m.role, textos: [m.texto] });
   }
-  return out.map((m, i) => ({
-    role: m.role,
-    content: [...(i === 0 ? [contexto] : []), ...m.textos].map((text) => ({ type: "text", text })),
-  }));
+  return out.map((m, i) => {
+    const textos = [...(i === 0 ? [contexto] : []), ...m.textos].map((text): MsgBlock => ({ type: "text", text }));
+    // Anexo: entra na última mensagem do usuário, logo antes da pergunta
+    if (anexo?.length && i === out.length - 1) textos.splice(textos.length - 1, 0, ...anexo);
+    return { role: m.role, content: textos };
+  });
 }
 
 // ---------- Laço ----------
 
-export type FimLoop = "resposta" | "plano" | "entendimento" | "passos" | "custo" | "falha" | "limite";
-export type ResultadoLoop = { fim: FimLoop; texto: string; plano?: Plano; entendimento?: Entendimento; passos: number; ferramentas: string[]; custoUsd: number; detalhe?: string };
+export type FimLoop = "resposta" | "plano" | "entendimento" | "documento" | "passos" | "custo" | "falha" | "limite";
+export type ResultadoLoop = { fim: FimLoop; texto: string; plano?: Plano; entendimento?: Entendimento; documento?: Entrada; passos: number; ferramentas: string[]; custoUsd: number; detalhe?: string };
 export type Executar = (nome: string, entrada: Entrada) => Promise<unknown>;
 
 const textoDe = (content: MsgBlock[]) =>
@@ -283,6 +310,7 @@ export async function rodarLoop(o: {
       }
       const spec = o.tools.find((x) => x.nome === nome)!;
       // Registro: encerra sem executar; a action salva e a pessoa confirma na tela
+      if (spec.tipo === "registro" && nome === "registrar_documento") return fim("documento", passo + 1, { documento: v.valor });
       if (spec.tipo === "registro") return fim("entendimento", passo + 1, { entendimento: entendimentoDe(v.valor) });
       if (spec.tipo === "acao") {
         const p = planoDe(v.valor);
