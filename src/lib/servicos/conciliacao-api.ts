@@ -45,6 +45,10 @@ export function itemJson(i: ReconciliationItem, todos: ReconciliationItem[] = []
     resolvidoPor: i.resolvedByName,
     resolvidoEm: i.resolvedAt ? i.resolvedAt.toISOString() : null,
     itemVinculado: vinculado?.reference ?? null,
+    // Taxa de cartão (pista; não muda a situação). Campos novos e opcionais: nulos/false em conciliações antigas
+    formaPagamento: i.formaPagamento ?? null,
+    taxaEsperada: n(i.taxaEsperada),
+    explicadoPelaTaxa: i.explicadoTaxa,
     // Prova: linhas usadas dos dois arquivos (CPF/CNPJ mascarados) e a regra; nulo em conciliações antigas
     prova: i.evidence ?? null,
   };

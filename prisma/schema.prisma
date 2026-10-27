@@ -148,6 +148,10 @@ model ReconciliationItem {
   linkedItemId     String?
   version          Int            @default(0)
   evidence         Json? // prova: linhas usadas dos dois arquivos (CPF/CNPJ mascarados) e a regra aplicada; nulo em conciliações antigas
+  // Taxa de cartão (pista; não muda o status): forma do título, taxa esperada em reais e se a diferença bate com ela
+  formaPagamento   String?
+  taxaEsperada     Decimal?       @db.Decimal(14, 2)
+  explicadoTaxa    Boolean        @default(false)
 }
 
 model ReconciliationItemEvent {

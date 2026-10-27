@@ -1,5 +1,8 @@
 // Padrões de configuração sem acesso ao banco: usados pelas libs puras e pela tela pública.
 
+/** Taxa por forma de recebimento (cartão): tipo comparado com normHeader da coluna forma dos esperados. pct em fração (0,0299 = 2,99%). */
+export type TaxaRecebimento = { tipo: string; rotulo: string; pct: number; fixoCentavos: number; toleranciaCentavos: number };
+
 export type Band = { label: string; maxDays: number; cash: number; parcel: number; maxInstallments: number };
 
 export const DEFAULTS = {
@@ -67,6 +70,8 @@ export const DEFAULTS = {
     minutos: { proposta: 6, lembrete: 2, ultima: 2 } as Record<string, number>,
     maxPorExecucao: 100,
   },
+  // Taxas de cartão na conciliação: só uma pista no item DIVERGENTE; não muda o status. Vazio por padrão.
+  conciliacao: { taxas: [] as TaxaRecebimento[] },
 };
 
 export type Settings = typeof DEFAULTS;

@@ -3,7 +3,8 @@
 /** De onde veio o lançamento: número da linha e as células (CSV/planilha) ou o trecho bruto (OFX/CNAB/JSON). */
 export type Origem = { linha: number; celulas?: string[]; bruto?: string };
 export type BankEntry = { reference: string; payer?: string; amount: number; paidAt?: Date; origem?: Origem };
-export type ExpectedEntry = { reference: string; payer?: string; amount: number; dueAt?: Date; origem?: Origem };
+/** forma: forma de recebimento do título (ex.: "credito", "pix"), usada só para a pista de taxa de cartão. */
+export type ExpectedEntry = { reference: string; payer?: string; amount: number; dueAt?: Date; forma?: string; origem?: Origem };
 
 export class BankFileError extends Error {}
 
@@ -99,7 +100,7 @@ export function fileErrors(label: string, errors: string[]) {
 // Lê linhas de CSV (esperados ou banco). Linha toda vazia é ignorada; referência sem valor/data válidos é erro.
 function parseCsvRows(text: string, label: string, valueCols: string[], dateCols: string[]) {
   const errors: string[] = [];
-  const out: { reference: string; payer?: string; amount: number; date?: Date; origem: Origem }[] = [];
+  const out: { reference: string; payer?: string; amount: number; date?: Date; forma?: string; origem: Origem }[] = [];
   for (const { line, cells, o } of csvObjects(text)) {
     if (Object.values(o).every((v) => !v.trim())) continue;
     const reference = pick(o, "referencia", "nossonumero", "documento", "id");
@@ -115,8 +116,16 @@ function parseCsvRows(text: string, label: string, valueCols: string[], dateCols
     else if (amount === null || !Number.isFinite(amount)) errors.push(`Linha ${line}: valor ${rawValue} ilegível`);
     else if (!validMoney(amount)) errors.push(`Linha ${line}: valor ${rawValue} deve ser positivo`);
     if (date === null) errors.push(`Linha ${line}: data ${rawDate} inválida`);
+    const forma = pick(o, "forma", "formapagamento", "meiopagamento", "tipopagamento").trim().slice(0, 40);
     if (validMoney(amount) && date !== null)
-      out.push({ reference, payer: pick(o, "pagador", "cliente", "sacado", "nome") || undefined, amount, date, origem: { linha: line, celulas: cells } });
+      out.push({
+        reference,
+        payer: pick(o, "pagador", "cliente", "sacado", "nome") || undefined,
+        amount,
+        date,
+        ...(forma ? { forma } : {}),
+        origem: { linha: line, celulas: cells },
+      });
   }
   fileErrors(label, errors);
   return out;
@@ -129,8 +138,9 @@ export function parseExpectedCsv(text: string): ExpectedEntry[] {
 }
 
 function parseBankCsv(text: string): BankEntry[] {
+  // A forma de recebimento só vale para esperados: a do extrato é descartada
   return parseCsvRows(text, "do banco", ["valorpago", "valor", "valorrecebido"], ["datapagamento", "data", "datacredito"]).map(
-    ({ date, ...e }) => ({ ...e, paidAt: date }),
+    ({ date, reference, payer, amount, origem }) => ({ reference, payer, amount, paidAt: date, origem }),
   );
 }
 

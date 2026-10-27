@@ -17,6 +17,7 @@ const CAMPOS: Record<TipoLayout, { k: string; rotulo: string; obrigatorio?: bool
     { k: "valor", rotulo: "Valor", obrigatorio: true },
     { k: "data", rotulo: "Vencimento" },
     { k: "pagador", rotulo: "Pagador" },
+    { k: "forma", rotulo: "Forma de recebimento (cartão, Pix, boleto)" },
   ],
   extrato: [
     { k: "referencia", rotulo: "Referência / documento", obrigatorio: true },
@@ -27,6 +28,38 @@ const CAMPOS: Record<TipoLayout, { k: string; rotulo: string; obrigatorio?: bool
     { k: "sinal", rotulo: "Débito/crédito (D/C)" },
   ],
 };
+/** Frase curta de cada campo do sistema, mostrada ao lado da coluna mapeada. */
+const DESCRICAO: Record<TipoLayout, Record<string, string>> = {
+  esperados: {
+    referencia: "Referência: o número que identifica o título (nosso número).",
+    valor: "Valor: quanto você esperava receber.",
+    data: "Vencimento: quando o título vence.",
+    pagador: "Pagador: quem deve pagar.",
+    forma: "Forma de recebimento: cartão, Pix ou boleto; usada para conferir a taxa de cartão.",
+  },
+  extrato: {
+    referencia: "Referência: o número que identifica o crédito no banco.",
+    valor: "Valor: quanto caiu na conta.",
+    data: "Data do crédito: quando o dinheiro entrou.",
+    pagador: "Pagador: quem pagou.",
+    descricao: "Histórico: texto do lançamento; vira o pagador quando não há nome.",
+    sinal: "Débito/crédito: separa entradas (C) de saídas (D).",
+  },
+};
+/** Campo do sistema mapeado para a coluna (ou "" se ignorada). */
+const campoDe = (e: Escolha, h: string) => Object.keys(e.colunas).find((k) => e.colunas[k] === h) ?? "";
+/** Cada coluna tem no máximo um campo e cada campo no máximo uma coluna. */
+function mapear(colunas: Record<string, string>, h: string, campo: string) {
+  const out = Object.fromEntries(Object.entries(colunas).filter(([, v]) => v !== h));
+  if (campo) out[campo] = h;
+  return out;
+}
+const faltando = (tipo: TipoLayout, e: Escolha) => [
+  ...CAMPOS[tipo].filter((c) => c.obrigatorio && !e.colunas[c.k]).map((c) => c.rotulo.toLowerCase()),
+  ...(e.formatoData ? [] : ["formato da data"]),
+  ...(e.formatoValor ? [] : ["formato do valor"]),
+];
+
 const TITULO: Record<TipoLayout, string> = { esperados: "1. O que você esperava receber", extrato: "2. O que caiu no banco" };
 const LAYOUT_CAMPO: Record<TipoLayout, string> = { esperados: "layoutEsperados", extrato: "layoutExtrato" };
 
@@ -73,8 +106,11 @@ export function NovaConciliacao({ preview, confirm }: { preview: Acao; confirm: 
     if (envio) aplicar(await preview(comLayouts(envio)), true);
   }
   async function confirmar() {
-    if (envio) aplicar(await confirm(comLayouts(envio)), true);
+    if (envio && !bloqueado) aplicar(await confirm(comLayouts(envio)), true);
   }
+
+  // Confirmação bloqueada enquanto faltar campo obrigatório ou formato em algum arquivo
+  const bloqueado = previas.some((p) => faltando(p.tipo, escolhas[p.tipo] ?? { colunas: {}, formatoData: "", formatoValor: "" }).length > 0);
 
   const mudar = (tipo: TipoLayout, f: (e: Escolha) => Escolha) =>
     setEscolhas((s) => ({ ...s, [tipo]: f(s[tipo] ?? { colunas: {}, formatoData: "", formatoValor: "" }) }));
@@ -142,7 +178,7 @@ export function NovaConciliacao({ preview, confirm }: { preview: Acao; confirm: 
           <div>
             <h2 id="previa-titulo" className="text-lg font-semibold">Confira as colunas</h2>
             <p className="hint">
-              É a primeira vez que este formato de planilha aparece. Indique o que é cada coluna e confira as primeiras linhas. Depois de confirmar, os próximos arquivos com as mesmas colunas são conciliados direto.
+              É a primeira vez que este formato de planilha aparece. Confira o campo de cada coluna, corrija o que estiver errado e veja as primeiras linhas. A conciliação só roda depois de você salvar o layout; os próximos arquivos com as mesmas colunas são conciliados direto.
             </p>
           </div>
           {previas.map((p) => {
@@ -156,30 +192,51 @@ export function NovaConciliacao({ preview, confirm }: { preview: Acao; confirm: 
                   {p.origem === "ia" ? "Sugestão da IA, feita só com os nomes das colunas e uma amostra sem os dados reais." : p.origem === "heuristica" ? "Sugestão pelos nomes das colunas." : "Colunas escolhidas por você."}
                   {p.motivos.length ? ` ${p.motivos.join(". ")}.` : ""}
                 </p>
+                <div className="overflow-x-auto">
+                  <table className="table">
+                    <caption className="sr-only">Colunas de {p.arquivo} e o campo de cada uma</caption>
+                    <thead>
+                      <tr><th>Coluna do arquivo</th><th>Exemplos (mascarados)</th><th>Campo do sistema</th><th>Para que serve</th></tr>
+                    </thead>
+                    <tbody>
+                      {p.cabecalho.map((h, ci) => {
+                        const campo = campoDe(e, h);
+                        const id = `${p.tipo}-col-${ci}`;
+                        return (
+                          <tr key={h} className={campo ? "" : "bg-amber-50/70"}>
+                            <td className="font-medium text-ink-900">{h}</td>
+                            <td className="font-mono text-xs text-ink-500">{(p.amostras?.[ci] ?? []).join(" · ") || "—"}</td>
+                            <td>
+                              {!campo && <label className="mb-1 block text-xs font-semibold text-amber-800" htmlFor={id}>O que é esta coluna?</label>}
+                              <select
+                                id={id}
+                                className="input"
+                                aria-label={campo ? `Campo da coluna ${h}` : undefined}
+                                value={campo}
+                                onChange={(ev) => mudar(p.tipo, (x) => ({ ...x, colunas: mapear(x.colunas, h, ev.target.value) }))}
+                              >
+                                <option value="">Ignorar</option>
+                                {CAMPOS[p.tipo].map((c) => (
+                                  <option key={c.k} value={c.k}>{c.rotulo}{c.obrigatorio ? " *" : ""}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="text-xs text-ink-600">{campo ? DESCRICAO[p.tipo][campo] : "Não entra na conciliação."}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {faltando(p.tipo, e).length > 0 && (
+                  <Notice tone="danger" role="alert">
+                    Falta indicar a coluna de {faltando(p.tipo, e).join(" e ")}. Sem isso não dá para conciliar.
+                  </Notice>
+                )}
+                {p.tipo === "esperados" && !e.colunas.forma && (
+                  <Notice tone="warning">Nenhuma coluna de forma de recebimento: sem ela, a taxa de cartão não é aplicada nesta conciliação.</Notice>
+                )}
                 <div className="grid gap-3 md:grid-cols-3">
-                  {CAMPOS[p.tipo].map((c) => (
-                    <div key={c.k}>
-                      <label className="label" htmlFor={`${p.tipo}-${c.k}`}>{c.rotulo}{c.obrigatorio ? " *" : ""}</label>
-                      <select
-                        id={`${p.tipo}-${c.k}`}
-                        className="input"
-                        value={e.colunas[c.k] ?? ""}
-                        onChange={(ev) =>
-                          mudar(p.tipo, (x) => {
-                            const colunas = { ...x.colunas };
-                            if (ev.target.value) colunas[c.k] = ev.target.value;
-                            else delete colunas[c.k];
-                            return { ...x, colunas };
-                          })
-                        }
-                      >
-                        <option value="">{c.obrigatorio ? "Escolha a coluna" : "Não tem"}</option>
-                        {p.cabecalho.map((h) => (
-                          <option key={h} value={h}>{h}</option>
-                        ))}
-                      </select>
-                    </div>
-                  ))}
                   <div>
                     <label className="label" htmlFor={`${p.tipo}-fdata`}>Formato da data</label>
                     <select id={`${p.tipo}-fdata`} className="input" value={e.formatoData} onChange={(ev) => mudar(p.tipo, (x) => ({ ...x, formatoData: ev.target.value }))}>
@@ -230,7 +287,7 @@ export function NovaConciliacao({ preview, confirm }: { preview: Acao; confirm: 
               <SubmitButton variant="link" pending="Atualizando...">Atualizar prévia</SubmitButton>
             </form>
             <form action={confirmar}>
-              <SubmitButton pending="Conciliando..." hint="Salvando o layout e conciliando os arquivos.">Confirmar e conciliar</SubmitButton>
+              <SubmitButton pending="Conciliando..." hint="Salvando o layout e conciliando os arquivos." disabled={bloqueado}>Está certo, salvar layout</SubmitButton>
             </form>
           </div>
         </section>

@@ -16,6 +16,7 @@ import { resumoArquivos, sha256Hex, type FonteProva } from "@/lib/prova-concilia
 import { sugerirLayoutDaOrg } from "@/lib/servicos/mapeamento";
 import { findHeaderLine, readTable, type RawTable } from "@/lib/planilha";
 import {
+  amostrasPorColuna,
   colunasDoLayout,
   convertWithLayout,
   headerOf,
@@ -31,6 +32,7 @@ import {
 } from "@/lib/layout-conciliacao";
 
 const BACK = "/conciliacao";
+const notaTaxa = (n: number) => (n ? ` · ${n} explicado(s) pela taxa` : "");
 
 // Inteiro dentro da faixa; campo vazio vale 0
 function intIn(form: FormData, name: string, max: number, label: string, back: string) {
@@ -79,7 +81,7 @@ export async function createReconciliation(form: FormData) {
     fail(back, e instanceof BankFileError ? e.message : "Não foi possível ler a lista de esperados.");
   }
   if (!expected.length) fail(back, "Nenhum título válido na lista de esperados. Confira as colunas referencia e valor.");
-  const { rec, itemCount } = await persistReconciliation(s.orgId, {
+  const { rec, itemCount, explicadosTaxa } = await persistReconciliation(s.orgId, {
     name: String(form.get("name") || `Conciliação ${fmtData(new Date())}`),
     bankFileName: bank.name,
     bankFormat: format,
@@ -89,8 +91,9 @@ export async function createReconciliation(form: FormData) {
     options,
     fontes,
     cnab400: cfg.cnab400,
+    taxas: cfg.conciliacao.taxas,
   });
-  await audit(s, "conciliacao.criar", `${rec.name} (${format}, ${itemCount} itens, regras ${JSON.stringify(options)})${resumoArquivos(fontes)}`);
+  await audit(s, "conciliacao.criar", `${rec.name} (${format}, ${itemCount} itens, regras ${JSON.stringify(options)})${notaTaxa(explicadosTaxa)}${resumoArquivos(fontes)}`);
   revalidatePath("/conciliacao");
   redirect(`/conciliacao/${rec.id}`);
 }
@@ -177,8 +180,8 @@ async function persistir(s: Session, form: FormData, esp: Pronto, ext: Pronto, e
   const expected = esp.entries as ExpectedEntry[];
   if (!expected.length) fail(BACK, "Nenhum título válido na lista de esperados.");
   const fontes = { esperados: esp.fonte, banco: ext.fonte };
-  const { cnab400 } = await getSettings(s.orgId);
-  const { rec, itemCount } = await persistReconciliation(s.orgId, {
+  const { cnab400, conciliacao } = await getSettings(s.orgId);
+  const { rec, itemCount, explicadosTaxa } = await persistReconciliation(s.orgId, {
     name: String(form.get("name") || `Conciliação ${fmtData(new Date())}`),
     bankFileName: ext.nome,
     bankFormat: ext.formato,
@@ -188,10 +191,11 @@ async function persistir(s: Session, form: FormData, esp: Pronto, ext: Pronto, e
     options,
     fontes,
     cnab400,
+    taxas: conciliacao.taxas,
   });
   for (const p of [esp, ext])
     if (p.layoutId) await audit(s, "conciliacao.conversao", `${ROTULO[p.tipo]} (${p.formato}) convertido pelo layout salvo ${p.layoutId}: ${p.entries.length} linha(s)`);
-  await audit(s, "conciliacao.criar", `${rec.name} (${ext.formato}, ${itemCount} itens, regras ${JSON.stringify(options)})${extra}${resumoArquivos(fontes)}`);
+  await audit(s, "conciliacao.criar", `${rec.name} (${ext.formato}, ${itemCount} itens, regras ${JSON.stringify(options)})${extra}${notaTaxa(explicadosTaxa)}${resumoArquivos(fontes)}`);
   revalidatePath(BACK);
   redirect(`/conciliacao/${rec.id}`);
 }
@@ -215,7 +219,7 @@ export async function previewReconciliation(form: FormData): Promise<ResultadoPr
   const previas: PreviaArquivo[] = [];
   for (const a of [extrato, esperados]) {
     if (a.modo !== "layout") continue;
-    const base = { tipo: a.tipo, arquivo: a.nome, cabecalho: a.header };
+    const base = { tipo: a.tipo, arquivo: a.nome, cabecalho: a.header, amostras: amostrasPorColuna(a.tabela, a.linha, 3) };
     if (form.get(CAMPO_LAYOUT[a.tipo])) {
       const v = layoutDoForm(form, a);
       previas.push(

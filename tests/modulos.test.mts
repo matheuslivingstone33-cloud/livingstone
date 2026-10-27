@@ -2499,3 +2499,130 @@ test("Pedidos: system fixo proíbe prometer entrega e não leva data", () => {
   assert.match(acao, /untrusted\("pedido_atual"/);
   assert.match(acao, /"pedido\.versao", `Pedido \$\{id\} · versão \$\{versao\}`/);
 });
+
+// ---------- Taxa de cartão na conciliação ----------
+import { classificarTaxa, regraDaForma, taxaEsperadaCentavos, validarTaxas, type TaxaRecebimento } from "../src/lib/taxa-recebimento";
+import { merge } from "../src/lib/settings";
+import { amostrasPorColuna } from "../src/lib/layout-conciliacao";
+
+const CREDITO: TaxaRecebimento = { tipo: "credito", rotulo: "Cartão de crédito", pct: 0.0299, fixoCentavos: 0, toleranciaCentavos: 2 };
+const TAXAS = [CREDITO];
+const div = (esp: number, rec: number) => ({ status: "DIVERGENTE" as const, expectedAmount: esp, receivedAmount: rec });
+
+test("Taxa: valor esperado, arredondamento e parte fixa", () => {
+  assert.equal(taxaEsperadaCentavos(100_000, 0.0299), 2990); // 2,99% de R$ 1.000,00 = R$ 29,90
+  assert.equal(taxaEsperadaCentavos(45_990, 0.0299), 1375); // 1375,101 → 1375
+  assert.equal(taxaEsperadaCentavos(64_000, 0.0299), 1914); // 1913,6 → 1914
+  assert.equal(taxaEsperadaCentavos(100_000, 0.0199, 50), 2040);
+  assert.equal(taxaEsperadaCentavos(0, 0.05, 39), 39);
+});
+
+test("Taxa: classificarTaxa nos casos de borda", () => {
+  assert.deepEqual(classificarTaxa(div(1000, 970.1), "credito", TAXAS), { formaPagamento: "credito", taxaEsperada: 29.9, explicadoTaxa: true });
+  assert.equal(classificarTaxa(div(1000, 970.08), "credito", TAXAS).explicadoTaxa, true); // 2 centavos: dentro
+  assert.equal(classificarTaxa(div(1000, 970.12), "credito", TAXAS).explicadoTaxa, true);
+  assert.equal(classificarTaxa(div(1000, 970.07), "credito", TAXAS).explicadoTaxa, false); // 3 centavos: fora
+  assert.equal(classificarTaxa(div(1000, 960), "credito", TAXAS).explicadoTaxa, false);
+  assert.equal(classificarTaxa(div(1000, 1029.9), "credito", TAXAS).explicadoTaxa, false); // pago a maior nunca
+  const conc = classificarTaxa({ status: "CONCILIADO", expectedAmount: 1000, receivedAmount: 1000 }, "credito", TAXAS);
+  assert.deepEqual(conc, { formaPagamento: "credito", taxaEsperada: 29.9, explicadoTaxa: false });
+  assert.deepEqual(classificarTaxa(div(1000, 970.1), "pix", TAXAS), { formaPagamento: "pix", explicadoTaxa: false }); // sem regra
+  assert.deepEqual(classificarTaxa(div(1000, 970.1), undefined, TAXAS), { formaPagamento: undefined, explicadoTaxa: false });
+  assert.equal(classificarTaxa(div(1000, 970.1), "credito", []).explicadoTaxa, false);
+  for (const f of ["Crédito", "CREDITO", " crédito ", "Cré-dito"]) assert.equal(classificarTaxa(div(1000, 970.1), f, TAXAS).explicadoTaxa, true, f);
+  assert.equal(regraDaForma("Crédito Parcelado", [CREDITO, { ...CREDITO, tipo: "credito parcelado", pct: 0.0499 }])?.pct, 0.0499);
+  assert.equal(classificarTaxa({ status: "PENDENTE", expectedAmount: 199.9 }, "credito", TAXAS).explicadoTaxa, false);
+  assert.equal(regraDaForma("credito", { nao: "lista" } as unknown as TaxaRecebimento[]), undefined);
+});
+
+test("Taxa: demo de cartão (contagens) e status idênticos com e sem taxas", () => {
+  const expected = parseExpectedCsv(demo("esperados_cartao.csv").toString());
+  const { entries } = parseBankFile("extrato_cartao.csv", demo("extrato_cartao.csv").toString());
+  assert.equal(expected.length, 15);
+  assert.equal(expected[1].forma, "Crédito");
+  assert.ok(entries.every((e) => !("forma" in e)));
+  const items = reconcileWith(expected, entries);
+  const semForma = reconcileWith(expected.map(({ forma: _f, ...e }) => e), entries); // eslint-disable-line @typescript-eslint/no-unused-vars
+  // A taxa não entra em reconcileWith nem em summarize: status e contagens são os mesmos com ou sem forma/taxas
+  assert.deepStrictEqual(items.map((i) => i.status), semForma.map((i) => i.status));
+  assert.deepStrictEqual(summarize(items), summarize(semForma));
+  const s = summarize(items);
+  assert.deepStrictEqual({ ...s, excess: 0 }, { matched: 6, divergent: 8, missing: 1, unexpected: 1, excess: 0 });
+  const taxa = items.map((i) => classificarTaxa(i, i.expectedIndex !== undefined ? expected[i.expectedIndex].forma : undefined, TAXAS));
+  assert.deepEqual(items.filter((_, k) => taxa[k].explicadoTaxa).map((i) => i.reference), ["50001", "50002", "50009", "50012", "50015"]);
+  assert.deepEqual(items.filter((i, k) => i.status === "DIVERGENTE" && !taxa[k].explicadoTaxa).map((i) => i.reference), ["50003", "50004", "50010"]);
+  // Status depois da classificação: os mesmos de antes
+  assert.deepStrictEqual(items.map((i) => i.status), semForma.map((i) => i.status));
+});
+
+test("Taxa: coluna forma no layout (esperados sim, extrato não), sugestão e layout antigo", () => {
+  const h = ["Ref", "Valor", "Vencimento", "Forma Pagamento"];
+  const t = { linhas: [h, ["1001", "1.000,00", "05/10/2026", "Crédito"], ["1002", "320,00", "13/10/2026", "pix"]], numeros: [1, 2, 3] };
+  const base = { tipo: "esperados", colunas: { referencia: "Ref", valor: "Valor", data: "Vencimento", forma: "Forma Pagamento" }, formatoData: "dd/mm/aaaa", formatoValor: "br", linhaCabecalho: 0 };
+  const v = validateLayout(base, h);
+  assert.ok(v.ok);
+  const ext = validateLayout({ ...base, tipo: "extrato" }, h);
+  assert.ok(!ext.ok);
+  assert.match((ext as { erro: string }).erro, /forma de recebimento só vale para esperados/);
+  const lay = (v as { layout: Layout }).layout;
+  assert.deepEqual((convertWithLayout(t, lay) as { forma?: string }[]).map((x) => x.forma), ["Crédito", "pix"]);
+  const longa = { linhas: [h, ["1003", "10,00", "05/10/2026", "x".repeat(60)]], numeros: [1, 2] };
+  assert.equal((convertWithLayout(longa, lay)[0] as { forma?: string }).forma?.length, 40);
+  const g = guessLayout("esperados", h, t, 0);
+  assert.equal(g.layout.forma, "Forma Pagamento");
+  assert.equal(g.confianca, "alta");
+  assert.equal(guessLayout("esperados", ["ref", "valor", "Modalidade"], { linhas: [["ref", "valor", "Modalidade"], ["1", "1,00", "debito"]], numeros: [1, 2] }, 0).layout.forma, "Modalidade");
+  assert.equal(guessLayout("extrato", h, t, 0).layout.forma, undefined);
+  // Layout antigo (sem forma) continua válido e converte sem o campo
+  assert.ok(validateLayout(layoutAlt, ["Nosso Número", "Cliente", "Vlr Pago", "Dt Venc", "Obs"]).ok);
+  assert.ok(isLayoutShape({ colunas: { referencia: "a", valor: "b", data: "c", pagador: "d", descricao: "e", sinal: "f", forma: "g" }, formatoData: "x", formatoValor: "y" }));
+  // Amostras mascaradas por coluna para a tela de confirmação
+  assert.deepEqual(amostrasPorColuna(t, 0, 3), [["9999", "9999"], ["9.999,99", "999,99"], ["99/99/9999", "99/99/9999"], ["aaaaaaa", "aaa"]]);
+});
+
+test("Taxa: CSV legado lê forma, formapagamento, meiopagamento e tipopagamento", () => {
+  for (const col of ["forma", "formapagamento", "Meio Pagamento", "tipo_pagamento"]) {
+    const [e] = parseExpectedCsv(`referencia;valor;${col}\n1;10,00;Débito\n`);
+    assert.equal(e.forma, "Débito", col);
+  }
+  const [sem] = parseExpectedCsv("referencia;valor\n1;10,00\n");
+  assert.ok(!("forma" in sem));
+});
+
+test("Taxa: frases da prova (explicada e além da taxa)", () => {
+  const expected = parseExpectedCsv(demo("esperados_cartao.csv").toString());
+  const { entries } = parseBankFile("extrato_cartao.csv", demo("extrato_cartao.csv").toString());
+  const items = reconcileWith(expected, entries);
+  const fe = { arquivo: "esperados_cartao.csv", formato: "CSV", sha256: "a".repeat(64), entries: expected };
+  const fb = { arquivo: "extrato_cartao.csv", formato: "CSV", sha256: "b".repeat(64), entries };
+  const prova = (ref: string) => {
+    const i = items.find((x) => x.reference === ref)!;
+    return montarProva(i, fe, fb, {}, classificarTaxa(i, expected[i.expectedIndex!].forma, TAXAS));
+  };
+  const ok = fraseRegra(prova("50001").regra).join(" ");
+  assert.match(ok, /Bruto esperado R\$\s1\.000,00, taxa R\$\s29,90, líquido esperado R\$\s970,10/);
+  assert.match(ok, /explicada pela taxa/);
+  const fora = fraseRegra(prova("50003").regra).join(" ");
+  assert.match(fora, /Diferença além da taxa: R\$\s20,03 a menos que o líquido esperado/);
+  assert.doesNotMatch(fora, /explicada pela taxa/);
+  assert.doesNotMatch(fraseRegra(prova("50004").regra).join(" "), /taxa/);
+});
+
+test("Taxa: validarTaxas e merge sem conciliacao", () => {
+  assert.equal(validarTaxas([]), null);
+  assert.equal(validarTaxas(TAXAS), null);
+  assert.match(validarTaxas("x")!, /lista inválida/);
+  assert.match(validarTaxas([{ ...CREDITO, tipo: "  " }])!, /informe a forma/);
+  assert.match(validarTaxas([CREDITO, { ...CREDITO, tipo: "Crédito" }])!, /mais de uma vez/);
+  assert.match(validarTaxas([{ ...CREDITO, pct: 0.21 }])!, /entre 0 e 20%/);
+  assert.match(validarTaxas([{ ...CREDITO, pct: -0.01 }])!, /entre 0 e 20%/);
+  assert.match(validarTaxas([{ ...CREDITO, fixoCentavos: 1001 }])!, /parte fixa/);
+  assert.match(validarTaxas([{ ...CREDITO, toleranciaCentavos: 101 }])!, /tolerância/);
+  assert.match(validarTaxas([{ ...CREDITO, toleranciaCentavos: 1.5 }])!, /tolerância/);
+  assert.match(validarTaxas(Array.from({ length: 21 }, (_, i) => ({ ...CREDITO, tipo: `t${i}` })))!, /no máximo 20/);
+  assert.equal(validarTaxas(Array.from({ length: 20 }, (_, i) => ({ ...CREDITO, tipo: `t${i}` }))), null);
+  assert.deepEqual(merge(DEFAULTS, {}).conciliacao.taxas, []);
+  assert.deepEqual(merge(DEFAULTS, { ai: { dailyLimitUsd: 1 } }).conciliacao.taxas, []);
+  assert.deepEqual(merge(DEFAULTS, { conciliacao: { taxas: TAXAS } }).conciliacao.taxas, TAXAS);
+  assert.equal(validateSettings(merge(DEFAULTS, { conciliacao: { taxas: [{ ...CREDITO, pct: 0.5 }] } })), 'Taxas de recebimento: o percentual de "credito" deve ficar entre 0 e 20%.');
+});

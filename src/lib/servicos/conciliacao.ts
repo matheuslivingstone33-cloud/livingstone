@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { reconcileWith, summarize, type BankEntry, type Cnab400Layout, type ExpectedEntry, type ReconcileOptions } from "@/lib/reconcile";
 import { limitarTotal, montarProva, type FonteProva } from "@/lib/prova-conciliacao";
+import { classificarTaxa, type TaxaRecebimento } from "@/lib/taxa-recebimento";
 
 export type PersistInput = {
   name: string;
@@ -15,16 +16,22 @@ export type PersistInput = {
   /** Metadados dos dois arquivos para a prova (hash, cabeçalho). Sem eles, os itens ficam sem prova. */
   fontes?: { esperados: FonteProva; banco: FonteProva };
   cnab400?: Cnab400Layout;
+  /** Taxas por forma de recebimento da instituição (getSettings). Congeladas em options.taxas. */
+  taxas?: TaxaRecebimento[];
 };
 
 const LOTE = 1000;
 
 export async function persistReconciliation(orgId: string, input: PersistInput) {
   const { expected, entries, options, fontes } = input;
+  const taxas = input.taxas ?? [];
   const items = reconcileWith(expected, entries, options);
   const { excess, ...counts } = summarize(items);
+  // A taxa só acrescenta a pista: status e contagens vêm da conciliação acima, sem mudança
+  const taxa = items.map((i) => classificarTaxa(i, i.expectedIndex !== undefined ? expected[i.expectedIndex]?.forma : undefined, taxas));
+  const explicadosTaxa = taxa.filter((t) => t.explicadoTaxa).length;
   const provas = fontes
-    ? limitarTotal(items.map((i) => montarProva(i, { ...fontes.esperados, entries: expected }, { ...fontes.banco, entries }, { ...options, cnab400: input.cnab400 })))
+    ? limitarTotal(items.map((i, k) => montarProva(i, { ...fontes.esperados, entries: expected }, { ...fontes.banco, entries }, { ...options, cnab400: input.cnab400 }, taxa[k])))
     : [];
   return db.$transaction(
     async (tx) => {
@@ -40,7 +47,7 @@ export async function persistReconciliation(orgId: string, input: PersistInput) 
           totalExpected: expected.reduce((a, e) => a + e.amount, 0),
           totalReceived: entries.reduce((a, e) => a + e.amount, 0),
           totalExcess: excess,
-          options,
+          options: { ...options, taxas } as unknown as Prisma.InputJsonValue,
           ...counts,
         },
       });
@@ -57,10 +64,13 @@ export async function persistReconciliation(orgId: string, input: PersistInput) 
         rule: i.rule,
         excess: i.excess,
         note: i.note,
+        formaPagamento: taxa[k].formaPagamento,
+        taxaEsperada: taxa[k].taxaEsperada,
+        explicadoTaxa: taxa[k].explicadoTaxa,
         evidence: provas[k] as unknown as Prisma.InputJsonValue | undefined,
       }));
       for (let k = 0; k < rows.length; k += LOTE) await tx.reconciliationItem.createMany({ data: rows.slice(k, k + LOTE) });
-      return { rec, itemCount: items.length, summary: { ...counts, excess } };
+      return { rec, itemCount: items.length, explicadosTaxa, summary: { ...counts, excess } };
     },
     { timeout: 60_000 },
   );

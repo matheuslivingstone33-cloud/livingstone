@@ -1,5 +1,5 @@
 // Prova de um item da conciliação: as duas fontes lado a lado, como estavam no arquivo, e a regra aplicada.
-import { Notice } from "@/components/ui";
+import { Badge, Notice } from "@/components/ui";
 import { fraseRegra, partesDestacadas, type Destaque, type Lado, type Prova } from "@/lib/prova-conciliacao";
 
 const CAMPO: Record<keyof Destaque, string> = { referencia: "referência", valor: "valor", data: "data" };
@@ -70,7 +70,10 @@ export function ProvaView({ prova, frase }: { prova: Prova | null; frase: string
         <Fonte titulo="O que caiu no banco" lado={prova.banco} vazio="Nenhum crédito correspondente no arquivo do banco." />
       </div>
       <section className="card">
-        <h3 className="font-medium text-ink-900">Regra aplicada</h3>
+        <h3 className="flex flex-wrap items-center gap-2 font-medium text-ink-900">
+          Regra aplicada
+          {prova.regra.explicadoTaxa && <Badge tone="info">Explicado pela taxa</Badge>}
+        </h3>
         <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-ink-700">
           {fraseRegra(prova.regra).map((f) => <li key={f}>{f}</li>)}
         </ul>

@@ -3,10 +3,11 @@ import { db } from "./db";
 
 import { DEFAULTS, type Settings } from "./settings-defaults";
 import { validarRegua } from "./regua";
+import { validarTaxas } from "./taxa-recebimento";
 
-export { DEFAULTS, type Band, type Settings } from "./settings-defaults";
+export { DEFAULTS, type Band, type Settings, type TaxaRecebimento } from "./settings-defaults";
 
-function merge<T>(base: T, over: unknown): T {
+export function merge<T>(base: T, over: unknown): T {
   if (over === null || typeof over !== "object" || Array.isArray(base)) return (over ?? base) as T;
   const out = { ...base } as Record<string, unknown>;
   for (const [k, v] of Object.entries(over as Record<string, unknown>))
@@ -47,5 +48,7 @@ export function validateSettings(s: Settings): string | null {
     return "Pix: chave inválida (use e-mail, +55 telefone, CPF, CNPJ ou chave aleatória).";
   const regua = validarRegua(s.regua, s.collection.validityDays);
   if (regua) return regua;
+  const taxas = validarTaxas(s.conciliacao.taxas);
+  if (taxas) return taxas;
   return null;
 }

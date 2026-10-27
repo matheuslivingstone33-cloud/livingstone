@@ -28,6 +28,11 @@ export type Regra = {
   diferencaCentavos?: number;
   atrasoDias?: number;
   layoutCnab?: Cnab400Layout;
+  /** Taxa de cartão (pista; não muda o status). Ausentes em conciliações antigas ou sem regra para a forma. */
+  formaPagamento?: string;
+  brutoCentavos?: number;
+  taxaCentavos?: number;
+  explicadoTaxa?: boolean;
 };
 /** omitida: a conciliação passou do teto de tamanho e esta prova não foi guardada. */
 export type Prova = { v: 1; esperado?: Lado; banco?: Lado; regra: Regra; omitida?: true };
@@ -176,6 +181,8 @@ export function montarProva(
   esperados: FonteComDados<ExpectedEntry>,
   banco: FonteComDados<BankEntry>,
   options: OpcoesProva = {},
+  /** Resultado de classificarTaxa (taxa-recebimento.ts) para o item, se houver. */
+  taxa?: { formaPagamento?: string; taxaEsperada?: number; explicadoTaxa: boolean },
 ): Prova {
   const cnab400 = options.cnab400 ?? DEFAULT_CNAB400;
   const e = item.expectedIndex !== undefined ? esperados.entries[item.expectedIndex] : undefined;
@@ -191,6 +198,12 @@ export function montarProva(
     regra.atrasoDias = atraso(e.dueAt, b.paidAt);
   }
   if (b && banco.formato === "CNAB400") regra.layoutCnab = cnab400;
+  if (taxa?.formaPagamento) regra.formaPagamento = taxa.formaPagamento;
+  if (e && taxa?.taxaEsperada !== undefined) {
+    regra.brutoCentavos = cents(e.amount);
+    regra.taxaCentavos = cents(taxa.taxaEsperada);
+    regra.explicadoTaxa = taxa.explicadoTaxa;
+  }
   const prova: Prova = { v: 1, regra };
   if (e) prova.esperado = lado(esperados, e, e.dueAt, cnab400);
   if (b) prova.banco = lado(banco, b, b.paidAt, cnab400);
@@ -294,6 +307,15 @@ export function fraseRegra(r: Regra): string[] {
     if (d === 0) out.push("Valor igual ao esperado.");
     else if (d <= r.toleranciaCentavos) out.push(`Diferença de ${brl(d / 100)}, dentro da tolerância de ${r.toleranciaCentavos} centavo(s): conta como pago.`);
     else out.push(`Diferença de ${brl(d / 100)} ${r.diferencaCentavos > 0 ? "a mais" : "a menos"}, acima da tolerância de ${r.toleranciaCentavos} centavo(s).`);
+  }
+  if (r.brutoCentavos !== undefined && r.taxaCentavos !== undefined) {
+    const liquido = r.brutoCentavos - r.taxaCentavos;
+    out.push(`${r.formaPagamento ? `Forma de recebimento: ${r.formaPagamento}. ` : ""}Bruto esperado ${brl(r.brutoCentavos / 100)}, taxa ${brl(r.taxaCentavos / 100)}, líquido esperado ${brl(liquido / 100)}.`);
+    if (r.explicadoTaxa) out.push("Diferença explicada pela taxa da forma de recebimento. É uma pista: a aceitação continua manual.");
+    else if (r.diferencaCentavos !== undefined && Math.abs(r.diferencaCentavos) > r.toleranciaCentavos) {
+      const alem = r.brutoCentavos + r.diferencaCentavos - liquido;
+      out.push(alem === 0 ? "Valor igual ao líquido esperado." : `Diferença além da taxa: ${brl(Math.abs(alem) / 100)} ${alem > 0 ? "a mais" : "a menos"} que o líquido esperado.`);
+    }
   }
   if (r.atrasoDias) out.push(`Pago ${r.atrasoDias} ${r.atrasoDias === 1 ? "dia" : "dias"} depois do vencimento.`);
   if (!r.rule) out.push(r.casarPorValorData ? `Nenhum par encontrado pela referência nem por valor e data (±${r.toleranciaDias} dia(s)).` : "Nenhum par encontrado pela referência.");

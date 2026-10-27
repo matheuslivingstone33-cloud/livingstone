@@ -265,6 +265,42 @@ export default async function ConfigPage({ searchParams }: { searchParams: Promi
           </div>
         </section>
 
+        <section className="card space-y-5" id="taxas">
+          <SectionHead n="08" title="Taxas por forma de recebimento">
+            Na conciliação, o título que chega com valor menor é comparado com a taxa da forma de recebimento informada na coluna &quot;forma&quot; da lista de esperados (o extrato não é usado para isso). A taxa não muda a situação do item: ele continua em &quot;Valor diferente&quot;, só ganha o rótulo &quot;Explicado pela taxa&quot; e as três linhas (bruto esperado, taxa e líquido esperado). A aceitação continua manual.
+          </SectionHead>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <caption className="sr-only">Taxas por forma de recebimento</caption>
+              <thead>
+                <tr>
+                  <th>Forma (como vem no arquivo)</th>
+                  <th>Rótulo</th>
+                  <th className="num">Taxa (%)</th>
+                  <th className="num">Fixo (R$)</th>
+                  <th className="num">Tolerância (centavos)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...c.conciliacao.taxas, ...Array.from({ length: 3 }, () => undefined)].map((t, i) => (
+                  <tr key={i}>
+                    <td><input className="input" name={`tx${i}_tipo`} defaultValue={t?.tipo ?? ""} placeholder={i === c.conciliacao.taxas.length ? "Ex.: credito" : ""} aria-label={`Linha ${i + 1}: forma`} maxLength={40} /></td>
+                    <td><input className="input" name={`tx${i}_rotulo`} defaultValue={t?.rotulo ?? ""} placeholder={i === c.conciliacao.taxas.length ? "Ex.: Crédito à vista" : ""} aria-label={`Linha ${i + 1}: rótulo`} maxLength={40} /></td>
+                    <td><input className="input text-right" name={`tx${i}_pct`} inputMode="decimal" defaultValue={t ? String(Math.round(t.pct * 10_000) / 100).replace(".", ",") : ""} aria-label={`Linha ${i + 1}: taxa em %`} /></td>
+                    <td><input className="input text-right" name={`tx${i}_fixo`} inputMode="decimal" defaultValue={t ? (t.fixoCentavos / 100).toFixed(2).replace(".", ",") : ""} aria-label={`Linha ${i + 1}: parte fixa em reais`} /></td>
+                    <td><input className="input text-right" name={`tx${i}_tol`} inputMode="numeric" defaultValue={t ? t.toleranciaCentavos : ""} aria-label={`Linha ${i + 1}: tolerância em centavos`} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <input type="hidden" name="tx_n" value={c.conciliacao.taxas.length + 3} />
+          <p className="hint">
+            A forma é comparada sem acento, caixa nem espaços (&quot;Crédito&quot; = &quot;credito&quot;). Crédito à vista e parcelado podem ser linhas separadas (ex.: &quot;credito&quot; e &quot;credito_parcelado&quot;). Taxa de 0 a 20%, fixo até R$ 10,00, tolerância de 0 a 100 centavos (em branco: 2). Apague a forma e os demais campos de uma linha para removê-la. Até 20 formas.
+            {" "}Exemplo para testar: <a className="link-action" href="/demo/esperados_cartao.csv" download>esperados_cartao.csv</a> e <a className="link-action" href="/demo/extrato_cartao.csv" download>extrato_cartao.csv</a>, com a forma &quot;credito&quot; a 2,99%.
+          </p>
+        </section>
+
         <div className="sticky bottom-4 z-10 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-white/90 px-5 py-3 shadow-lift backdrop-blur-md">
           <p className="text-xs text-ink-500">As alterações valem para todos os usuários e ficam registradas na auditoria.</p>
           <SubmitButton pending="Salvando...">Salvar configurações</SubmitButton>

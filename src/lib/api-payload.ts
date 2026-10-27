@@ -162,8 +162,9 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
       const dueAt = parseIsoDay(e.vencimento);
       if (!dueAt) errors.push({ campo: `${at}.vencimento`, mensagem: "Data no formato AAAA-MM-DD." });
       if (e.pagador !== undefined && e.pagador !== null && typeof e.pagador !== "string") errors.push({ campo: `${at}.pagador`, mensagem: "Deve ser texto." });
+      if (e.forma !== undefined && e.forma !== null && typeof e.forma !== "string") errors.push({ campo: `${at}.forma`, mensagem: "Deve ser texto." });
       // Prova: linha = índice na lista enviada; o objeto como veio
-      expected.push({ reference, payer: str(e.pagador, 120) || undefined, amount: e.valor as number, dueAt: dueAt ?? undefined, origem: { linha: i, bruto: JSON.stringify(e).slice(0, 1000) } });
+      expected.push({ reference, payer: str(e.pagador, 120) || undefined, amount: e.valor as number, dueAt: dueAt ?? undefined, ...(str(e.forma, 40) ? { forma: str(e.forma, 40) } : {}), origem: { linha: i, bruto: JSON.stringify(e).slice(0, 1000) } });
     });
   }
 

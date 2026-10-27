@@ -14,7 +14,13 @@ const users = [
 
 async function main() {
   let org = await db.organization.findFirst({ where: { name: "Cooperativa de Crédito Demo" } });
-  org ??= await db.organization.create({ data: { name: "Cooperativa de Crédito Demo" } });
+  // Demo: taxa de 2,99% no cartão de crédito (public/demo/esperados_cartao.csv e extrato_cartao.csv)
+  org ??= await db.organization.create({
+    data: {
+      name: "Cooperativa de Crédito Demo",
+      settings: { conciliacao: { taxas: [{ tipo: "credito", rotulo: "Cartão de crédito", pct: 0.0299, fixoCentavos: 0, toleranciaCentavos: 2 }] } },
+    },
+  });
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
   for (const u of users)
     await db.user.upsert({ where: { email: u.email }, update: {}, create: { ...u, passwordHash, orgId: org.id } });

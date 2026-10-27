@@ -8,13 +8,13 @@ export const FORMATOS_DATA = ["dd/mm/aaaa", "aaaa-mm-dd", "mm/dd/aaaa", "dd-mm-a
 export type FormatoData = (typeof FORMATOS_DATA)[number];
 export const FORMATOS_VALOR = ["br", "ponto"] as const;
 export type FormatoValor = (typeof FORMATOS_VALOR)[number];
-export const CAMPOS = ["referencia", "valor", "data", "pagador", "descricao", "sinal"] as const;
+export const CAMPOS = ["referencia", "valor", "data", "pagador", "descricao", "sinal", "forma"] as const;
 export type Campo = (typeof CAMPOS)[number];
 export const SEPARADORES_LAYOUT = [";", ",", "\t", "|"] as const;
 
 export type Layout = {
   tipo: TipoLayout;
-  colunas: { referencia: string; valor: string; data?: string; pagador?: string; descricao?: string; sinal?: string };
+  colunas: { referencia: string; valor: string; data?: string; pagador?: string; descricao?: string; sinal?: string; forma?: string };
   formatoData: FormatoData;
   formatoValor: FormatoValor;
   separador?: (typeof SEPARADORES_LAYOUT)[number];
@@ -52,6 +52,8 @@ const SINONIMOS: Record<Campo, string[]> = {
   pagador: ["pagador", "cliente", "sacado", "nome", "favorecido"],
   descricao: ["descricao", "historico", "memo", "complemento"],
   sinal: ["dc", "cd", "sinal", "natureza", "debitocredito", "creditodebito"],
+  // Forma de recebimento (só esperados): usada na pista de taxa de cartão
+  forma: ["forma", "formapagamento", "meiopagamento", "tipopagamento", "modalidade"],
 };
 
 // "Vlr Pago" → "vlrpago" e também "valorpago"
@@ -101,7 +103,7 @@ export function guessLayout(tipo: TipoLayout, header: string[], t: Tabela, linha
   const colunas: Partial<Layout["colunas"]> = {};
   let alta = true;
   const usados = new Set<string>();
-  const campos: Campo[] = tipo === "extrato" ? ["referencia", "valor", "data", "pagador", "descricao", "sinal"] : ["referencia", "valor", "data", "pagador"];
+  const campos: Campo[] = tipo === "extrato" ? ["referencia", "valor", "data", "pagador", "descricao", "sinal"] : ["referencia", "valor", "data", "pagador", "forma"];
   for (const campo of campos) {
     const cands = header.filter((h) => !usados.has(h) && variants(h).some((v) => SINONIMOS[campo].includes(v)));
     if (cands.length === 1) {
@@ -185,6 +187,7 @@ export function validateLayout(x: unknown, header: string[]): { ok: true; layout
     }
     if (typeof v !== "string" || !header.includes(v)) return bad(`A coluna de ${k} não existe no arquivo.`);
     if (k === "sinal" && x.tipo !== "extrato") return bad("Coluna de débito/crédito só vale para extrato.");
+    if (k === "forma" && x.tipo !== "esperados") return bad("Coluna de forma de recebimento só vale para esperados.");
     colunas[k] = v;
   }
   if (colunas.referencia === colunas.valor) return bad("Referência e valor precisam ser colunas diferentes.");
@@ -204,12 +207,27 @@ export function sampleForAi(t: Tabela, linhaCabecalho: number, n = 5): { cabecal
   return { cabecalho, linhas };
 }
 
-export type LinhaConvertida = { linha: number; referencia: string; valor?: number; data?: string; pagador?: string; ignorada?: string; erro?: string };
+/** Até `n` valores de exemplo de cada coluna do cabeçalho, mascarados (dígito → 9, letra → a), para a tela de confirmação. */
+export function amostrasPorColuna(t: Tabela, linhaCabecalho: number, n = 3): string[][] {
+  const header = headerOf(t.linhas, linhaCabecalho);
+  const rows = dataRows(t, linhaCabecalho);
+  return header.map((_, i) => {
+    const out: string[] = [];
+    for (const r of rows) {
+      const v = (r[i] ?? "").trim();
+      if (v) out.push(maskCell(v.slice(0, 40)));
+      if (out.length >= Math.min(3, n)) break;
+    }
+    return out;
+  });
+}
+
+export type LinhaConvertida = { linha: number; referencia: string; valor?: number; data?: string; pagador?: string; forma?: string; ignorada?: string; erro?: string };
 
 // `indices` (opcional) recebe a posição em t.linhas de cada linha devolvida (para a prova)
 function convertRows(t: Tabela, layout: Layout, header: string[], limit = Infinity, indices?: number[]) {
   const idx = (name?: string) => (name ? header.indexOf(name) : -1);
-  const I = { ref: idx(layout.colunas.referencia), val: idx(layout.colunas.valor), data: idx(layout.colunas.data), pag: idx(layout.colunas.pagador), desc: idx(layout.colunas.descricao), sinal: idx(layout.colunas.sinal) };
+  const I = { ref: idx(layout.colunas.referencia), val: idx(layout.colunas.valor), data: idx(layout.colunas.data), pag: idx(layout.colunas.pagador), desc: idx(layout.colunas.descricao), sinal: idx(layout.colunas.sinal), forma: idx(layout.colunas.forma) };
   const get = (r: string[], i: number) => (i >= 0 ? (r[i] ?? "").trim() : "");
   const out: LinhaConvertida[] = [];
   for (let i = layout.linhaCabecalho + 1; i < t.linhas.length && out.length < limit; i++) {
@@ -221,6 +239,8 @@ function convertRows(t: Tabela, layout: Layout, header: string[], limit = Infini
     const rawD = get(r, I.data);
     const pagador = (get(r, I.pag) || get(r, I.desc)).slice(0, 120) || undefined;
     const item: LinhaConvertida = { linha, referencia, pagador };
+    const forma = layout.tipo === "esperados" ? get(r, I.forma).slice(0, 40) : "";
+    if (forma) item.forma = forma;
     const erros: string[] = [];
     const v = rawV ? money(rawV, layout.formatoValor) : null;
     const d = parseDateAs(rawD, layout.formatoData);
@@ -265,7 +285,7 @@ export function convertWithLayout(t: Tabela, layout: Layout): ExpectedEntry[] | 
   if (!ok.length) throw new BankFileError(`Arquivo ${label}: nenhuma linha com valor válido.`);
   const date = (s?: string) => (s ? new Date(`${s}T00:00:00.000Z`) : undefined);
   return layout.tipo === "esperados"
-    ? ok.map((r) => ({ reference: r.referencia, payer: r.pagador, amount: r.valor!, dueAt: date(r.data), origem: origem.get(r) }))
+    ? ok.map((r) => ({ reference: r.referencia, payer: r.pagador, amount: r.valor!, dueAt: date(r.data), ...(r.forma ? { forma: r.forma } : {}), origem: origem.get(r) }))
     : ok.map((r) => ({ reference: r.referencia, payer: r.pagador, amount: r.valor!, paidAt: date(r.data), origem: origem.get(r) }));
 }
 
@@ -293,6 +313,8 @@ export type PreviaArquivo = {
   tipo: TipoLayout;
   arquivo: string;
   cabecalho: string[];
+  /** Exemplos mascarados de cada coluna, na ordem do cabeçalho. */
+  amostras?: string[][];
   colunas: Partial<Layout["colunas"]>;
   formatoData?: FormatoData;
   formatoValor?: FormatoValor;

@@ -171,7 +171,7 @@ export function isLayoutShape(x: unknown): x is { colunas: Record<string, string
   const c = o.colunas;
   return (
     !!c && typeof c === "object" && !Array.isArray(c) &&
-    Object.keys(c).length <= 6 &&
+    Object.keys(c).length <= 7 &&
     Object.values(c as Record<string, unknown>).every((v) => typeof v === "string" && v.length <= 100) &&
     typeof o.formatoData === "string" && typeof o.formatoValor === "string"
   );

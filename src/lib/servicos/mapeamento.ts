@@ -45,7 +45,7 @@ export async function sugerirLayout(tipo: TipoLayout, t: Tabela, linhaCabecalho:
     r = await opts.call<Resposta>(
       SISTEMA,
       `Arquivo de ${tipo === "esperados" ? "títulos esperados (a receber)" : "extrato bancário"}.
-Escolha, entre os nomes exatos do cabeçalho, a coluna de cada campo: referencia (identificador do título; obrigatório), valor (obrigatório), data, pagador${tipo === "extrato" ? ", descricao, sinal (coluna D/C de débito ou crédito, se existir)" : ""}. Omita o campo que não existir.
+Escolha, entre os nomes exatos do cabeçalho, a coluna de cada campo: referencia (identificador do título; obrigatório), valor (obrigatório), data, pagador${tipo === "extrato" ? ", descricao, sinal (coluna D/C de débito ou crédito, se existir)" : ", forma (forma de recebimento do título, como cartão de crédito, débito, Pix ou boleto, se existir)"}. Omita o campo que não existir.
 formatoData: um de ${FORMATOS_DATA.join(", ")}. formatoValor: "br" (vírgula decimal) ou "ponto" (ponto decimal).
 Retorne JSON {"colunas": {"referencia": string, "valor": string, ...}, "formatoData": string, "formatoValor": string}.
 
