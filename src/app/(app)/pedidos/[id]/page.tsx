@@ -11,11 +11,13 @@ const BLOCOS = [
   ["novo", "O que seria novo"],
 ] as const;
 
+export const dynamic = "force-dynamic";
+
 export default async function PedidoPage({ params }: { params: Promise<{ id: string }> }) {
   const p = await detalharPedido((await params).id);
   return (
     <>
-      <PageTitle eyebrow="Pedidos" title={p.titulo} subtitle={`Por ${p.autor} · criado em ${fmtDataHora(p.criadoEm)} · atualizado em ${fmtDataHora(p.atualizadoEm)}`} back={{ href: "/pedidos", label: "Pedidos" }} />
+      <PageTitle eyebrow="Pedidos" title={p.titulo} subtitle={`${p.instituicao} · por ${p.autor} · criado em ${fmtDataHora(p.criadoEm)} · atualizado em ${fmtDataHora(p.atualizadoEm)}`} back={{ href: "/pedidos", label: "Pedidos" }} />
       <p className="mb-6">
         <Badge tone={p.status === "CONSENSO" ? "success" : p.status === "AGUARDANDO_CONFIRMACAO" ? "warning" : "neutral"}>{ROTULO_STATUS[p.status as StatusPedido] ?? p.status}</Badge>
       </p>

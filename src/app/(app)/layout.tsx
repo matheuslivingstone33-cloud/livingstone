@@ -10,6 +10,7 @@ import { requireSession } from "@/lib/auth";
 import { aiProvider } from "@/lib/ai";
 import { db } from "@/lib/db";
 import { podeVerPedidos } from "@/lib/pedidos";
+import { ehOperador } from "@/lib/plataforma";
 import { logout } from "../actions";
 
 const nav = [
@@ -33,7 +34,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     db.organization.findUnique({ where: { id: s.orgId } }),
     db.user.findFirst({ where: { id: s.userId, orgId: s.orgId }, select: { email: true } }),
   ]);
-  const itens = [...nav.filter((n) => !n.roles || n.roles.includes(s.role)), ...(podeVerPedidos(eu?.email, process.env.PEDIDOS_VIEWERS) ? [{ href: "/pedidos", label: "Pedidos", icon: "sparkle" }] : [])];
+  const itens = [...nav.filter((n) => !n.roles || n.roles.includes(s.role)), ...(podeVerPedidos(eu?.email, process.env.PEDIDOS_VIEWERS) ? [{ href: "/pedidos", label: "Pedidos", icon: "sparkle" }] : []),
+    ...(ehOperador(eu?.email, process.env.PLATFORM_OPERATORS) ? [{ href: "/conversas", label: "Conversas", icon: "chain" }] : []),
+  ];
   const demo = aiProvider() === "demo";
   const initials = s.name
     .split(" ")

@@ -22,6 +22,7 @@ import {
   type Plano,
 } from "@/lib/assistente";
 import { responderSemIa } from "@/lib/assistente-guia";
+import { montarLogMensagem, type AnexoLog } from "@/lib/conversas";
 import { untrusted } from "@/lib/ai-prompt";
 import { anexarTranscricao, novaVersao, versaoAtual, type Entendimento } from "@/lib/pedidos";
 import { executarConsulta } from "@/lib/servicos/assistente";
@@ -82,17 +83,51 @@ async function descreverPlano(s: Session, p: Plano): Promise<{ descricao: string
   return { descricao: `Pausar a régua de cobrança do ${quem}${p.motivo === "opt_out" ? ", porque o devedor pediu para não receber mensagens" : ""}.` };
 }
 
+/** O que a troca produziu, para o registro da conversa. fim null = nada a registrar (sem pergunta). */
+type RegistroTroca = {
+  pergunta: string;
+  fim: string | null;
+  ferramentas: string[];
+  passos: number;
+  custoUsd: number;
+  anexo: AnexoLog | null;
+  pedidoId: string | null;
+  documentoId: string | null;
+  planoId: string | null;
+};
+
+/** Grava a troca (pergunta e resposta mostrada, mascaradas). Falha aqui nunca quebra a resposta. */
+async function registrarConversa(s: Session, reg: RegistroTroca, r: RespostaAssistente) {
+  if (!reg.fim || !reg.pergunta) return;
+  try {
+    const l = montarLogMensagem({ ...reg, fim: reg.fim, resposta: r.ok ? r.texto : r.erro });
+    await db.assistantMessageLog.create({ data: { orgId: s.orgId, userId: s.userId, ...l, anexo: l.anexo ?? undefined } });
+  } catch (e) {
+    console.error(JSON.stringify({ evento: "assistente.registro_falhou", erro: e instanceof Error ? e.message.slice(0, 200) : "desconhecido" }));
+  }
+}
+
 export async function enviarMensagem(form: FormData): Promise<RespostaAssistente> {
   const s = await requireSession();
+  const reg: RegistroTroca = { pergunta: "", fim: null, ferramentas: [], passos: 0, custoUsd: 0, anexo: null, pedidoId: null, documentoId: null, planoId: null };
+  const r = await processarMensagem(s, form, reg);
+  await registrarConversa(s, reg, r);
+  return r;
+}
+
+async function processarMensagem(s: Session, form: FormData, reg: RegistroTroca): Promise<RespostaAssistente> {
   const now = new Date();
   const arquivo = form.get("arquivo");
   const temArquivo = arquivo instanceof File && arquivo.size > 0;
+  const pergunta = String(form.get("mensagem") ?? "").trim() || (temArquivo ? "O que é este documento?" : "");
+  // Daqui em diante, toda saída antes da IA é uma recusa registrada
+  reg.pergunta = pergunta;
+  reg.fim = "recusado";
   const docRaw = temArquivo ? "" : String(form.get("documentoId") ?? "");
   if (docRaw && !ID_RE.test(docRaw)) return { ok: false, erro: "Documento não encontrado." };
   const operam = s.role === "ADMIN" || s.role === "ANALISTA";
   // Anexo e ajuste de documento: só quem opera
   if ((temArquivo || docRaw) && !operam) return { ok: false, erro: SO_CONSULTA_ANEXO };
-  const pergunta = String(form.get("mensagem") ?? "").trim() || (temArquivo ? "O que é este documento?" : "");
   if (!pergunta) return { ok: false, erro: "Escreva sua pergunta." };
   if (pergunta.length > MAX_PERGUNTA) return { ok: false, erro: `A pergunta pode ter até ${MAX_PERGUNTA} caracteres.` };
   let bruto: unknown = [];
@@ -115,6 +150,7 @@ export async function enviarMensagem(form: FormData): Promise<RespostaAssistente
 
   if (aiProvider() !== "claude") {
     if (temArquivo || docRaw) return { ok: false, erro: "Para ler documentos, a IA precisa estar configurada na instituição." };
+    reg.fim = "sem_ia";
     await audit(s, "assistente.mensagem", "Sem IA: resposta pelo guia da plataforma");
     return { ok: true, texto: responderSemIa(pergunta) };
   }
@@ -133,6 +169,7 @@ export async function enviarMensagem(form: FormData): Promise<RespostaAssistente
           paginas = n;
         }
         anexo = await prepararAnexo(f, { paginas });
+        reg.anexo = { formato: anexo.formato, ...(anexo.paginas ? { paginas: anexo.paginas } : {}), bytes: f.data.length };
       }
     } catch (e) {
       if (e instanceof UploadError || e instanceof AnexoError) return { ok: false, erro: e.message };
@@ -144,6 +181,7 @@ export async function enviarMensagem(form: FormData): Promise<RespostaAssistente
     ? await db.documentoBiblioteca.findFirst({ where: { id: docRaw, orgId: s.orgId, criadoPor: s.userId, status: "RASCUNHO", expiresAt: { gt: now } } })
     : null;
   if (docRaw && !rascunho) return { ok: false, erro: "Este rascunho expirou ou não foi encontrado. Anexe o documento de novo." };
+  if (rascunho) reg.documentoId = rascunho.id;
 
   // Pedido em andamento: só da mesma pessoa, da mesma instituição, ainda sem consenso
   const pedido =
@@ -151,6 +189,7 @@ export async function enviarMensagem(form: FormData): Promise<RespostaAssistente
       ? await db.featureRequest.findFirst({ where: { id: pedidoRaw, orgId: s.orgId, userId: s.userId, status: { not: "CONSENSO" } }, select: { id: true, versoes: true, transcricao: true } })
       : null;
   const atual = pedido ? versaoAtual(pedido.versoes) : null;
+  if (pedido) reg.pedidoId = pedido.id;
   // A versão atual vai como dado não confiável na mensagem do usuário, nunca no system (o prefixo do cache fica fixo)
   let contexto = contextoSessao(s.name, s.role, now) + (atual ? `\nPedido em andamento, versão ${atual.n} (reescreva a versão inteira ao ajustar):\n${untrusted("pedido_atual", JSON.stringify(atual))}` : "");
   // Reconhecimento: planilha pela assinatura do cabeçalho; PDF/imagem comparados com até 30 resumos confirmados
@@ -189,6 +228,7 @@ export async function enviarMensagem(form: FormData): Promise<RespostaAssistente
     tools,
     mensagens: montarMensagens(historico, pergunta, contexto, anexo?.blocos),
   });
+  Object.assign(reg, { fim: r.fim, ferramentas: r.ferramentas, passos: r.passos, custoUsd: r.custoUsd });
   // Só metadados: nunca a pergunta, a resposta nem o conteúdo do anexo
   const meta = anexo ? ` · anexo ${anexo.formato}${anexo.paginas ? ` (${anexo.paginas} pág.)` : ""}` : rascunho ? " · ajuste de documento" : "";
   await audit(s, "assistente.mensagem", `Passos ${r.passos} · ferramentas ${r.ferramentas.join(", ") || "nenhuma"} · custo US$ ${r.custoUsd.toFixed(4)} · fim ${r.fim}${meta}`.slice(0, 500));
@@ -227,6 +267,7 @@ export async function enviarMensagem(form: FormData): Promise<RespostaAssistente
       id = row.id;
     }
     await audit(s, "documento.rascunho", `Documento ${id} · ${formato} · ${d.colunas.length} colunas`);
+    reg.documentoId = id;
     const texto = (r.texto || TEXTO_DOCUMENTO).slice(0, 2000);
     return {
       ok: true,
@@ -244,6 +285,7 @@ export async function enviarMensagem(form: FormData): Promise<RespostaAssistente
       data: { orgId: s.orgId, userId: s.userId, acao: p.acao, payload: { alvo: p.alvo ?? null, motivo: p.motivo ?? null, resumo: p.resumo }, expiresAt: new Date(now.getTime() + PLANO_VALIDADE_MS) },
       select: { id: true },
     });
+    reg.planoId = row.id;
     return { ok: true, texto: "Preparei a ação abaixo. Ela só acontece se você confirmar, em até 10 minutos.", plano: { id: row.id, titulo: ROTULO_ACAO[p.acao], descricao: d.descricao } };
   }
   if (r.fim === "entendimento" && r.entendimento) {
@@ -275,6 +317,7 @@ export async function enviarMensagem(form: FormData): Promise<RespostaAssistente
       versao = versoes.at(-1)!.n;
     }
     await audit(s, "pedido.versao", `Pedido ${id} · versão ${versao}`);
+    reg.pedidoId = id;
     return { ok: true, texto: TEXTO_ENTENDIMENTO, entendimento: { ...e, pedidoId: id, versao } };
   }
   const texto = (r.fim === "resposta" && r.texto ? r.texto : FALHA[r.fim] ?? FALHA.falha).slice(0, 2000);

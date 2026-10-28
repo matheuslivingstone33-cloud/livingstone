@@ -3,7 +3,9 @@
 import { notFound } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { audit, requireSession, type Session } from "@/lib/auth";
+import { audit, auditRaw, requireSession, type Session } from "@/lib/auth";
+import { ehOperadorSessao, listarInstituicoes, nomesDeOrgs } from "@/lib/operador";
+import { escopoLeitura } from "@/lib/plataforma";
 import { ID_RE } from "@/lib/assistente";
 import { lerTranscricao, lerVersoes, montarPrompt, podeTransicionar, podeVerPedidos, versaoAtual } from "@/lib/pedidos";
 
@@ -65,37 +67,59 @@ async function sessaoLeitora(): Promise<Session> {
   return s;
 }
 
-const autores = async (orgId: string, ids: string[]) =>
-  new Map((await db.user.findMany({ where: { orgId, id: { in: [...new Set(ids)] } }, select: { id: true, name: true } })).map((u) => [u.id, u.name]));
+/** Autores pelos IDs, dentro do escopo de leitura (a própria instituição ou, para o operador, a consultada). */
+const autores = async (escopo: { orgId?: string }, ids: string[]) =>
+  new Map((await db.user.findMany({ where: { ...escopo, id: { in: [...new Set(ids)] } }, select: { id: true, name: true } })).map((u) => [u.id, u.name]));
 
-export async function listarPedidos() {
+/** Lista de pedidos. O operador da plataforma pode ver todas as instituições ou filtrar uma (só leitura). */
+export async function listarPedidos(orgFiltro?: string) {
   const s = await sessaoLeitora();
+  const operador = await ehOperadorSessao(s);
+  const escopo = escopoLeitura({ orgIdSessao: s.orgId, operador, orgFiltro });
   const rows = await db.featureRequest.findMany({
-    where: { orgId: s.orgId },
+    where: escopo,
     orderBy: { updatedAt: "desc" },
     take: 200,
-    select: { id: true, titulo: true, status: true, userId: true, versoes: true, updatedAt: true },
+    select: { id: true, orgId: true, titulo: true, status: true, userId: true, versoes: true, updatedAt: true },
   });
-  const nomes = await autores(s.orgId, rows.map((r) => r.userId));
-  return rows.map((r) => ({ id: r.id, titulo: r.titulo, status: r.status, autor: nomes.get(r.userId) ?? "-", versoes: lerVersoes(r.versoes).length, atualizadoEm: r.updatedAt }));
+  const [nomes, orgs] = await Promise.all([autores(escopo, rows.map((r) => r.userId)), nomesDeOrgs(rows.map((r) => r.orgId))]);
+  return rows.map((r) => ({
+    id: r.id,
+    titulo: r.titulo,
+    status: r.status,
+    autor: nomes.get(r.userId) ?? "-",
+    instituicao: orgs.get(r.orgId) ?? "-",
+    versoes: lerVersoes(r.versoes).length,
+    atualizadoEm: r.updatedAt,
+  }));
 }
 
 export async function detalharPedido(id: string) {
   const s = await sessaoLeitora();
   if (typeof id !== "string" || !ID_RE.test(id)) notFound();
-  const p = await db.featureRequest.findFirst({ where: { id, orgId: s.orgId } });
+  const operador = await ehOperadorSessao(s);
+  const p = await db.featureRequest.findFirst({ where: { id, ...escopoLeitura({ orgIdSessao: s.orgId, operador }) } });
   if (!p) notFound();
-  const nomes = await autores(s.orgId, [p.userId]);
-  await audit(s, "pedido.visualizado", `Pedido ${p.id}`);
+  const [nomes, orgs] = await Promise.all([autores({ orgId: p.orgId }, [p.userId]), nomesDeOrgs([p.orgId])]);
+  await audit(s, "pedido.visualizado", `Pedido ${p.id}${p.orgId !== s.orgId ? ` · instituição ${p.orgId}` : ""}`);
+  // Leitura de outra instituição: fica registrada também na trilha dela
+  if (p.orgId !== s.orgId) await auditRaw(p.orgId, null, "plataforma.pedido_visualizado", `Pedido ${p.id} lido pelo operador da plataforma (instituição ${s.orgId})`);
   return {
     id: p.id,
     titulo: p.titulo,
     status: p.status,
     autor: nomes.get(p.userId) ?? "-",
+    instituicao: orgs.get(p.orgId) ?? "-",
     criadoEm: p.createdAt,
     atualizadoEm: p.updatedAt,
     versoes: lerVersoes(p.versoes),
     transcricao: lerTranscricao(p.transcricao),
     prompt: p.prompt,
   };
+}
+
+/** Filtro de instituição em /pedidos: só para o operador (os demais recebem lista vazia). */
+export async function instituicoesParaFiltro() {
+  const s = await sessaoLeitora();
+  return (await ehOperadorSessao(s)) ? listarInstituicoes() : [];
 }

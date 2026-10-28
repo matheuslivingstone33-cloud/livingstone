@@ -1,6 +1,7 @@
 // Pedidos de funcionalidade feitos no assistente: versões do entendimento, transcrição e prompt para a equipe.
 // Puro: sem banco, sem Next, sem IA. Tudo o que entra é normalizado e tem CPF/CNPJ mascarados.
 import { mascararDocs } from "./mascara";
+import { ehOperador, OPERADORES_PADRAO } from "./plataforma";
 
 export type StatusPedido = "EM_CONVERSA" | "AGUARDANDO_CONFIRMACAO" | "CONSENSO";
 export const ROTULO_STATUS: Record<StatusPedido, string> = {
@@ -14,7 +15,7 @@ export type Versao = Entendimento & { n: number; em: string };
 export type ItemTranscricao = { role: "user" | "assistant"; texto: string; em: string };
 
 export const PEDIDOS_LIMITES = { titulo: 80, campo: 600, versoes: 20, transcricao: 200, item: 2000 } as const;
-export const PEDIDOS_VIEWERS_PADRAO = "matheuslivingstone33@gmail.com";
+export const PEDIDOS_VIEWERS_PADRAO = OPERADORES_PADRAO;
 
 const CAMPOS = ["problema", "diaADia", "jaExiste", "novo"] as const;
 
@@ -108,12 +109,7 @@ export function montarPrompt(p: { titulo: string; versao: Entendimento & { n: nu
 
 /** Quem vê /pedidos: e-mails em PEDIDOS_VIEWERS (vírgula), comparação exata sem caixa. Sem a variável, o padrão; vazia, ninguém. */
 export function podeVerPedidos(email: string | null | undefined, env: string | undefined): boolean {
-  if (!email) return false;
-  const lista = (env === undefined ? PEDIDOS_VIEWERS_PADRAO : env)
-    .split(",")
-    .map((x) => x.trim().toLowerCase())
-    .filter(Boolean);
-  return lista.includes(email.trim().toLowerCase());
+  return ehOperador(email, env);
 }
 
 const TRANSICOES: Record<StatusPedido, StatusPedido[]> = {

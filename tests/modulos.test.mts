@@ -3222,3 +3222,99 @@ test("Câmbio: a IA nunca define moeda nem cotação; prompt cita us e os format
   assert.deepEqual(r2.sugestao.perguntas?.data, ["dd/mm/aaaa", "mm/dd/aaaa"]);
   assert.equal(r2.layout, undefined);
 });
+
+// ---------- Conversas do assistente e operador da plataforma ----------
+import { CONVERSAS_LIMITES, agruparConversas, montarLogMensagem } from "../src/lib/conversas";
+import { ehOperador, escopoLeitura, listaOperadores } from "../src/lib/plataforma";
+import { cutoffConversas } from "../src/lib/retencao";
+
+const IDA = "c".repeat(25);
+
+test("Conversas: máscara de CPF/CNPJ na pergunta e na resposta", () => {
+  const l = montarLogMensagem({ pergunta: "CPF 529.982.247-25?", resposta: "CNPJ 11222333000181 ok", fim: "resposta" });
+  assert.equal(l.pergunta, "CPF ***.982.247-**?");
+  assert.equal(l.resposta, "CNPJ **2223330001** ok");
+  assert.ok(!/529\.982\.247-25|11222333000181/.test(l.pergunta + l.resposta));
+});
+
+test("Conversas: montarLogMensagem limita, limpa e confere tudo", () => {
+  const l = montarLogMensagem({ pergunta: "a\u0000b\u0007c\nd\te".padEnd(5000, "x"), resposta: "r".repeat(9000), fim: "resposta" });
+  assert.equal(l.pergunta.length, CONVERSAS_LIMITES.pergunta);
+  assert.ok(l.pergunta.startsWith("abc\nd\te"));
+  assert.equal(l.resposta.length, CONVERSAS_LIMITES.resposta);
+  // anexo: só formato, páginas e bytes
+  const a = montarLogMensagem({ pergunta: "p", resposta: "r", fim: "resposta", anexo: { formato: "PDF", paginas: 3, bytes: 1234, conteudo: "segredo", nome: "x.pdf", blocos: [{ a: 1 }] } });
+  assert.deepEqual(a.anexo, { formato: "PDF", paginas: 3, bytes: 1234 });
+  assert.equal(montarLogMensagem({ pergunta: "p", resposta: "r", fim: "resposta", anexo: { formato: "<script>" } }).anexo, null);
+  assert.deepEqual(montarLogMensagem({ pergunta: "p", resposta: "r", fim: "resposta", anexo: { formato: "PLANILHA", paginas: -1, bytes: 1.5 } }).anexo, { formato: "PLANILHA" });
+  // IDs
+  const i = montarLogMensagem({ pergunta: "p", resposta: "r", fim: "plano", pedidoId: IDA, documentoId: "../x", planoId: 42 });
+  assert.equal(i.pedidoId, IDA);
+  assert.equal(i.documentoId, null);
+  assert.equal(i.planoId, null);
+  // ferramentas: até 20, só nomes válidos
+  const f = montarLogMensagem({ pergunta: "p", resposta: "r", fim: "resposta", ferramentas: ["consultar_x", "DROP TABLE", 3, "a".repeat(41), ...Array(30).fill("ok")] });
+  assert.equal(f.ferramentas[0], "consultar_x");
+  assert.equal(f.ferramentas.length, 20);
+  assert.ok(f.ferramentas.every((x) => /^[a-z_]{1,40}$/.test(x)));
+  assert.deepEqual(montarLogMensagem({ pergunta: "p", resposta: "r", fim: "resposta", ferramentas: "x" }).ferramentas, []);
+  // custo e fim
+  for (const c of [NaN, -1, Infinity, "0.5", null]) assert.equal(montarLogMensagem({ pergunta: "p", resposta: "r", fim: "resposta", custoUsd: c }).custoUsd, 0);
+  assert.equal(montarLogMensagem({ pergunta: "p", resposta: "r", fim: "resposta", custoUsd: 0.0123456789 }).custoUsd, 0.012346);
+  assert.equal(montarLogMensagem({ pergunta: "p", resposta: "r", fim: "Fim Estranho!" }).fim, "desconhecido");
+  assert.equal(montarLogMensagem({ pergunta: "p", resposta: "r", fim: "sem_ia", passos: 2.5 }).passos, 0);
+  // determinismo
+  const e = { pergunta: "CPF 52998224725", resposta: "ok", fim: "resposta", ferramentas: ["a"], passos: 2, custoUsd: 0.1, anexo: { formato: "PDF", paginas: 1 } };
+  assert.deepEqual(montarLogMensagem(e), montarLogMensagem(e));
+});
+
+test("Plataforma: ehOperador", () => {
+  assert.ok(ehOperador("matheuslivingstone33@gmail.com", undefined));
+  assert.ok(ehOperador(" MatheusLivingstone33@Gmail.com ", undefined));
+  assert.equal(ehOperador("matheuslivingstone33@gmail.com", ""), false);
+  assert.deepEqual(listaOperadores(""), []);
+  assert.equal(ehOperador(null, undefined), false);
+  assert.equal(ehOperador(undefined, "a@x.com"), false);
+  assert.equal(ehOperador("", ","), false);
+  assert.ok(ehOperador("a@x.com", " b@y.com , A@X.com "));
+  assert.equal(ehOperador("a@x.com.evil", "a@x.com"), false);
+  assert.equal(ehOperador("x.com", "a@x.com"), false);
+  assert.equal(ehOperador("outra@gmail.com", undefined), false);
+});
+
+test("Plataforma: escopoLeitura", () => {
+  const B = "b".repeat(25);
+  assert.deepEqual(escopoLeitura({ orgIdSessao: IDA, operador: false }), { orgId: IDA });
+  assert.deepEqual(escopoLeitura({ orgIdSessao: IDA, operador: false, orgFiltro: B }), { orgId: IDA });
+  assert.deepEqual(escopoLeitura({ orgIdSessao: IDA, operador: true, orgFiltro: B }), { orgId: B });
+  assert.deepEqual(escopoLeitura({ orgIdSessao: IDA, operador: true }), {});
+  assert.deepEqual(escopoLeitura({ orgIdSessao: IDA, operador: true, orgFiltro: "' OR 1=1" }), {});
+});
+
+test("Plataforma: podeVerPedidos continua igual (delegado)", () => {
+  for (const [e, env] of [["matheuslivingstone33@gmail.com", undefined], ["b@y.com", "a@x.com,b@y.com"], ["a@x.com", ""], [null, "a@x.com"]] as const)
+    assert.equal(podeVerPedidos(e, env), ehOperador(e, env));
+});
+
+test("Conversas: agruparConversas", () => {
+  const d = (s: string) => new Date(s);
+  const r = agruparConversas([
+    { orgId: "o1", userId: "u1", _count: { _all: 2 }, _max: { createdAt: d("2026-10-01T10:00:00Z") }, _sum: { custoUsd: "0.1234567" } },
+    { orgId: "o2", userId: "u2", _count: { _all: 5 }, _max: { createdAt: d("2026-10-20T10:00:00Z") }, _sum: { custoUsd: null } },
+    { orgId: "o3", userId: "u3", _count: { _all: 0 }, _max: { createdAt: null }, _sum: { custoUsd: 1 } },
+    { orgId: "o4", userId: "u4", _count: { _all: 1 }, _max: { createdAt: d("2026-10-10T10:00:00Z") }, _sum: { custoUsd: "abc" } },
+  ]);
+  assert.deepEqual(r.map((c) => c.userId), ["u2", "u4", "u1"]);
+  assert.equal(r[0].custoUsd, 0);
+  assert.equal(r[1].custoUsd, 0);
+  assert.equal(r[2].custoUsd, 0.123457);
+  assert.equal(r[0].total, 5);
+});
+
+test("Conversas: retenção de 180 dias", () => {
+  const now = new Date("2026-10-28T12:00:00Z");
+  assert.equal(cutoffConversas(now).toISOString(), "2026-05-01T12:00:00.000Z");
+  assert.throws(() => cutoffConversas(now, 0));
+  const acao = readFileSync(new URL("../src/app/api/cron/limpeza/route.ts", import.meta.url), "utf8");
+  assert.match(acao, /assistantMessageLog\.deleteMany/);
+});

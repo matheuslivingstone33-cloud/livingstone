@@ -7,3 +7,9 @@ export function cutoffApiRequests(now: Date, horas = 24): Date {
   if (!(horas > 0)) throw new Error("horas deve ser positivo");
   return new Date(now.getTime() - horas * 60 * 60 * 1000);
 }
+
+/** Conversas do assistente (AssistantMessageLog) ficam 180 dias; antes do corte, o cron apaga. */
+export function cutoffConversas(now: Date, dias = 180): Date {
+  if (!(dias > 0)) throw new Error("dias deve ser positivo");
+  return new Date(now.getTime() - dias * 24 * 60 * 60 * 1000);
+}

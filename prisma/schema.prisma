@@ -37,6 +37,7 @@ model Organization {
   assistantPlans AssistantPlan[]
   featureRequests FeatureRequest[]
   documentos DocumentoBiblioteca[]
+  assistantLogs AssistantMessageLog[]
   // Trava do lote de propostas com IA (um lote por vez na instituição)
   aiBatchLockUntil DateTime?
   // Trava da execução da régua de cobrança (uma por vez na instituição)
@@ -536,4 +537,28 @@ model DocumentoBiblioteca {
 
   @@unique([orgId, chave])
   @@index([orgId, status, updatedAt])
+}
+
+// Conversa do assistente: uma linha por troca, pergunta e resposta mascaradas. Guardada por 180 dias (cron de limpeza).
+// Leitura só pelo operador da plataforma (src/lib/plataforma.ts), auditada.
+model AssistantMessageLog {
+  id          String       @id @default(cuid())
+  orgId       String
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  userId      String
+  pergunta    String // mascarada, até 4000
+  resposta    String // mascarada, até 8000
+  fim         String
+  ferramentas String[]
+  passos      Int          @default(0)
+  custoUsd    Decimal      @default(0) @db.Decimal(12, 6)
+  // Só formato, páginas e bytes; nunca o conteúdo
+  anexo       Json?
+  pedidoId    String?
+  documentoId String?
+  planoId     String?
+  createdAt   DateTime     @default(now())
+
+  @@index([orgId, userId, createdAt])
+  @@index([createdAt])
 }
