@@ -55,7 +55,8 @@ export const getSession = cache(async (): Promise<Session | null> => {
 
 export async function requireSession(roles?: string[]) {
   const s = await getSession();
-  if (!s) redirect("/login");
+  // Cookie com assinatura válida mas sessão revogada (versão, usuário inativo): limpa o cookie, senão o middleware devolve ao painel e cria um laço
+  if (!s) redirect("/sessao-expirada");
   if (roles && !roles.includes(s.role)) redirect("/dashboard");
   return s;
 }
