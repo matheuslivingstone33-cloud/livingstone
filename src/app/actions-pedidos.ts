@@ -2,11 +2,15 @@
 
 import { notFound } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { db } from "@/lib/db";
 import { audit, auditRaw, requireSession, type Session } from "@/lib/auth";
 import { ehOperadorSessao, listarInstituicoes, nomesDeOrgs } from "@/lib/operador";
 import { escopoLeitura } from "@/lib/plataforma";
 import { ID_RE } from "@/lib/assistente";
+import { appUrl } from "@/lib/payments";
+import { criarIssue } from "@/lib/github-issues";
+import { configGithub, erroCurto, leaseExpiradoAntesDe, payloadIssue, podeCriarIssue } from "@/lib/pedidos-github";
 import { lerTranscricao, lerVersoes, montarPrompt, podeTransicionar, podeVerPedidos, versaoAtual } from "@/lib/pedidos";
 
 export type RespostaPedido = { ok: true; texto: string } | { ok: false; erro: string };
@@ -32,8 +36,62 @@ export async function confirmarEntendimento(pedidoId: string, versao: number): P
   });
   if (up.count !== 1) return { ok: false, erro: "Há uma versão mais nova deste entendimento. Confira a última." };
   await audit(s, "pedido.consenso", `Pedido ${p.id} · versão ${versao}`);
+  // Issue no GitHub depois da resposta: a confirmação nunca falha por causa dela
+  const orgId = s.orgId;
+  after(async () => {
+    try {
+      await enviarIssue(p.id, orgId, s.userId);
+    } catch (e) {
+      console.error("[pedidos] issue:", erroCurto(e));
+    }
+  });
   revalidatePath("/pedidos");
   return { ok: true, texto: "Registrado para a equipe avaliar." };
+}
+
+/**
+ * Cria a issue do pedido no GitHub. Interno (não exportado como action).
+ * Lease via updateMany: só uma tentativa por vez; grava número/URL ou o erro, sempre filtrando por orgId.
+ */
+async function enviarIssue(pedidoId: string, orgId: string, userId: string | null): Promise<{ ok: boolean; erro?: string }> {
+  const now = new Date();
+  const p = await db.featureRequest.findFirst({
+    where: { id: pedidoId, orgId },
+    select: { id: true, titulo: true, status: true, prompt: true, issueNumber: true, issueTentativaEm: true },
+  });
+  if (!p || !podeCriarIssue(p, now) || !p.prompt) return { ok: false, erro: "Pedido sem consenso, já com issue ou com tentativa em andamento." };
+  const lease = await db.featureRequest.updateMany({
+    where: { id: p.id, orgId, status: "CONSENSO", issueNumber: null, OR: [{ issueTentativaEm: null }, { issueTentativaEm: { lte: leaseExpiradoAntesDe(now) } }] },
+    data: { issueTentativaEm: now },
+  });
+  if (lease.count !== 1) return { ok: false, erro: "Já há uma tentativa em andamento." };
+  const cfg = configGithub(process.env);
+  const r = cfg ? await criarIssue(cfg, payloadIssue({ id: p.id, titulo: p.titulo, prompt: p.prompt }, appUrl())) : { ok: false as const, erro: "Integração com o GitHub não configurada." };
+  if (r.ok) {
+    await db.featureRequest.updateMany({ where: { id: p.id, orgId, issueNumber: null }, data: { issueNumber: r.number, issueUrl: r.url, issueErro: null } });
+    await auditRaw(orgId, userId, "pedido.issue_criada", `Pedido ${p.id} · issue #${r.number}`);
+    return { ok: true };
+  }
+  await db.featureRequest.updateMany({ where: { id: p.id, orgId, issueNumber: null }, data: { issueErro: r.erro } });
+  await auditRaw(orgId, userId, "pedido.issue_falhou", `Pedido ${p.id} · ${r.erro}`);
+  return { ok: false, erro: r.erro };
+}
+
+/**
+ * Reenvia a issue de um pedido em CONSENSO. Exceção de escrita do operador da plataforma:
+ * só grava os campos issue* do pedido, com auditoria na própria org e na org do pedido.
+ */
+export async function reenviarIssue(pedidoId: string): Promise<RespostaPedido> {
+  const s = await requireSession(["ADMIN", "ANALISTA"]);
+  if (!(await ehOperadorSessao(s))) notFound();
+  if (typeof pedidoId !== "string" || !ID_RE.test(pedidoId)) return { ok: false, erro: NAO_ENCONTRADO };
+  const p = await db.featureRequest.findFirst({ where: { id: pedidoId, ...escopoLeitura({ orgIdSessao: s.orgId, operador: true }) }, select: { id: true, orgId: true } });
+  if (!p) return { ok: false, erro: NAO_ENCONTRADO };
+  const r = await enviarIssue(p.id, p.orgId, p.orgId === s.orgId ? s.userId : null);
+  await audit(s, "pedido.issue_reenviada", `Pedido ${p.id}${p.orgId !== s.orgId ? ` · instituição ${p.orgId}` : ""} · ${r.ok ? "criada" : "falhou"}`);
+  if (p.orgId !== s.orgId) await auditRaw(p.orgId, null, "plataforma.pedido_issue_reenviada", `Pedido ${p.id} reenviado ao GitHub pelo operador da plataforma (instituição ${s.orgId})`);
+  revalidatePath(`/pedidos/${p.id}`);
+  return r.ok ? { ok: true, texto: "Issue criada no GitHub." } : { ok: false, erro: r.erro ?? "Não foi possível criar a issue." };
 }
 
 /** A pessoa quer ajustar: volta para a conversa. */
@@ -115,6 +173,10 @@ export async function detalharPedido(id: string) {
     versoes: lerVersoes(p.versoes),
     transcricao: lerTranscricao(p.transcricao),
     prompt: p.prompt,
+    issueNumber: p.issueNumber,
+    issueUrl: p.issueUrl,
+    issueErro: operador ? p.issueErro : null,
+    operador,
   };
 }
 

@@ -13,8 +13,9 @@
 //   PIX_KEY / PIX_MERCHANT / PIX_CITY     padrão do Pix
 //   PIX_WEBHOOK_ALLOW_QUERY_SECRET  "1" aceita ?secret= no webhook Pix (só para PSP sem header customizado)
 //   EVOLUTION_API_URL / EVOLUTION_API_KEY / EVOLUTION_INSTANCE   envio de WhatsApp da régua (URL https); sem os três, o envio fica desligado
+//   GITHUB_TOKEN_PEDIDOS / GITHUB_REPO_PEDIDOS   pedido confirmado vira issue no GitHub (repo "dono/repo"); sem os dois, a issue não é criada
 export const ENV_REQUIRED = ["DATABASE_URL", "DIRECT_URL", "AUTH_SECRET", "APP_URL", "CRON_SECRET"] as const;
-export const ENV_OPTIONAL = ["AUDIT_RECEIPT_SECRET", "ANTHROPIC_API_KEY", "AI_MODEL_COBRANCA", "AI_MODEL_PLD", "AI_MODEL_CREDITO", "AI_MODEL_LEGADO", "AI_MODEL_RESUMO", "AI_MODEL_MAPEAMENTO", "PIX_KEY", "PIX_MERCHANT", "PIX_CITY", "PIX_WEBHOOK_ALLOW_QUERY_SECRET", "EVOLUTION_API_URL", "EVOLUTION_API_KEY", "EVOLUTION_INSTANCE"] as const;
+export const ENV_OPTIONAL = ["AUDIT_RECEIPT_SECRET", "ANTHROPIC_API_KEY", "AI_MODEL_COBRANCA", "AI_MODEL_PLD", "AI_MODEL_CREDITO", "AI_MODEL_LEGADO", "AI_MODEL_RESUMO", "AI_MODEL_MAPEAMENTO", "PIX_KEY", "PIX_MERCHANT", "PIX_CITY", "PIX_WEBHOOK_ALLOW_QUERY_SECRET", "EVOLUTION_API_URL", "EVOLUTION_API_KEY", "EVOLUTION_INSTANCE", "GITHUB_TOKEN_PEDIDOS", "GITHUB_REPO_PEDIDOS"] as const;
 
 /** Lê uma variável obrigatória; ausente, vazia ou curta demais lança erro (sem expor o valor). */
 export function requiredEnv(name: string, opts: { minLength?: number } = {}, env: Record<string, string | undefined> = process.env): string {

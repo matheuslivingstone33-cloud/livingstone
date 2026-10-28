@@ -1,0 +1,34 @@
+# Aplica as migrations no Neon quando elas chegam na main. Roda em paralelo ao auto-deploy da Vercel:
+# por isso toda migration é aditiva e tolerada pelo código anterior (colunas novas anuláveis ou com default).
+name: Migrate deploy (produção)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "prisma/migrations/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migrate-deploy-producao
+  cancel-in-progress: false
+
+jobs:
+  migrar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: producao
+    env:
+      DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.NEON_DIRECT_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy

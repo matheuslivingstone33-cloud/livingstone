@@ -506,6 +506,11 @@ model FeatureRequest {
   versoes     Json         @default("[]")
   transcricao Json         @default("[]")
   prompt      String?
+  // Issue no GitHub (esteira pedido -> issue -> Claude -> PR)
+  issueNumber      Int?
+  issueUrl         String?
+  issueTentativaEm DateTime? // lease: evita duas criações simultâneas
+  issueErro        String?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 

@@ -22,7 +22,12 @@
 - Toda consulta por ID filtra pelo `orgId` da sessão (`findFirst({ where: { id, orgId: s.orgId } })`), nunca só pelo ID.
 - Ações que escrevem exigem `ADMIN` ou `ANALISTA`; `AUDITOR` só lê.
 - Ações relevantes gravam auditoria (`audit` / `auditRaw`).
-- Exceção cross-org: o operador da plataforma (e-mails em `PLATFORM_OPERATORS`; sem a variável, o padrão) pode só ler pedidos e conversas de outras instituições, via `src/lib/plataforma.ts` (`escopoLeitura`), sempre auditado na própria org e na org lida. Nenhuma escrita cross-org.
+- Exceção cross-org: o operador da plataforma (e-mails em `PLATFORM_OPERATORS`; sem a variável, o padrão) pode só ler pedidos e conversas de outras instituições, via `src/lib/plataforma.ts` (`escopoLeitura`), sempre auditado na própria org e na org lida. Nenhuma escrita cross-org, exceto a abaixo.
+- Exceção de escrita do operador: o botão "Reenviar ao GitHub" (`reenviarIssue` em `src/app/actions-pedidos.ts`) só pode gravar os campos `issue*` do pedido (`issueNumber`, `issueUrl`, `issueTentativaEm`, `issueErro`), com auditoria na própria org e na org do pedido.
+
+## Migrations
+- Sempre aditivas e toleradas pelo código anterior: colunas novas anuláveis ou com default; nada de remover, renomear ou mudar tipo. O auto-deploy da Vercel e o `migrate deploy` (workflow `.github/workflows/migrate-deploy.yml`) rodam em paralelo.
+- Esteira pedido -> issue -> Claude no GitHub Actions -> PR: veja `docs/esteira-pedidos.md`.
 
 ## Fechar um módulo
 `npm run lint`, `npm test`, `npx tsc --noEmit`, `npm run build` (com o servidor de dev parado) e um commit.

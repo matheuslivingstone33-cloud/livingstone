@@ -1,4 +1,5 @@
-import { detalharPedido } from "@/app/actions-pedidos";
+import { revalidatePath } from "next/cache";
+import { detalharPedido, reenviarIssue } from "@/app/actions-pedidos";
 import { CopyButton } from "@/components/CopyButton";
 import { Badge, CardHeader, PageTitle } from "@/components/ui";
 import { ROTULO_STATUS, type StatusPedido } from "@/lib/pedidos";
@@ -20,7 +21,27 @@ export default async function PedidoPage({ params }: { params: Promise<{ id: str
       <PageTitle eyebrow="Pedidos" title={p.titulo} subtitle={`${p.instituicao} · por ${p.autor} · criado em ${fmtDataHora(p.criadoEm)} · atualizado em ${fmtDataHora(p.atualizadoEm)}`} back={{ href: "/pedidos", label: "Pedidos" }} />
       <p className="mb-6">
         <Badge tone={p.status === "CONSENSO" ? "success" : p.status === "AGUARDANDO_CONFIRMACAO" ? "warning" : "neutral"}>{ROTULO_STATUS[p.status as StatusPedido] ?? p.status}</Badge>
+        {p.issueUrl && p.issueNumber != null && (
+          <a href={p.issueUrl} target="_blank" rel="noopener noreferrer" className="ml-3 text-sm font-semibold text-ink-900 underline">
+            Issue #{p.issueNumber}
+          </a>
+        )}
       </p>
+      {p.operador && p.status === "CONSENSO" && !p.issueUrl && (
+        <form
+          className="mb-6 flex flex-wrap items-center gap-3"
+          action={async () => {
+            "use server";
+            await reenviarIssue(p.id);
+            revalidatePath(`/pedidos/${p.id}`);
+          }}
+        >
+          <button type="submit" className="btn-ghost">
+            Reenviar ao GitHub
+          </button>
+          {p.issueErro && <span className="text-sm text-ink-600">Última falha: {p.issueErro}</span>}
+        </form>
+      )}
 
       <section className="card mb-6">
         <CardHeader title="Prompt para implementação">{p.prompt && <CopyButton text={p.prompt} label="Copiar prompt" />}</CardHeader>

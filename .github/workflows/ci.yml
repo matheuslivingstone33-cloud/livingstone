@@ -1,0 +1,46 @@
+# Verificações de todo PR: lint, testes, tipos e build, com um Postgres descartável do próprio job.
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      # Valores de mentira, só para este job (nada de produção)
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      DIRECT_URL: postgresql://ci:ci@localhost:5432/ci
+      AUTH_SECRET: ci-auth-secret-de-mentira-com-mais-de-32-caracteres
+      APP_URL: http://localhost:3000
+      CRON_SECRET: ci-cron-secret-de-mentira
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx prisma db push --skip-generate
+      - run: npm run lint
+      - run: npm test
+      - run: npx tsc --noEmit
+      - run: npm run build
