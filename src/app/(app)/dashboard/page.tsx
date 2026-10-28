@@ -11,6 +11,8 @@ import { PageTitle, Stat, Empty, CardHeader, MoreLink, Badge, statusLabel } from
 import { AreaTrend, Bars, CHART, StackBar } from "@/components/charts";
 import { DueBadge, RiskBadge } from "../pld/badges";
 import { AjudaAba } from "@/components/AjudaAba";
+import { VideoBoasVindas } from "@/components/VideoBoasVindas";
+import { mostraVideoBoasVindas } from "@/lib/video-boas-vindas";
 
 const WEEKS = 8;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -40,6 +42,8 @@ export default async function Dashboard() {
   const resumoIa = resumoSalvoValido(salvo, fatosHash(fatos), now) ? salvo : null;
   const resumo = resumoIa?.text || resumoBase(fatos);
   const canEdit = s.role !== "AUDITOR";
+  const eu = await db.user.findFirst({ where: { id: s.userId, orgId: s.orgId }, select: { email: true } });
+  const comVideo = mostraVideoBoasVindas(eu?.email, process.env.VIDEO_BOAS_VINDAS_EMAILS);
 
   const dec = Object.fromEntries(decisions.map((d) => [d.decision, d._count]));
   const risk = Object.fromEntries(pldByRisk.map((r) => [r.risk, r._count]));
@@ -55,6 +59,7 @@ export default async function Dashboard() {
     <>
       <PageTitle eyebrow={today} title={`Olá, ${s.name.split(" ")[0]}`} subtitle="O que a operação recuperou, o que precisa de atenção e o que vence primeiro" />
       <AjudaAba aba="dashboard" />
+      {comVideo && <VideoBoasVindas />}
 
       <section aria-labelledby="resumo-dia" className="card rise mb-6">
         <div className="flex flex-wrap items-start justify-between gap-3">

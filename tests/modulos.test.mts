@@ -19,6 +19,7 @@ import { auditHash, auditHashV2, compareReceipt, deriveReceiptSecret, initialCha
 import { cell, csvDocument, num } from "../src/lib/csv";
 import { buildTourData } from "../src/lib/tour";
 import { isPublic } from "../src/lib/public-routes";
+import { mostraVideoBoasVindas } from "../src/lib/video-boas-vindas";
 import { decideIdempotency, generateKey, hasScope, hashKey, idempotencyFingerprint, parseBearer, safeEqualHex } from "../src/lib/api-keys";
 import { API_LIMITS, validateReconciliationBody } from "../src/lib/api-payload";
 import { API_MAX_BODY_BYTES } from "../src/lib/api-http";
@@ -3412,4 +3413,14 @@ test("erroCurto: nunca devolve o token e corta a mensagem", () => {
   assert.ok(!erroCurto("github_pat_ABCDEFGHIJ_123456 vazou").includes("github_pat_"));
   assert.ok(erroCurto("x".repeat(1000)).length <= 300);
   assert.equal(erroCurto(undefined), "Erro desconhecido");
+});
+
+test("vídeo de boas-vindas: só para os e-mails listados", () => {
+  assert.equal(mostraVideoBoasVindas("amanda@admin.com", undefined), true);
+  assert.equal(mostraVideoBoasVindas(" Amanda@Admin.com ", undefined), true);
+  assert.equal(mostraVideoBoasVindas("matheuslivingstone33@gmail.com", undefined), false);
+  assert.equal(mostraVideoBoasVindas("amanda@admin.com.evil", undefined), false);
+  assert.equal(mostraVideoBoasVindas("amanda@admin.com", ""), false);
+  assert.equal(mostraVideoBoasVindas(null, undefined), false);
+  assert.equal(mostraVideoBoasVindas("b@x.com", "a@x.com, B@x.com"), true);
 });
