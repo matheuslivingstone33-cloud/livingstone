@@ -15,7 +15,7 @@ export const TASKS: Record<AiTask, TaskConfig> = {
   // Mapeamento de colunas de planilha da conciliação: só nomes de coluna e amostra mascarada
   mapeamento: { model: "claude-haiku-5-5", effort: "low", max_tokens: 800, timeoutMs: 10_000 },
   // Assistente da plataforma: respostas curtas; cada passo do laço de ferramentas é uma chamada
-  assistente: { model: "claude-haiku-5-5", effort: "low", max_tokens: 1024, timeoutMs: 20_000 },
+  assistente: { model: "claude-haiku-5-5", effort: "low", max_tokens: 4096, timeoutMs: 30_000 },
 };
 
 /** Limites do assistente. msgsPorUsuarioDia pode ser trocado por ASSISTENTE_MSGS_DIA (inteiro de 1 a 1000). */

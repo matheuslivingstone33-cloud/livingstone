@@ -251,7 +251,7 @@ export function montarMensagens(historico: MsgCliente[], pergunta: string, conte
 
 // ---------- Laço ----------
 
-export type FimLoop = "resposta" | "plano" | "entendimento" | "documento" | "passos" | "custo" | "falha" | "limite";
+export type FimLoop = "resposta" | "plano" | "entendimento" | "documento" | "passos" | "custo" | "falha" | "limite" | "corte";
 export type ResultadoLoop = { fim: FimLoop; texto: string; plano?: Plano; entendimento?: Entendimento; documento?: Entrada; passos: number; ferramentas: string[]; custoUsd: number; detalhe?: string };
 export type Executar = (nome: string, entrada: Entrada) => Promise<unknown>;
 
@@ -296,6 +296,8 @@ export async function rodarLoop(o: {
     const t = textoDe(r.content);
     if (t) ultimoTexto = t;
     const usos = r.content.filter((b) => b.type === "tool_use");
+    // Cortada no limite de tamanho: ferramenta incompleta não vale e texto parcial não é resposta
+    if (r.stop_reason === "max_tokens") return fim("corte", passo + 1);
     if (r.stop_reason !== "tool_use" || !usos.length) return fim("resposta", passo + 1);
 
     const resultados: MsgBlock[] = [];

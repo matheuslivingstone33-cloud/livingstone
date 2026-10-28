@@ -61,6 +61,7 @@ const MAX_PERGUNTA = 1000;
 const FALHA: Record<string, string> = {
   passos: "Não consegui terminar a resposta. Tente uma pergunta mais direta.",
   custo: "Não consegui terminar a resposta. Tente uma pergunta mais direta.",
+  corte: "Minha resposta ficou longa demais e foi cortada. Tente de novo ou divida o pedido em partes menores.",
   falha: "O assistente não respondeu agora. Tente de novo em instantes.",
   limite: "O teto diário de IA da instituição foi atingido. O assistente volta amanhã ou quando um administrador ajustar o teto.",
 };

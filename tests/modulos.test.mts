@@ -2275,7 +2275,7 @@ test("Assistente: corpo com cache no fim do system, ferramentas em ordem estáve
   const defs = toolsPara("ADMIN").map(toolDef);
   const b = requestBodyAssistente(["instruções", "guia"], defs, [{ role: "user", content: "oi" }]);
   assert.equal(b.model, "claude-haiku-5-5");
-  assert.equal(b.max_tokens, 1024);
+  assert.equal(b.max_tokens, 4096);
   assert.deepEqual(b.output_config, { effort: "low" });
   assert.deepEqual(b.system.at(-1)?.cache_control, { type: "ephemeral" });
   assert.ok(b.system.slice(0, -1).every((x) => !("cache_control" in x)));
