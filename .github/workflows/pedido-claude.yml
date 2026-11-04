@@ -4,7 +4,8 @@ name: Pedido -> Claude
 
 on:
   issues:
-    types: [labeled]
+    # opened cobre a issue já criada com as labels pela API; labeled cobre pôr a label à mão
+    types: [opened, labeled]
 
 permissions:
   contents: write
@@ -14,12 +15,14 @@ permissions:
 
 concurrency:
   group: pedido-claude-${{ github.event.issue.number }}
-  cancel-in-progress: false
+  # opened e labeled podem chegar juntos: o segundo cancela o primeiro (um só Claude por issue)
+  cancel-in-progress: true
 
 jobs:
   implementar:
     if: >-
-      github.event.label.name == 'claude' &&
+      ((github.event.action == 'labeled' && github.event.label.name == 'claude') ||
+       (github.event.action == 'opened' && contains(github.event.issue.labels.*.name, 'claude'))) &&
       github.event.sender.login == 'matheuslivingstone33-cloud' &&
       github.event.issue.user.login == 'matheuslivingstone33-cloud'
     runs-on: ubuntu-latest
