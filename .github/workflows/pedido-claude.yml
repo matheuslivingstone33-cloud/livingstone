@@ -56,7 +56,8 @@ jobs:
       - run: npx prisma db push --skip-generate
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Usa a assinatura do Claude (token de `claude setup-token`), não créditos de API
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: >-
             --max-turns 80
             --allowedTools "Read,Glob,Grep,Edit,Write,Task,TodoWrite,Bash(npm ci),Bash(npm run lint),Bash(npm test),Bash(npx tsc --noEmit),Bash(npm run build),Bash(npx prisma generate),Bash(npx prisma validate),Bash(npx prisma migrate diff:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git checkout -b pedido/*),Bash(git switch -c pedido/*),Bash(git push -u origin pedido/*),Bash(git push origin pedido/*),Bash(gh issue view:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr edit:*),Bash(ls:*)"

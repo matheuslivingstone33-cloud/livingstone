@@ -38,7 +38,8 @@ jobs:
       - run: npm ci --ignore-scripts
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Usa a assinatura do Claude (token de `claude setup-token`), não créditos de API
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: >-
             --max-turns 40
             --allowedTools "Read,Glob,Grep,Task,Edit(.claude/agents/**),Write(.claude/agents/**),Edit(.claude/skills/**),Write(.claude/skills/**),Edit(src/lib/assistente-guia.ts),Edit(CLAUDE.md),Bash(npm test),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(git commit:*),Bash(git switch -c melhoria-agentes/*),Bash(git checkout -b melhoria-agentes/*),Bash(git push -u origin melhoria-agentes/*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr create:*),Bash(gh issue view:*)"

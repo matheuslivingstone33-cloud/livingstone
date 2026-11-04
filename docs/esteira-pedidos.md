@@ -9,15 +9,19 @@ Faça tudo logado na conta **matheuslivingstone33-cloud**: o workflow só aceita
 
 ---
 
-## 1. Chave da Anthropic no GitHub
+## 1. Token da sua assinatura do Claude no GitHub
 
-1. Crie uma chave em https://console.anthropic.com/settings/keys (botão **Create Key**). Copie o valor.
-2. Defina um limite de gasto em https://console.anthropic.com/settings/limits (por exemplo, um teto mensal).
+A esteira usa a sua assinatura do Claude (a mesma do Claude Code), não créditos de API.
+
+1. No terminal do seu computador, com o Claude Code instalado, rode: `claude setup-token`
+2. Faça login na conta do Claude que deve ser usada. Copie o token que aparece (começa com `sk-ant-oat`).
 3. Abra https://github.com/matheuslivingstone33-cloud/livingstone/settings/secrets/actions
 4. Clique em **New repository secret**.
-   - Name: `ANTHROPIC_API_KEY`
-   - Secret: cole a chave.
+   - Name: `CLAUDE_CODE_OAUTH_TOKEN`
+   - Secret: cole o token.
 5. Clique em **Add secret**.
+
+O uso conta nos limites da sua assinatura. O secret antigo `ANTHROPIC_API_KEY` não é mais usado e pode ser apagado.
 
 ## 2. Instalar o app do Claude no GitHub
 
