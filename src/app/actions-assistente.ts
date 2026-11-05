@@ -31,7 +31,10 @@ import { pausarReguaServico } from "@/lib/servicos/regua";
 import { atualizarResumoServico } from "@/lib/servicos/resumo";
 import { diaSP, inicioDoDiaSP } from "@/lib/tz";
 import { UploadError, assertUploadTotal, readUpload } from "@/lib/upload";
-import { pdfPaginas } from "@/lib/pdf";
+import { pdfPaginas, pdfTextoPaginas } from "@/lib/pdf";
+import { createHash } from "node:crypto";
+import { ehPLQuickbooks, mensagemMesConferido, payloadDemonstrativo, resumoCartaoPL, type CartaoPL } from "@/lib/consolidado";
+import { gravarDemonstrativo } from "@/lib/demonstrativos-import";
 import {
   AnexoError,
   BIBLIOTECA_LIMITES,
@@ -52,11 +55,18 @@ import {
 export type PlanoTela = { id: string; titulo: string; descricao: string };
 export type EntendimentoTela = Entendimento & { pedidoId: string; versao: number };
 export type DocumentoTela = { id: string; titulo: string; explicacao: string; formato: FormatoDoc; colunas: ColunaDoc[]; frequencia?: string; uso?: string };
-export type RespostaAssistente = { ok: true; texto: string; plano?: PlanoTela; entendimento?: EntendimentoTela; documento?: DocumentoTela; executadoEm?: string } | { ok: false; erro: string };
+export type RespostaAssistente =
+  | { ok: true; texto: string; plano?: PlanoTela; entendimento?: EntendimentoTela; documento?: DocumentoTela; demonstrativo?: CartaoPL; destino?: string; executadoEm?: string }
+  | { ok: false; erro: string };
 
 const TEXTO_DOCUMENTO = "Registrei meu entendimento do documento abaixo. É isso?";
 const SO_CONSULTA_ANEXO = "Seu perfil só permite consultar. Anexar documentos é para analistas e administradores.";
 const TEXTO_ENTENDIMENTO = "Registrei meu entendimento abaixo. Confirme se é isso — fica registrado para a equipe avaliar.";
+
+const PERGUNTA_PADRAO = "O que é este documento?";
+const MAX_PL_PAGINAS = 10;
+const TEXTO_PL = "Este PDF é o Profit & Loss do QuickBooks. Confira o resumo abaixo e clique em Lançar no Consolidado; o mês entra como rascunho para você conferir. Vale por 10 minutos.";
+const mesAno = (ano: number, mes: number) => `${new Date(Date.UTC(ano, mes - 1, 15)).toLocaleString("pt-BR", { month: "long", timeZone: "UTC" })} de ${ano}`;
 
 const MAX_PERGUNTA = 1000;
 const FALHA: Record<string, string> = {
@@ -115,11 +125,29 @@ export async function enviarMensagem(form: FormData): Promise<RespostaAssistente
   return r;
 }
 
+/** Cartão do P&L do QuickBooks já preparado (plano criado) nesta troca. */
+type CartaoTroca = { plano: PlanoTela; demonstrativo: CartaoPL };
+
 async function processarMensagem(s: Session, form: FormData, reg: RegistroTroca): Promise<RespostaAssistente> {
+  const pre: { cartao: CartaoTroca | null } = { cartao: null };
+  const r = await processarTroca(s, form, reg, pre);
+  const c = pre.cartao;
+  if (!c) return r;
+  reg.fim = "pl_quickbooks";
+  // A IA propôs outra ação nesta mesma troca: fica a dela (o plano do P&L expira sem uso)
+  if (r.ok && r.plano && r.plano.id !== c.plano.id) return r;
+  reg.planoId = c.plano.id;
+  // A IA falhou ou não está configurada: o cartão continua valendo
+  if (!r.ok) return { ok: true, texto: TEXTO_PL, plano: c.plano, demonstrativo: c.demonstrativo };
+  return { ...r, plano: c.plano, demonstrativo: c.demonstrativo };
+}
+
+async function processarTroca(s: Session, form: FormData, reg: RegistroTroca, pre: { cartao: CartaoTroca | null }): Promise<RespostaAssistente> {
   const now = new Date();
   const arquivo = form.get("arquivo");
   const temArquivo = arquivo instanceof File && arquivo.size > 0;
-  const pergunta = String(form.get("mensagem") ?? "").trim() || (temArquivo ? "O que é este documento?" : "");
+  const digitada = String(form.get("mensagem") ?? "").trim();
+  const pergunta = digitada || (temArquivo ? PERGUNTA_PADRAO : "");
   // Daqui em diante, toda saída antes da IA é uma recusa registrada
   reg.pergunta = pergunta;
   reg.fim = "recusado";
@@ -148,6 +176,50 @@ async function processarMensagem(s: Session, form: FormData, reg: RegistroTroca)
     return { ok: false, erro: `Você chegou ao limite de ${limite} mensagens do assistente por hoje. Volte amanhã.` };
   }
 
+  // Arquivo lido antes da IA: o P&L do QuickBooks é reconhecido por regra, mesmo sem IA configurada
+  let f: Awaited<ReturnType<typeof readUpload>> = null;
+  let paginasPdf: number | undefined;
+  if (temArquivo) {
+    try {
+      assertUploadTotal([arquivo]);
+      f = await readUpload(arquivo, ["text", "xlsx", "pdf", "image"]);
+    } catch (e) {
+      if (e instanceof UploadError) return { ok: false, erro: e.message };
+      throw e;
+    }
+    if (f && f.mime === "application/pdf" && !/\/Encrypt\b/.test(f.data.toString("latin1"))) {
+      const n = await pdfPaginas(f.data);
+      if (n === null) return { ok: false, erro: "Não consegui abrir o PDF. Ele pode estar protegido por senha ou corrompido; remova a senha ou gere o arquivo de novo." };
+      paginasPdf = n;
+      if (operam && n <= MAX_PL_PAGINAS) {
+        const pl = ehPLQuickbooks(await pdfTextoPaginas(f.data));
+        if (pl.tipo === "erro") return { ok: true, texto: pl.mensagem };
+        if (pl.tipo === "ok") {
+          const r = pl.pl;
+          const existente = await db.demonstrativoPeriodo.findFirst({ where: { orgId: s.orgId, ano: r.ano, mes: r.mes }, select: { status: true } });
+          if (existente?.status === "CONFERIDO") return { ok: true, texto: mensagemMesConferido(r.ano, r.mes) };
+          const hash = createHash("sha256").update(f.data).digest("hex");
+          const row = await db.assistantPlan.create({
+            data: { orgId: s.orgId, userId: s.userId, acao: "importar_demonstrativo", payload: payloadDemonstrativo(r, hash), expiresAt: new Date(now.getTime() + PLANO_VALIDADE_MS) },
+            select: { id: true },
+          });
+          const cartao = resumoCartaoPL(r);
+          pre.cartao = {
+            plano: { id: row.id, titulo: ROTULO_ACAO.importar_demonstrativo, descricao: `${cartao.empresa ? `${cartao.empresa} · ` : ""}${mesAno(r.ano, r.mes)}` },
+            demonstrativo: cartao,
+          };
+          reg.planoId = row.id;
+          reg.anexo = { formato: "PDF", paginas: n, bytes: f.data.length };
+          // Sem texto da pessoa (ou só a pergunta padrão): responde com o cartão, sem IA
+          if (!digitada || digitada === PERGUNTA_PADRAO) {
+            await audit(s, "assistente.mensagem", `P&L do QuickBooks ${String(r.mes).padStart(2, "0")}/${r.ano} · plano ${row.id} · sem IA`);
+            return { ok: true, texto: TEXTO_PL };
+          }
+        }
+      }
+    }
+  }
+
   if (aiProvider() !== "claude") {
     if (temArquivo || docRaw) return { ok: false, erro: "Para ler documentos, a IA precisa estar configurada na instituição." };
     reg.fim = "sem_ia";
@@ -157,20 +229,10 @@ async function processarMensagem(s: Session, form: FormData, reg: RegistroTroca)
 
   // Anexo: tipo conferido pelos bytes; planilha vira cabeçalho + amostra mascarada, PDF/imagem vão inteiros
   let anexo: Anexo | null = null;
-  if (temArquivo) {
+  if (f) {
     try {
-      assertUploadTotal([arquivo]);
-      const f = await readUpload(arquivo, ["text", "xlsx", "pdf", "image"]);
-      if (f) {
-        let paginas: number | undefined;
-        if (f.mime === "application/pdf" && !/\/Encrypt\b/.test(f.data.toString("latin1"))) {
-          const n = await pdfPaginas(f.data);
-          if (n === null) return { ok: false, erro: "Não consegui abrir o PDF. Ele pode estar protegido por senha ou corrompido; remova a senha ou gere o arquivo de novo." };
-          paginas = n;
-        }
-        anexo = await prepararAnexo(f, { paginas });
-        reg.anexo = { formato: anexo.formato, ...(anexo.paginas ? { paginas: anexo.paginas } : {}), bytes: f.data.length };
-      }
+      anexo = await prepararAnexo(f, { paginas: paginasPdf });
+      reg.anexo = { formato: anexo.formato, ...(anexo.paginas ? { paginas: anexo.paginas } : {}), bytes: f.data.length };
     } catch (e) {
       if (e instanceof UploadError || e instanceof AnexoError) return { ok: false, erro: e.message };
       throw e;
@@ -230,7 +292,7 @@ async function processarMensagem(s: Session, form: FormData, reg: RegistroTroca)
   });
   Object.assign(reg, { fim: r.fim, ferramentas: r.ferramentas, passos: r.passos, custoUsd: r.custoUsd });
   // Só metadados: nunca a pergunta, a resposta nem o conteúdo do anexo
-  const meta = anexo ? ` · anexo ${anexo.formato}${anexo.paginas ? ` (${anexo.paginas} pág.)` : ""}` : rascunho ? " · ajuste de documento" : "";
+  const meta = (anexo ? ` · anexo ${anexo.formato}${anexo.paginas ? ` (${anexo.paginas} pág.)` : ""}` : rascunho ? " · ajuste de documento" : "") + (pre.cartao ? ` · P&L do QuickBooks (plano ${pre.cartao.plano.id})` : "");
   await audit(s, "assistente.mensagem", `Passos ${r.passos} · ferramentas ${r.ferramentas.join(", ") || "nenhuma"} · custo US$ ${r.custoUsd.toFixed(4)} · fim ${r.fim}${meta}`.slice(0, 500));
   if (r.fim === "limite") await audit(s, "assistente.limite", "Teto diário de IA da instituição atingido");
 
@@ -348,6 +410,13 @@ export async function confirmarPlano(planId: string): Promise<RespostaAssistente
   const uso = await db.assistantPlan.updateMany({ where: { id: p.id, orgId: s.orgId, userId: s.userId, status: "PENDENTE", expiresAt: { gt: now } }, data: { status: "EXECUTADO" } });
   if (uso.count !== 1) return { ok: false, erro: "Plano não encontrado ou já usado." };
 
+  if (plano.acao === "importar_demonstrativo") {
+    const g = await gravarDemonstrativo(s, plano.pl, plano.hash, { viaAssistente: true });
+    if (!g.ok) return { ok: false, erro: g.erro };
+    await audit(s, "assistente.acao_confirmada", `importar_demonstrativo ${String(plano.pl.mes).padStart(2, "0")}/${plano.pl.ano} via assistente`);
+    revalidatePath("/consolidado");
+    return { ok: true, texto: `Lançado no Consolidado como rascunho. Abrindo ${mesAno(plano.pl.ano, plano.pl.mes)} para você conferir.`, destino: `/consolidado/${g.id}`, executadoEm: now.toISOString() };
+  }
   const a = await ator(s);
   let texto: string;
   if (plano.acao === "gerar_proposta" && plano.alvo) {

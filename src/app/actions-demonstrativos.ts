@@ -10,7 +10,8 @@ import { ID_RE } from "@/lib/assistente";
 import { UploadError, readUpload } from "@/lib/upload";
 import { pdfTextoPaginas } from "@/lib/pdf";
 import { parseQuickbooksPL } from "@/lib/quickbooks-pl";
-import { flagDe, mapearQuickbooks, padroesQuickbooks, type Alerta, type ArvoreContas } from "@/lib/plano-contas";
+import type { Alerta } from "@/lib/plano-contas";
+import { gravarDemonstrativo } from "@/lib/demonstrativos-import";
 import { isClasse, mensagemErroImportacao, podeConferir } from "@/lib/consolidado";
 import type { Linhas } from "@/lib/demonstrativos";
 
@@ -34,48 +35,11 @@ export async function importarRelatorio(form: FormData) {
   const r = parseQuickbooksPL(paginas);
   if ("erro" in r) fail(BACK, mensagemErroImportacao(r));
 
-  const arvore: ArvoreContas = { moeda: r.moeda, contas: r.contas, secoes: r.secoes, resumo: r.resumo };
-  const { linhas, inferidas, alertas } = mapearQuickbooks(arvore);
   const hash = createHash("sha256").update(arquivo.data).digest("hex");
-  const dados = {
-    moeda: r.moeda,
-    origem: "quickbooks_pl",
-    empresa: r.empresa.slice(0, 200) || null,
-    linhas,
-    contas: arvore,
-    inferidas,
-    alertas,
-    arquivoHash: hash,
-    criadoPor: s.userId,
-    aceiteAlertas: false,
-  };
-
-  const atual = await db.demonstrativoPeriodo.findFirst({ where: { orgId: s.orgId, ano: r.ano, mes: r.mes }, select: { id: true, status: true } });
-  const conferido = `${String(r.mes).padStart(2, "0")}/${r.ano} já está conferido. Reabra o mês antes de enviar o relatório de novo.`;
-  if (atual?.status === "CONFERIDO") fail(BACK, conferido);
-  let id: string;
-  if (atual) {
-    const up = await db.demonstrativoPeriodo.updateMany({ where: { id: atual.id, orgId: s.orgId, status: "RASCUNHO" }, data: dados });
-    if (up.count !== 1) fail(BACK, conferido);
-    id = atual.id;
-  } else {
-    try {
-      id = (await db.demonstrativoPeriodo.create({ data: { ...dados, orgId: s.orgId, ano: r.ano, mes: r.mes }, select: { id: true } })).id;
-    } catch {
-      fail(BACK, "Outro envio do mesmo mês chegou ao mesmo tempo. Atualize a página e tente de novo.");
-    }
-  }
-
-  // Contas novas entram com o padrão do QuickBooks; as já classificadas pela org não mudam.
-  const padrao = padroesQuickbooks(arvore);
-  await db.classificacaoConta.createMany({
-    data: arvore.contas.filter((c) => c.secao !== "income").map((c) => ({ orgId: s.orgId, conta: c.caminho, classe: padrao[c.caminho] ?? "nao_classificada", atencao: flagDe(c.nome), updatedBy: s.userId })),
-    skipDuplicates: true,
-  });
-
-  await audit(s, "demonstrativo.importado", `${String(r.mes).padStart(2, "0")}/${r.ano} · ${arvore.contas.length} contas`);
+  const g = await gravarDemonstrativo(s, r, hash);
+  if (!g.ok) fail(BACK, g.erro);
   revalidatePath(BACK);
-  redirect(`${BACK}/${id}`);
+  redirect(`${BACK}/${g.id}`);
 }
 
 /** Salva as classes da tela de classificação (campos "classe::<conta>"). */

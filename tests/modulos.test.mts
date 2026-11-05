@@ -4014,3 +4014,67 @@ test("Consolidado: ponta a ponta com a demo (páginas → parse → mapear → c
   const linhaPe = abas[1].data.find((l) => l[0] === "Ponto de equilíbrio contábil")!;
   pertoRel(linhaPe[9] as number, pe);
 });
+
+// ---------- Consolidado: P&L do QuickBooks anexado no assistente ----------
+import { ehPLQuickbooks, lerPayloadDemonstrativo, mensagemMesConferido, payloadDemonstrativo, resumoCartaoPL } from "../src/lib/consolidado";
+
+const HASH_PL = "a".repeat(64);
+
+test("Consolidado no assistente: P&L da demo vira cartão com mês, empresa, receita e lucro líquido", async () => {
+  const paginas = await pdfTextoPaginas(demo("quickbooks_pl_2026_09.pdf"));
+  assert.ok(paginas.length <= 10, "a demo cabe no limite de páginas do assistente");
+  const r = ehPLQuickbooks(paginas);
+  assert.equal(r.tipo, "ok");
+  const pl = (r as Extract<typeof r, { tipo: "ok" }>).pl;
+  const c = resumoCartaoPL(pl);
+  assert.deepEqual([c.ano, c.mes, c.moeda, c.receita, c.lucroLiquido], [2026, 9, "USD", 209330.5, -17033.64]);
+  assert.equal(c.empresa, pl.empresa);
+  assert.ok(c.empresa.length > 0);
+  assert.equal(mensagemMesConferido(2026, 9), "09/2026 já está conferido. Reabra o mês antes de enviar o relatório de novo.");
+});
+
+test("Consolidado no assistente: P&L de vários meses dá erro amigável; outro PDF segue o fluxo normal", async () => {
+  const cab = "Acme LLC\nProfit and Loss\nJanuary - September 2026\nIncome\nFees 1.00\nTotal Income 1.00\nNet Income 1.00";
+  const r = ehPLQuickbooks([cab]);
+  assert.equal(r.tipo, "erro");
+  assert.match((r as { mensagem: string }).mensagem, /mais de um mês/);
+  assert.deepEqual(ehPLQuickbooks(await pdfTextoPaginas(demo("dre_balanco_2026_01.pdf"))), { tipo: "nao_qb" });
+  assert.deepEqual(ehPLQuickbooks([]), { tipo: "nao_qb" });
+});
+
+test("Consolidado no assistente: lerPlano da ação importar_demonstrativo aceita o válido e recusa adulterado", async () => {
+  const r = ehPLQuickbooks(await pdfTextoPaginas(demo("quickbooks_pl_2026_09.pdf")));
+  const pl = (r as Extract<typeof r, { tipo: "ok" }>).pl;
+  // Ida e volta pelo JSON, como no banco
+  const payload = JSON.parse(JSON.stringify(payloadDemonstrativo(pl, HASH_PL)));
+  const lido = lerPlano("importar_demonstrativo", payload);
+  assert.ok(lido && lido.acao === "importar_demonstrativo");
+  assert.equal(lido.hash, HASH_PL);
+  assert.deepEqual([lido.pl.ano, lido.pl.mes, lido.pl.contas.length, lido.pl.resumo.net_income], [2026, 9, pl.contas.length, -17033.64]);
+  assert.deepEqual(lerPayloadDemonstrativo(payload)?.pl.contas, pl.contas);
+  for (const ruim of [
+    { ...payload, mes: 13 },
+    { ...payload, mes: 0 },
+    { ...payload, contas: "x" },
+    { ...payload, contas: { 0: payload.contas[0] } },
+    { ...payload, empresa: "x".repeat(201) },
+    { ...payload, contas: [{ ...payload.contas[0], nome: "x".repeat(10_000) }] },
+    { ...payload, hash: "nao-e-hash" },
+    { ...payload, moeda: "EUR" },
+    { ...payload, resumo: { net_income: "1" } },
+    null,
+  ])
+    assert.equal(lerPlano("importar_demonstrativo", ruim), null);
+  // A IA não pode propor esta ação
+  assert.ok(!(ACOES as string[]).includes("importar_demonstrativo"));
+});
+
+test("Consolidado no assistente: plano expirado, de outra pessoa ou já executado não roda", () => {
+  const now = new Date("2026-11-05T12:00:00Z");
+  const s = { orgId: "org1", userId: "u1" };
+  const p = { orgId: "org1", userId: "u1", status: "PENDENTE", expiresAt: new Date(now.getTime() + 60_000) };
+  assert.equal(decidirPlano(p, s, now), "ok");
+  assert.equal(decidirPlano({ ...p, expiresAt: new Date(now.getTime() - 1) }, s, now), "expirado");
+  assert.equal(decidirPlano({ ...p, userId: "u2" }, s, now), "outro_usuario");
+  assert.equal(decidirPlano({ ...p, status: "EXECUTADO" }, s, now), "usado");
+});

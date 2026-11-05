@@ -6,15 +6,21 @@ import { untrusted } from "./ai-prompt";
 import type { ApiMessage, MessagesResult, MsgBlock, ToolDef } from "./ai";
 import { GUIA_ASSISTENTE } from "./assistente-guia";
 import { entendimentoDe, type Entendimento } from "./pedidos";
+import { lerPayloadDemonstrativo } from "./consolidado";
+import type { PlQuickbooks } from "./quickbooks-pl";
 
 export type Papel = "ADMIN" | "ANALISTA" | "AUDITOR";
 export type TipoTool = "consulta" | "acao" | "registro";
 export type Acao = "gerar_proposta" | "pausar_regua" | "atualizar_resumo";
 export const ACOES: Acao[] = ["gerar_proposta", "pausar_regua", "atualizar_resumo"];
-export const ROTULO_ACAO: Record<Acao, string> = {
+/** Ações de plano criadas pelo sistema (nunca propostas pela IA): ficam fora de ACOES. */
+export type AcaoSistema = "importar_demonstrativo";
+export type AcaoPlano = Acao | AcaoSistema;
+export const ROTULO_ACAO: Record<AcaoPlano, string> = {
   gerar_proposta: "Gerar proposta de acordo",
   pausar_regua: "Pausar a régua de cobrança",
   atualizar_resumo: "Atualizar o resumo do dia",
+  importar_demonstrativo: "Lançar no Consolidado",
 };
 
 /** Ids do banco (cuid). */
@@ -356,8 +362,16 @@ export function decidirPlano(
   return "ok";
 }
 
+/** Plano do P&L anexado: a árvore já lida e o hash do PDF (o PDF não é guardado). */
+export type PlanoDemonstrativo = { acao: "importar_demonstrativo"; pl: PlQuickbooks; hash: string };
+export type PlanoSalvo = Plano | PlanoDemonstrativo;
+
 /** Payload salvo no banco → plano (ou null se adulterado). */
-export function lerPlano(acao: string, payload: unknown): Plano | null {
+export function lerPlano(acao: string, payload: unknown): PlanoSalvo | null {
+  if (acao === "importar_demonstrativo") {
+    const d = lerPayloadDemonstrativo(payload);
+    return d ? { acao, ...d } : null;
+  }
   if (!ACOES.includes(acao as Acao) || !payload || typeof payload !== "object") return null;
   const o = payload as Record<string, unknown>;
   const v = validarEntrada("propor_acao", { acao, alvo: o.alvo, motivo: o.motivo, resumo: o.resumo || "-" });

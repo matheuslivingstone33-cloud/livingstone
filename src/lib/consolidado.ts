@@ -1,8 +1,8 @@
 // Consolidado Financeiro: regras da tela (mensagens, validação de classe, moeda do ano, conferência e montagem dos
 // períodos com a classificação da org). Lógica pura: sem banco, sessão, Next nem IA.
 import { checarIdentidades, kpis, kpisOpcionais, kpisTrimestre, type Kpi, type Kpis, type Linhas, type Motivo, type Periodo, type StatusPeriodo } from "./demonstrativos";
-import { aplicarClassificacao, classificar, distribuicoes, type Alerta, type ArvoreContas, type Classe } from "./plano-contas";
-import type { ResultadoQuickbooks } from "./quickbooks-pl";
+import { SECOES, aplicarClassificacao, classificar, distribuicoes, totalSecao, type Alerta, type ArvoreContas, type Classe, type Conta, type Secao } from "./plano-contas";
+import { parseQuickbooksPL, type PlQuickbooks, type ResultadoQuickbooks } from "./quickbooks-pl";
 import { isMoeda, type Moeda } from "./moeda";
 
 // ---------- Textos ----------
@@ -70,6 +70,93 @@ export function mensagemErroImportacao(r: Extract<ResultadoQuickbooks, { erro: s
   const lista = r.divergencias.slice(0, 3).map((d) => `${d.chave} (soma ${fmtNum(d.esperado)}, total impresso ${fmtNum(d.encontrado)})`);
   return `${base}. Os totais não batem em: ${lista.join("; ")}.`;
 }
+
+/** Mês já conferido: o relatório não pode ser reenviado sem reabrir. */
+export const mensagemMesConferido = (ano: number, mes: number) => `${String(mes).padStart(2, "0")}/${ano} já está conferido. Reabra o mês antes de enviar o relatório de novo.`;
+
+// ---------- P&L anexado no assistente ----------
+
+const PL_RE = /profit\s*(&|and)\s*loss/i;
+
+/**
+ * O PDF anexado é um P&L do QuickBooks? nao_qb = não parece (segue o fluxo normal do assistente);
+ * erro = parece, mas não dá para lançar (mensagem amigável); ok = árvore pronta para lançar.
+ */
+export function ehPLQuickbooks(paginas: string[]): { tipo: "nao_qb" } | { tipo: "erro"; mensagem: string } | { tipo: "ok"; pl: PlQuickbooks } {
+  const texto = paginas.join("\n");
+  if (!PL_RE.test(texto) || !/net income/i.test(texto)) return { tipo: "nao_qb" };
+  const r = parseQuickbooksPL(paginas);
+  if ("erro" in r) return { tipo: "erro", mensagem: mensagemErroImportacao(r) };
+  return { tipo: "ok", pl: r };
+}
+
+export type CartaoPL = { ano: number; mes: number; empresa: string; moeda: Moeda; receita: number; lucroLiquido: number | null };
+
+/** Números do cartão "Lançar no Consolidado": receita (total de Income) e lucro líquido (Net Income). */
+export function resumoCartaoPL(r: PlQuickbooks): CartaoPL {
+  return { ano: r.ano, mes: r.mes, empresa: r.empresa.slice(0, 200), moeda: r.moeda, receita: totalSecao(r, "income"), lucroLiquido: r.resumo.net_income ?? null };
+}
+
+const LIM = { contas: 5000, texto: 500, caminho: 2000, filhas: 1000 };
+const txt = (v: unknown, max = LIM.texto): v is string => typeof v === "string" && v.length <= max;
+const numero = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+const RESUMO = ["gross_profit", "net_ordinary", "net_other", "net_income"];
+
+function contaValida(v: unknown): v is Conta {
+  if (!v || typeof v !== "object") return false;
+  const c = v as Record<string, unknown>;
+  return (
+    txt(c.caminho, LIM.caminho) &&
+    txt(c.nome) &&
+    (SECOES as readonly unknown[]).includes(c.secao) &&
+    (c.pai === null || txt(c.pai, LIM.caminho)) &&
+    Number.isInteger(c.nivel) &&
+    (c.nivel as number) >= 0 &&
+    (c.nivel as number) <= 50 &&
+    numero(c.valor) &&
+    (c.total === undefined || numero(c.total)) &&
+    Array.isArray(c.filhas) &&
+    c.filhas.length <= LIM.filhas &&
+    c.filhas.every((f) => txt(f, LIM.caminho))
+  );
+}
+
+const mapaNumerico = (v: unknown, chaves: readonly string[]) =>
+  !!v && typeof v === "object" && !Array.isArray(v) && Object.entries(v).every(([k, x]) => chaves.includes(k) && numero(x));
+
+/** Payload salvo do plano "importar_demonstrativo" → P&L e hash (null se adulterado ou fora dos limites). */
+export function lerPayloadDemonstrativo(payload: unknown): { pl: PlQuickbooks; hash: string } | null {
+  if (!payload || typeof payload !== "object") return null;
+  const o = payload as Record<string, unknown>;
+  if (typeof o.hash !== "string" || !/^[a-f0-9]{64}$/.test(o.hash)) return null;
+  if (!Number.isInteger(o.ano) || (o.ano as number) < 1900 || (o.ano as number) > 2200) return null;
+  if (!Number.isInteger(o.mes) || (o.mes as number) < 1 || (o.mes as number) > 12) return null;
+  if (!txt(o.empresa, 200) || !isMoeda(o.moeda)) return null;
+  if (!Array.isArray(o.contas) || o.contas.length > LIM.contas || !o.contas.every(contaValida)) return null;
+  if (!mapaNumerico(o.secoes, SECOES) || !mapaNumerico(o.resumo, RESUMO)) return null;
+  const pl: PlQuickbooks = {
+    ano: o.ano as number,
+    mes: o.mes as number,
+    empresa: o.empresa,
+    moeda: o.moeda,
+    contas: o.contas as Conta[],
+    secoes: o.secoes as Partial<Record<Secao, number>>,
+    resumo: o.resumo as PlQuickbooks["resumo"],
+  };
+  return { pl, hash: o.hash };
+}
+
+/** P&L e hash → payload do plano (a árvore já lida; o PDF não é guardado). */
+export const payloadDemonstrativo = (pl: PlQuickbooks, hash: string) => ({
+  ano: pl.ano,
+  mes: pl.mes,
+  empresa: pl.empresa.slice(0, 200),
+  moeda: pl.moeda,
+  contas: pl.contas,
+  secoes: pl.secoes,
+  resumo: pl.resumo,
+  hash,
+});
 
 // ---------- Moeda do ano ----------
 

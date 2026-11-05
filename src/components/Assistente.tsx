@@ -1,10 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { confirmarDocumento, confirmarPlano, enviarMensagem, type DocumentoTela, type EntendimentoTela, type PlanoTela } from "@/app/actions-assistente";
 import { ajustarEntendimento, confirmarEntendimento } from "@/app/actions-pedidos";
 import { blocosDoTexto, protocoloDe } from "@/lib/assistente-formato";
 import { fmtDataHora } from "@/lib/tz";
+import { fmtMoeda } from "@/lib/moeda";
+import type { CartaoPL } from "@/lib/consolidado";
 import { MAX_UPLOAD_BYTES, formatBytes, uploadSizeError } from "@/lib/upload-limits";
 import { Icon } from "./Icon";
 
@@ -17,7 +20,7 @@ const ROTULO_FORMATO: Record<string, string> = { PLANILHA: "Planilha", PDF: "PDF
 type Msg = {
   role: "user" | "assistant";
   texto: string;
-  plano?: PlanoTela & { estado: "pendente" | "feito" | "cancelado"; comprovante?: Comprovante };
+  plano?: PlanoTela & { estado: "pendente" | "feito" | "cancelado"; comprovante?: Comprovante; demonstrativo?: CartaoPL };
   entendimento?: EntendimentoTela & { estado: EstadoEntendimento };
   documento?: DocumentoTela & { estado: EstadoDocumento };
   anexo?: string;
@@ -56,6 +59,7 @@ export function Assistente({
   perfil: string;
   instituicao: string;
 }) {
+  const router = useRouter();
   const [aberto, setAberto] = useState(false);
   const [atalhos, setAtalhos] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -159,7 +163,7 @@ export function Assistente({
       setMsgs((m) => [
         ...m,
         r.ok
-          ? { role: "assistant", texto: r.texto, plano: r.plano ? { ...r.plano, estado: "pendente" } : undefined, entendimento: r.entendimento ? { ...r.entendimento, estado: "pendente" } : undefined, documento: r.documento ? { ...r.documento, estado: "pendente" } : undefined }
+          ? { role: "assistant", texto: r.texto, plano: r.plano ? { ...r.plano, ...(r.demonstrativo ? { demonstrativo: r.demonstrativo } : {}), estado: "pendente" } : undefined, entendimento: r.entendimento ? { ...r.entendimento, estado: "pendente" } : undefined, documento: r.documento ? { ...r.documento, estado: "pendente" } : undefined }
           : { role: "assistant", texto: r.erro, erro: true },
       ]);
     } catch {
@@ -183,6 +187,7 @@ export function Assistente({
         setMsgs((m) => m.map((x) => (x.plano?.id === id ? { ...x, plano: { ...x.plano, comprovante: c } } : x)));
       }
       setMsgs((m) => [...m, r.ok ? { role: "assistant", texto: r.texto } : { role: "assistant", texto: r.erro, erro: true }]);
+      if (r.ok && r.destino) router.push(r.destino);
     } catch {
       setMsgs((m) => [...m, { role: "assistant", texto: "Não consegui confirmar agora. Tente de novo.", erro: true }]);
     } finally {
@@ -385,13 +390,14 @@ export function Assistente({
                         <div className="px-3.5 py-3">
                           <p className="font-semibold text-ink-900">{m.plano.titulo}</p>
                           <p className="mt-1 leading-relaxed text-ink-700">{m.plano.descricao}</p>
+                          {m.plano.demonstrativo && <ResumoPL d={m.plano.demonstrativo} />}
                           {m.plano.estado === "pendente" ? (
                             podeConfirmar ? (
                               <>
                                 <div className="mt-3 flex flex-wrap gap-2">
                                   <button type="button" className="btn" disabled={pensando} onClick={() => confirmar(m.plano!.id)}>
                                     <Icon name="check" size={14} />
-                                    Confirmar
+                                    {m.plano.demonstrativo ? "Lançar no Consolidado" : "Confirmar"}
                                   </button>
                                   <button type="button" className="btn-ghost" disabled={pensando} onClick={() => cancelar(m.plano!.id)}>
                                     Cancelar
@@ -608,6 +614,27 @@ function TextoAssistente({ texto }: { texto: string }) {
 }
 
 /** Comprovante da ação confirmada, no formato de recibo de transferência. */
+/** Resumo do P&L do QuickBooks no cartão "Lançar no Consolidado": mês por extenso, empresa, receita e lucro líquido. */
+function ResumoPL({ d }: { d: CartaoPL }) {
+  const mes = new Date(Date.UTC(d.ano, d.mes - 1, 15)).toLocaleString("pt-BR", { month: "long", timeZone: "UTC" });
+  const linhas: [string, string][] = [
+    ["Mês", `${mes.charAt(0).toUpperCase()}${mes.slice(1)} de ${d.ano}`],
+    ...(d.empresa ? ([["Empresa", d.empresa]] as [string, string][]) : []),
+    ["Receita", fmtMoeda(d.receita, d.moeda)],
+    ["Lucro líquido", d.lucroLiquido === null ? "—" : fmtMoeda(d.lucroLiquido, d.moeda)],
+  ];
+  return (
+    <dl className="mt-3 space-y-1.5 rounded-lg bg-paper px-3 py-2.5 text-[13px] tabular-nums ring-1 ring-line">
+      {linhas.map(([rotulo, valor]) => (
+        <div key={rotulo} className="flex justify-between gap-3">
+          <dt className="shrink-0 text-ink-500">{rotulo}</dt>
+          <dd className="min-w-0 truncate text-right font-medium text-ink-900">{valor}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 function ComprovanteCartao({ titulo, descricao, c }: { titulo: string; descricao: string; c: Comprovante }) {
   return (
     <div className="mt-2 drop-shadow-[0_4px_10px_rgba(10,31,44,0.12)]">
