@@ -1,7 +1,7 @@
 // Textos de ajuda de cada aba ("Para que serve"). Puro: sem banco, sem Next.
 // Só descrevem o que a tela já faz; nada de prometer capacidade que não existe.
 
-export type Aba = "dashboard" | "conciliacao" | "cobranca" | "pld" | "credito" | "legado" | "auditoria" | "configuracoes" | "usuarios";
+export type Aba = "dashboard" | "conciliacao" | "cobranca" | "pld" | "credito" | "legado" | "auditoria" | "configuracoes" | "usuarios" | "consolidado";
 
 export type Exemplo = { href: `/demo/${string}`; rotulo: string };
 
@@ -24,6 +24,7 @@ const CNAB: Exemplo = { href: "/demo/retorno_cnab400.ret", rotulo: "retorno do b
 const ESPERADOS_COOP: Exemplo = { href: "/demo/esperados_cooperativa.csv", rotulo: "lista de títulos esperados de uma cooperativa (CSV)" };
 const EXTRATO_COOP: Exemplo = { href: "/demo/extrato_cooperativa.xlsx", rotulo: "extrato do mesmo mês em planilha (.xlsx)" };
 const OFX: Exemplo = { href: "/demo/extrato.ofx", rotulo: "extrato OFX de exemplo" };
+const QUICKBOOKS_PL: Exemplo = { href: "/demo/quickbooks_pl_2026_09.pdf", rotulo: "Profit & Loss de exemplo do QuickBooks (PDF)" };
 
 export const AJUDA: Record<Aba, Ajuda> = {
   dashboard: {
@@ -113,5 +114,16 @@ export const AJUDA: Record<Aba, Ajuda> = {
     ],
     passos: ["Preencha nome, e-mail, senha e perfil.", "Clique em Adicionar.", "Altere o perfil, desative ou encerre sessões quando precisar."],
     vazio: { texto: "Nenhum usuário além de você." },
+  },
+  consolidado: {
+    titulo: "Consolidado financeiro",
+    frases: [
+      "Junta o resultado de cada mês (o relatório Profit & Loss do QuickBooks, em PDF) e calcula margens, EBITDA e ponto de equilíbrio por mês e por trimestre.",
+      "Cada mês só entra nos indicadores e no Excel depois que uma pessoa confere os números e marca Conferido.",
+      "Para o ponto de equilíbrio, diga uma vez se cada conta é custo fixo, variável ou fica fora do cálculo; vale para todos os meses.",
+    ],
+    passos: ["Envie o PDF do Profit & Loss de um único mês.", "Confira as contas e os pontos de atenção e clique em Conferido, é isso.", "Classifique as contas pendentes e baixe o Excel do ano."],
+    exemplos: [QUICKBOOKS_PL],
+    vazio: { texto: "Nenhum mês enviado ainda. Envie o Profit & Loss de um mês para começar.", exemplo: QUICKBOOKS_PL },
   },
 };

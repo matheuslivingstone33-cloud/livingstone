@@ -44,6 +44,8 @@ model Organization {
   collectionRunLockUntil DateTime?
   collectionMessages CollectionMessage[]
   reconLayouts ReconLayout[]
+  demonstrativos DemonstrativoPeriodo[]
+  classificacoesConta ClassificacaoConta[]
 }
 
 model User {
@@ -566,4 +568,45 @@ model AssistantMessageLog {
 
   @@index([orgId, userId, createdAt])
   @@index([createdAt])
+}
+
+// Consolidado Financeiro: um demonstrativo por mês (P&L do QuickBooks ou manual). O PDF não é guardado, só o hash.
+model DemonstrativoPeriodo {
+  id            String       @id @default(cuid())
+  orgId         String
+  org           Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  ano           Int
+  mes           Int
+  moeda         String       @default("BRL")
+  status        String       @default("RASCUNHO") // RASCUNHO | CONFERIDO
+  origem        String // quickbooks_pl | manual
+  empresa       String?
+  linhas        Json
+  contas        Json?
+  inferidas     Json?
+  alertas       Json?
+  arquivoHash   String?
+  criadoPor     String
+  conferidoPor  String?
+  conferidoEm   DateTime?
+  aceiteAlertas Boolean      @default(false)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@unique([orgId, ano, mes])
+  @@index([orgId, ano])
+}
+
+// Classe de cada conta do plano (caminho) para o ponto de equilíbrio: variavel | fixo | fora | nao_classificada.
+model ClassificacaoConta {
+  id        String       @id @default(cuid())
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  conta     String
+  classe    String       @default("nao_classificada")
+  atencao   String?
+  updatedAt DateTime     @updatedAt
+  updatedBy String
+
+  @@unique([orgId, conta])
 }

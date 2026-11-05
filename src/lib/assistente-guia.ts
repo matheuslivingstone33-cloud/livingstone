@@ -11,6 +11,7 @@ const ROTA: Record<Aba, string> = {
   auditoria: "/auditoria",
   configuracoes: "/configuracoes",
   usuarios: "/usuarios",
+  consolidado: "/consolidado",
 };
 
 const ABAS = Object.keys(AJUDA) as Aba[];

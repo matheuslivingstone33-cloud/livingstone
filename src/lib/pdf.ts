@@ -20,3 +20,14 @@ export async function pdfPaginas(data: Buffer): Promise<number | null> {
     return null;
   }
 }
+
+/** Texto de cada página, na ordem. [] = protegido por senha, corrompido ou sem texto. */
+export async function pdfTextoPaginas(data: Buffer): Promise<string[]> {
+  try {
+    const pdf = await getDocumentProxy(new Uint8Array(data));
+    const { text } = await extractText(pdf, { mergePages: false });
+    return text;
+  } catch {
+    return [];
+  }
+}

@@ -1346,7 +1346,7 @@ test("Idempotência: janela de 10 s para nova proposta", () => {
 });
 
 test("Ajuda das abas: 2–3 frases, 3 passos, exemplos existentes e sem texto vazio", () => {
-  const abas = ["dashboard", "conciliacao", "cobranca", "pld", "credito", "legado", "auditoria", "configuracoes", "usuarios"] as const;
+  const abas = ["dashboard", "conciliacao", "cobranca", "pld", "credito", "legado", "auditoria", "configuracoes", "usuarios", "consolidado"] as const;
   assert.deepEqual(Object.keys(AJUDA).sort(), [...abas].sort());
   for (const aba of abas) {
     const a = AJUDA[aba];
@@ -3925,4 +3925,92 @@ test("QuickBooks P&L: cabeçalho no fim da página (como sai do PDF real) també
   assert.ok(!("erro" in r), JSON.stringify(r));
   const pl = r as PlQuickbooks;
   assert.deepEqual([pl.mes, pl.ano, pl.moeda, pl.resumo.net_income], [9, 2026, "USD", 350]);
+});
+
+// ---------- Consolidado Financeiro (etapa final: regras da tela) ----------
+import { CLASSES, alertasAtencao, isClasse, kpisDoAno, mapaDeClasses, mensagemErroImportacao, moedaUnica, motivoAmigavel, pendentesDoAno, podeConferir, prepararPeriodos, T as T_CONSOLIDADO } from "../src/lib/consolidado";
+import { pdfTextoPaginas } from "../src/lib/pdf";
+
+test("Consolidado: motivo amigável para cada motivo, em pt e en, e vazio quando há valor", () => {
+  assert.equal(motivoAmigavel({ valor: null, motivo: "sem_balanco" }), "sem balanço: envie o Balance Sheet");
+  assert.equal(motivoAmigavel({ valor: null, motivo: "contas_nao_classificadas" }), "classifique as contas pendentes");
+  assert.equal(motivoAmigavel({ valor: 0.2 }), "");
+  assert.equal(motivoAmigavel(undefined), "");
+  assert.equal(motivoAmigavel({ valor: null }), T_CONSOLIDADO.pt.motivo.linha_ausente);
+  assert.deepEqual(Object.keys(T_CONSOLIDADO.pt.motivo).sort(), Object.keys(T_CONSOLIDADO.en.motivo).sort());
+  for (const m of Object.keys(T_CONSOLIDADO.pt.motivo)) assert.ok(motivoAmigavel({ valor: null, motivo: m as "sem_balanco" }, "en").length > 0);
+});
+
+test("Consolidado: validação de classe e mapa da org ignora classe desconhecida", () => {
+  assert.deepEqual([...CLASSES], ["fixo", "variavel", "fora", "nao_classificada"]);
+  for (const c of CLASSES) assert.ok(isClasse(c));
+  for (const c of ["", "Fixo", "variável", null, 1, "outro"]) assert.equal(isClasse(c), false);
+  assert.deepEqual(mapaDeClasses([{ conta: "a", classe: "fixo" }, { conta: "b", classe: "xx" }]), { a: "fixo" });
+});
+
+test("Consolidado: moeda única, mistura de moedas e ano vazio", () => {
+  assert.equal(moedaUnica([]), null);
+  assert.equal(moedaUnica([{ moeda: "USD" }, { moeda: "USD" }]), "USD");
+  assert.equal(moedaUnica([{ moeda: "USD" }, { moeda: "BRL" }]), "mista");
+  assert.equal(moedaUnica([{ moeda: "EUR" }]), "mista");
+});
+
+test("Consolidado: mensagens de erro da importação (layout, período, até 3 divergências)", () => {
+  assert.equal(mensagemErroImportacao({ erro: "layout_desconhecido" }), "Formato não reconhecido: envie o relatório Profit & Loss do QuickBooks de um único mês");
+  assert.match(mensagemErroImportacao({ erro: "periodo_nao_mensal" }), /mais de um mês/);
+  assert.match(mensagemErroImportacao({ erro: "sem_periodo" }), /mês no cabeçalho/);
+  const d = (chave: string) => ({ chave, esperado: 10, encontrado: 12, diferenca: 2 });
+  const m = mensagemErroImportacao({ erro: "layout_desconhecido", divergencias: [d("a"), d("b"), d("c"), d("quarta")] });
+  assert.match(m, /^Formato não reconhecido/);
+  assert.ok(m.includes("a (soma 10,00, total impresso 12,00)") && m.includes("c (") && !m.includes("quarta"));
+});
+
+test("Consolidado: ponta a ponta com a demo (páginas → parse → mapear → classificar → KPIs → XLSX)", async () => {
+  const { default: readXlsxFile } = await import("read-excel-file/node");
+  const paginas = await pdfTextoPaginas(demo("quickbooks_pl_2026_09.pdf"));
+  assert.ok(paginas.length > 1, "a demo tem mais de uma página");
+  const r = parseQuickbooksPL(paginas);
+  assert.ok(!("erro" in r), JSON.stringify(r));
+  const pl = r as PlQuickbooks;
+  assert.deepEqual([pl.ano, pl.mes, pl.moeda], [2026, 9, "USD"]);
+  const { linhas, alertas } = mapearQuickbooks(pl);
+  // Conferência: identidades ok; com Ask My Accountant e Shareholder Distributions, exige o aceite.
+  assert.deepEqual(alertasAtencao(alertas).map((a) => a.codigo), ["suspensa", "distribuicao"]);
+  assert.deepEqual(podeConferir(linhas, alertas, false), { ok: false, problema: "aceite" });
+  assert.deepEqual(podeConferir(linhas, alertas, true), { ok: true });
+  assert.deepEqual(podeConferir({ ...linhas, lucro_liquido: 1 }, alertas, true), { ok: false, problema: "identidades" });
+  assert.deepEqual(podeConferir(linhas, [], false), { ok: true });
+
+  const reg = { ano: 2026, mes: 9, status: "CONFERIDO", linhas, contas: pl };
+  // Sem classificar: ponto de equilíbrio bloqueado com o motivo amigável; ROE sem balanço.
+  const [p0] = prepararPeriodos([reg], {});
+  assert.equal(p0.pendentes.length, 17);
+  const ano0 = kpisDoAno(2026, [p0]);
+  const set = ano0.meses[8];
+  assert.equal(motivoAmigavel(set.kpis!.ponto_equilibrio), "classifique as contas pendentes");
+  assert.equal(motivoAmigavel(set.kpis!.roe), "sem balanço: envie o Balance Sheet");
+  assert.equal(set.lucro, -17033.64);
+  pertoRel(set.ajustado!.valor, 42966.36);
+  assert.equal(ano0.meses[0].kpis, null);
+  assert.equal(ano0.trimestres[2].situacao, "parcial (1/3)");
+  assert.equal(motivoAmigavel(ano0.trimestres[2].kpis!.ponto_equilibrio), "classifique as contas pendentes");
+  assert.equal(ano0.trimestres[0].kpis, null);
+
+  // Classificando tudo (mapa da org): ponto de equilíbrio calculado, mês e trimestre iguais.
+  const mapa = Object.fromEntries(p0.pendentes.map((c) => [c, "fixo" as Classe]));
+  const [p1] = prepararPeriodos([reg], mapa);
+  assert.deepEqual(pendentesDoAno(2026, [p1]), []);
+  const ano1 = kpisDoAno(2026, [p1]);
+  const pe = ano1.meses[8].kpis!.ponto_equilibrio.valor!;
+  pertoRel(pe, 123506.21 / ((209330.5 - 38855.75) / 209330.5));
+  pertoRel(ano1.trimestres[2].kpis!.ponto_equilibrio.valor, pe);
+  // Rascunho não entra.
+  assert.equal(kpisDoAno(2026, prepararPeriodos([{ ...reg, status: "RASCUNHO" }], mapa)).meses[8].kpis, null);
+
+  const buf = montarPlanilhaConsolidada(2026, [p1], { moeda: "USD", pendentesClassificacao: pendentesDoAno(2026, [p1]), contas: { arvore: pl, classes: classificar(pl, mapa).classes } });
+  const abas = await readXlsxFile(buf);
+  assert.deepEqual(abas.map((a) => a.sheet), ["Dados", "KPIs", "Fórmulas", "Contas"]);
+  assert.equal(abas[0].data[1][9], 209330.5);
+  const linhaPe = abas[1].data.find((l) => l[0] === "Ponto de equilíbrio contábil")!;
+  pertoRel(linhaPe[9] as number, pe);
 });
