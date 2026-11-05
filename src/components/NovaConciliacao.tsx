@@ -22,6 +22,8 @@ const ROTULO_DATA: Record<FormatoData, string> = {
   aaaammdd: "aaaammdd (20261005)",
   "mmm dd, aaaa": "mmm dd, aaaa (Oct 05, 2026)",
   "dd-mmm-aaaa": "dd-mmm-aaaa (05-Oct-2026)",
+  "mm/dd/aa": "mm/dd/aa (mês primeiro, ano com 2 dígitos: 10/05/26 é 5 de outubro de 2026)",
+  "dd/mm/aa": "dd/mm/aa (dia primeiro, ano com 2 dígitos: 05/10/26 é 5 de outubro de 2026)",
 };
 const ROTULO_VALOR: Record<FormatoValor, string> = {
   br: "1.234,56 (vírgula decimal)",
@@ -352,6 +354,31 @@ export function NovaConciliacao({ preview, confirm }: { preview: Acao; confirm: 
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                )}
+                {p.invalidas && p.invalidas.total > 0 && (
+                  <div className="space-y-2">
+                    <Notice tone="warning">
+                      {p.invalidas.total} linha(s) do arquivo inteiro não puderam ser lidas. Elas ficam de fora da conciliação e serão registradas nela; as demais seguem normalmente.
+                      {p.invalidas.total > p.invalidas.itens.length && ` Mostrando ${p.invalidas.itens.length} de ${p.invalidas.total}.`}
+                    </Notice>
+                    <div className="overflow-x-auto">
+                      <table className="table">
+                        <caption className="sr-only">Linhas de {p.arquivo} que não puderam ser lidas</caption>
+                        <thead>
+                          <tr><th className="num">Linha</th><th>Campo</th><th>Motivo</th></tr>
+                        </thead>
+                        <tbody>
+                          {p.invalidas.itens.map((l) => (
+                            <tr key={l.linha}>
+                              <td className="num">{l.linha}</td>
+                              <td>{l.campo}</td>
+                              <td className="text-red-700">{l.motivo}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
               </div>

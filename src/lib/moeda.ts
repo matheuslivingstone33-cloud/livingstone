@@ -6,7 +6,7 @@ export const ROTULO_MOEDA: Record<Moeda, string> = { BRL: "Real (R$)", USD: "Dó
 export const isMoeda = (v: unknown): v is Moeda => typeof v === "string" && (MOEDAS as readonly string[]).includes(v);
 
 /** Formatos de data aceitos no layout. Novos formatos entram sempre no fim (a ordem decide empates). */
-export const FORMATOS_DATA = ["dd/mm/aaaa", "aaaa-mm-dd", "mm/dd/aaaa", "dd-mm-aaaa", "dd.mm.aaaa", "aaaammdd", "mmm dd, aaaa", "dd-mmm-aaaa"] as const;
+export const FORMATOS_DATA = ["dd/mm/aaaa", "aaaa-mm-dd", "mm/dd/aaaa", "dd-mm-aaaa", "dd.mm.aaaa", "aaaammdd", "mmm dd, aaaa", "dd-mmm-aaaa", "mm/dd/aa", "dd/mm/aa"] as const;
 export type FormatoData = (typeof FORMATOS_DATA)[number];
 /** br: vírgula decimal · ponto: ponto decimal sem milhar · us: "1,234.56" (vírgula de milhar, ponto decimal). */
 export const FORMATOS_VALOR = ["br", "ponto", "us"] as const;

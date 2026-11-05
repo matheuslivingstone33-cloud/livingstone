@@ -6,6 +6,7 @@ import { limitarTotal, montarProva, type FonteProva } from "@/lib/prova-concilia
 import { classificarTaxa, type TaxaRecebimento } from "@/lib/taxa-recebimento";
 import { CambioError, SEM_COTACAO, converterEntradas, explicadoCambio, type CambioInfo, type Cotacao } from "@/lib/cambio";
 import type { Moeda } from "@/lib/moeda";
+import type { ResumoInvalidas } from "@/lib/layout-conciliacao";
 
 export type PersistInput = {
   name: string;
@@ -24,6 +25,8 @@ export type PersistInput = {
   moedas?: { esperados: Moeda; extrato: Moeda };
   /** Obrigatório quando as moedas diferem: cotação (R$ por US$ 1), tolerância em % e quem informou. */
   cambio?: { cotacao: Cotacao; toleranciaPct: number; informadaPor: string };
+  /** Linhas do extrato que não puderam ser lidas (conversão parcial). Gravadas em options.linhasInvalidas (também com total 0); ausente nos leitores que bloqueiam. */
+  linhasInvalidas?: ResumoInvalidas;
 };
 
 const LOTE = 1000;
@@ -93,7 +96,7 @@ export async function persistReconciliation(orgId: string, input: PersistInput) 
           totalReceived: entries.reduce((a, e) => a + e.amount, 0),
           totalExcess: excess,
           currency: base,
-          options: { ...options, taxas, ...(cambioInfo ? { cambio: cambioInfo } : {}) } as unknown as Prisma.InputJsonValue,
+          options: { ...options, taxas, ...(cambioInfo ? { cambio: cambioInfo } : {}), ...(input.linhasInvalidas ? { linhasInvalidas: input.linhasInvalidas } : {}) } as unknown as Prisma.InputJsonValue,
           ...counts,
         },
       });

@@ -24,7 +24,7 @@ export function POST(req: Request) {
     const cambio = v.value.cambio && { ...v.value.cambio, informadaPor: `chave ${key.prefix}` };
     const { rec, itemCount, explicadosTaxa, explicadosCambio, cambio: info } = await persistReconciliation(orgId, { ...v.value, cambio, cnab400: cfg.cnab400, taxas: cfg.conciliacao.taxas });
     const notaCambio = info ? ` · moedas esperados ${info.moedaEsperados} / extrato ${info.moedaExtrato}, base ${info.base}, cotação ${info.cotacao} (tolerância ${info.toleranciaPct}%) informada por ${info.informadaPor}${explicadosCambio ? `, ${explicadosCambio} com diferença de câmbio` : ""}` : "";
-    await auditRaw(orgId, null, "api.conciliacao.criar", `chave ${key.prefix}: ${rec.name} (${rec.bankFormat}, ${itemCount} itens, regras ${JSON.stringify(v.value.options)})${explicadosTaxa ? ` · ${explicadosTaxa} explicado(s) pela taxa` : ""}${notaCambio}${resumoArquivos(v.value.fontes)}`, ip);
+    await auditRaw(orgId, null, "api.conciliacao.criar", `chave ${key.prefix}: ${rec.name} (${rec.bankFormat}, ${itemCount} itens, regras ${JSON.stringify(v.value.options)})${explicadosTaxa ? ` · ${explicadosTaxa} explicado(s) pela taxa` : ""}${v.value.linhasInvalidas?.total ? ` · ${v.value.linhasInvalidas.total} linha(s) do extrato não lida(s)` : ""}${notaCambio}${resumoArquivos(v.value.fontes)}`, ip);
     return { status: 201, json: reconciliationJson(rec), resourceType: "Reconciliation", resourceId: rec.id };
   });
 }

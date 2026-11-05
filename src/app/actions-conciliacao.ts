@@ -19,8 +19,10 @@ import {
   amostrasPorColuna,
   colunasDoLayout,
   convertWithLayout,
+  convertWithLayoutParcial,
   guessLayout,
   headerOf,
+  invalidasDoArquivo,
   isLegacyCsv,
   layoutDiff,
   layoutSignature,
@@ -30,6 +32,7 @@ import {
   validateLayout,
   type Layout,
   type PreviaArquivo,
+  type ResumoInvalidas,
   type ResultadoPrevia,
   type TipoLayout,
 } from "@/lib/layout-conciliacao";
@@ -105,7 +108,7 @@ export async function createReconciliation(form: FormData) {
 
 // ---------- Planilhas em qualquer formato (layout de colunas por instituição) ----------
 
-type Pronto = { modo: "pronto"; tipo: TipoLayout; nome: string; formato: string; entries: ExpectedEntry[] | BankEntry[]; layoutId?: string; fonte: FonteProva; moeda: Moeda };
+type Pronto = { modo: "pronto"; tipo: TipoLayout; nome: string; formato: string; entries: ExpectedEntry[] | BankEntry[]; layoutId?: string; fonte: FonteProva; moeda: Moeda; invalidas?: ResumoInvalidas };
 type SemLayout = { modo: "layout"; tipo: TipoLayout; nome: string; tabela: RawTable; header: string[]; linha: number; assinatura: string; sha256: string };
 
 const ROTULO: Record<TipoLayout, string> = { esperados: "títulos esperados", extrato: "arquivo do banco" };
@@ -114,6 +117,12 @@ const CAMPO_LAYOUT: Record<TipoLayout, string> = { esperados: "layoutEsperados",
 
 const erroDe = (e: unknown, tipo: TipoLayout) =>
   e instanceof BankFileError || e instanceof UploadError ? e.message : `Não foi possível ler o ${ROTULO[tipo]}.`;
+
+/** Extrato tolera linhas inválidas (ficam registradas); a lista de esperados continua bloqueando. */
+function converter(t: RawTable, layout: Layout): { entries: ExpectedEntry[] | BankEntry[]; invalidas?: ResumoInvalidas } {
+  if (layout.tipo === "extrato") return convertWithLayoutParcial(t, layout);
+  return { entries: convertWithLayout(t, layout) };
+}
 
 /** OFX/CNAB e CSV no formato antigo seguem os leitores de sempre; o resto vira grade e procura o layout salvo. */
 async function lerArquivo(orgId: string, tipo: TipoLayout, f: AiFile, cnab400: Cnab400Layout): Promise<Pronto | SemLayout> {
@@ -141,7 +150,7 @@ async function lerArquivo(orgId: string, tipo: TipoLayout, f: AiFile, cnab400: C
     const v = validateLayout(salvo.layout, header);
     if (v.ok && v.layout.tipo === tipo && v.layout.linhaCabecalho === linha)
       return {
-        modo: "pronto", tipo, nome: f.name, formato: tabela.formato, entries: convertWithLayout(tabela, v.layout), layoutId: salvo.id,
+        modo: "pronto", tipo, nome: f.name, formato: tabela.formato, ...converter(tabela, v.layout), layoutId: salvo.id,
         fonte: { arquivo: f.name, formato: tabela.formato, sha256, cabecalho: header, colunas: colunasDoLayout(v.layout, header) },
         moeda: moedaDoLayout(v.layout),
       };
@@ -227,6 +236,7 @@ async function persistir(s: Session, form: FormData, esp: Pronto, ext: Pronto, e
       taxas: conciliacao.taxas,
       moedas: { esperados: esp.moeda, extrato: ext.moeda },
       cambio: cx.cambio,
+      linhasInvalidas: ext.invalidas,
     });
   } catch (e) {
     if (e instanceof CambioError) fail(BACK, e.message);
@@ -234,8 +244,8 @@ async function persistir(s: Session, form: FormData, esp: Pronto, ext: Pronto, e
   }
   const { rec, itemCount, explicadosTaxa, explicadosCambio, cambio } = r;
   for (const p of [esp, ext])
-    if (p.layoutId) await audit(s, "conciliacao.conversao", `${ROTULO[p.tipo]} (${p.formato}) convertido pelo layout salvo ${p.layoutId}: ${p.entries.length} linha(s)`);
-  await audit(s, "conciliacao.criar", `${rec.name} (${ext.formato}, ${itemCount} itens, regras ${JSON.stringify(options)})${extra}${notaTaxa(explicadosTaxa)}${notaCambio(cambio, explicadosCambio)}${resumoArquivos(fontes)}`);
+    if (p.layoutId) await audit(s, "conciliacao.conversao", `${ROTULO[p.tipo]} (${p.formato}) convertido pelo layout salvo ${p.layoutId}: ${p.entries.length} linha(s)${p.invalidas?.total ? `, ${p.invalidas.total} não lida(s)` : ""}`);
+  await audit(s, "conciliacao.criar", `${rec.name} (${ext.formato}, ${itemCount} itens, regras ${JSON.stringify(options)})${extra}${ext.invalidas?.total ? ` · ${ext.invalidas.total} linha(s) do extrato não lida(s)` : ""}${notaTaxa(explicadosTaxa)}${notaCambio(cambio, explicadosCambio)}${resumoArquivos(fontes)}`);
   revalidatePath(BACK);
   redirect(`/conciliacao/${rec.id}`);
 }
@@ -275,6 +285,7 @@ export async function previewReconciliation(form: FormData): Promise<ResultadoPr
               // As perguntas de formato continuam na tela depois de "Atualizar prévia"
               ...(perguntasDe(a) ? { perguntas: perguntasDe(a) } : {}),
               confianca: "baixa", origem: "usuario", motivos: [], linhas: previewRows(a.tabela, v.layout, 10),
+              ...(a.tipo === "extrato" ? { invalidas: invalidasDoArquivo(a.tabela, v.layout, 20) } : {}),
             }
           : { ...base, colunas: {}, confianca: "baixa", origem: "usuario", motivos: [], linhas: [], erro: v.erro },
       );
@@ -298,6 +309,7 @@ export async function previewReconciliation(form: FormData): Promise<ResultadoPr
       origem: r.origem,
       motivos: r.sugestao.motivos,
       linhas: r.layout ? previewRows(a.tabela, r.layout, 10) : [],
+      ...(r.layout && a.tipo === "extrato" ? { invalidas: invalidasDoArquivo(a.tabela, r.layout, 20) } : {}),
     });
   }
   return { ok: true, previas, moedasFixas };
@@ -323,9 +335,9 @@ export async function confirmLayoutAndReconcile(form: FormData): Promise<Resulta
     const v = layoutDoForm(form, a);
     if (!v.ok) return { ok: false, erro: `${ROTULO[tipo]}: ${v.erro}` };
     if (!v.layout.moeda) return { ok: false, erro: `${ROTULO[tipo]}: informe se a planilha está em real ou em dólar.` };
-    let entries: ExpectedEntry[] | BankEntry[];
+    let conv: ReturnType<typeof converter>;
     try {
-      entries = convertWithLayout(a.tabela, v.layout);
+      conv = converter(a.tabela, v.layout);
     } catch (e) {
       return { ok: false, erro: erroDe(e, tipo) };
     }
@@ -342,7 +354,7 @@ export async function confirmLayoutAndReconcile(form: FormData): Promise<Resulta
     } else await audit(s, "conciliacao.layout_salvo", `${ROTULO[tipo]} (${salvo.id}, ${a.header.length} colunas)`);
     notas.push(`layout de ${ROTULO[tipo]} confirmado`);
     prontos[tipo] = {
-      modo: "pronto", tipo, nome: a.nome, formato: a.tabela.formato, entries,
+      modo: "pronto", tipo, nome: a.nome, formato: a.tabela.formato, ...conv,
       fonte: { arquivo: a.nome, formato: a.tabela.formato, sha256: a.sha256, cabecalho: a.header, colunas: colunasDoLayout(v.layout, a.header) },
       moeda: moedaDoLayout(v.layout),
     };

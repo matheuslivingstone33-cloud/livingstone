@@ -6,6 +6,7 @@ import { day, dt } from "@/lib/format";
 import { Badge, Notice, PageTitle, Stat, StatusBadge, TableCard } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import type { ReconcileOptions } from "@/lib/reconcile";
+import { lerLinhasInvalidas } from "@/lib/layout-conciliacao";
 import { GRUPOS, ROTULO_GRUPO, fraseItem, grupoDe, lerProva, type Grupo } from "@/lib/prova-conciliacao";
 import { ResolverItem } from "./ResolverItem";
 import { ProvaView } from "./Prova";
@@ -33,6 +34,7 @@ export default async function ConciliacaoDetalhe({
   const moeda = moedaDe(r.currency);
   const brl = valorNa(moeda);
   const cambio = cambioDe(r.options);
+  const invalidas = lerLinhasInvalidas(r.options);
   const original = cambio ? valorNa(cambio.moedaExtrato) : undefined;
   const todos = await db.reconciliationItem.findMany({ where: { reconciliationId: r.id }, omit: { evidence: true }, orderBy: [{ status: "asc" }, { reference: "asc" }] });
   const pagas = referenciasPagas(todos);
@@ -104,6 +106,32 @@ export default async function ConciliacaoDetalhe({
         <p className="-mt-4 mb-6 text-sm text-ink-600">
           Câmbio: esperados em {cambio.moedaEsperados}, extrato em {cambio.moedaExtrato} convertido para {cambio.base} pela cotação de <b>{cambio.cotacao.replace(".", ",")}</b> (R$ por US$ 1), informada por {cambio.informadaPor}{cambio.informadaEm ? <> em {dt(cambio.informadaEm)}</> : null} · tolerância de câmbio {String(cambio.toleranciaPct).replace(".", ",")}%. O sistema não busca câmbio automaticamente.
         </p>
+      )}
+
+      {invalidas && invalidas.total > 0 && (
+        <TableCard
+          className="mb-6"
+          title={<>Linhas que não puderam ser lidas ({invalidas.total})</>}
+          meta={invalidas.total > invalidas.itens.length ? <span className="text-sm text-ink-600">mostrando {invalidas.itens.length} de {invalidas.total}</span> : undefined}
+        >
+          <p className="px-3 pb-2 text-sm text-ink-600">Estas linhas do extrato ficaram de fora da conciliação. Confira o arquivo original; débitos e linhas sem valor não aparecem aqui.</p>
+          <table className="table">
+            <caption className="sr-only">Linhas do extrato que não puderam ser lidas</caption>
+            <thead>
+              <tr><th className="num">Linha</th><th>Campo</th><th>Texto original</th><th>Motivo</th></tr>
+            </thead>
+            <tbody>
+              {invalidas.itens.map((l) => (
+                <tr key={l.linha}>
+                  <td className="num">{l.linha}</td>
+                  <td>{l.campo}</td>
+                  <td><code>{l.bruto}</code></td>
+                  <td className="text-red-700">{l.motivo}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableCard>
       )}
 
       {aberto && (

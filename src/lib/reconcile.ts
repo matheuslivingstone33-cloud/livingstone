@@ -53,7 +53,7 @@ export function parseMoney(raw: string, mode: "br" | "ofx" = "br"): number | nul
 /**
  * Valor no formato dos EUA → número, ou null se ilegível. Aceita os prefixos "$", "US$", "USD" e "U$",
  * vírgula de milhar e ponto decimal ("1,234.56", "1,234", "1234.5"), "-" inicial e parênteses contábeis
- * ("(150.00)" = -150). "1.234,56" (formato BR) e "12,34" → null.
+ * ("(150.00)" = -150, também depois do símbolo: "$(150.00)"); duplo negativo → null. "1.234,56" (formato BR) e "12,34" → null.
  */
 export function parseMoneyUs(raw: string): number | null {
   let s = raw.trim().replace(/\s/g, "");
@@ -72,6 +72,13 @@ export function parseMoneyUs(raw: string): number | null {
   if (s.startsWith("-") && !neg) {
     neg = true;
     s = s.slice(1);
+  }
+  // Parênteses depois do símbolo: "$(150.00)", "US$(1,234.56)". Com outro sinal negativo (duplo negativo) é ilegível.
+  const par2 = s.match(/^\((.*)\)$/);
+  if (par2) {
+    if (neg) return null;
+    neg = true;
+    s = par2[1];
   }
   if (!/^\d{1,3}(,\d{3})+(\.\d{1,2})?$/.test(s) && !/^\d+(\.\d{1,2})?$/.test(s)) return null;
   const n = Number(s.replace(/,/g, ""));

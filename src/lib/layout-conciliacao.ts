@@ -2,6 +2,7 @@
 // Puro: sem banco nem Next. A planilha chega como grade de textos (ver planilha.ts).
 import { createHash } from "node:crypto";
 import { BankFileError, REF_MAX, fileErrors, parseMoney, parseMoneyUs, utcDay, validMoney, type BankEntry, type ExpectedEntry } from "./reconcile";
+import { mascararDocs } from "./mascara";
 import { FORMATOS_DATA, FORMATOS_VALOR, isMoeda, type FormatoData, type FormatoValor, type Moeda } from "./moeda";
 
 export { FORMATOS_DATA, FORMATOS_VALOR, type FormatoData, type FormatoValor };
@@ -86,7 +87,13 @@ export function parseDateAs(raw: string, fmt: FormatoData): Date | undefined | n
   if (iso) return utcDay(+iso[1], +iso[2], +iso[3]) ?? null;
   // Mês por extenso não é ambíguo: os dois formatos com nome de mês leem as duas formas
   if (fmt === "mmm dd, aaaa" || fmt === "dd-mmm-aaaa") return dataComMes(s);
-  const re: Record<Exclude<FormatoData, "mmm dd, aaaa" | "dd-mmm-aaaa">, [RegExp, [number, number, number]]> = {
+  if (fmt === "mm/dd/aa" || fmt === "dd/mm/aa") {
+    const x = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
+    if (!x) return null;
+    const [m, d] = fmt === "mm/dd/aa" ? [+x[1], +x[2]] : [+x[2], +x[1]];
+    return utcDay(anoDe2Digitos(+x[3]), m, d) ?? null;
+  }
+  const re: Record<Exclude<FormatoData, "mmm dd, aaaa" | "dd-mmm-aaaa" | "mm/dd/aa" | "dd/mm/aa">, [RegExp, [number, number, number]]> = {
     "dd/mm/aaaa": [/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/, [3, 2, 1]],
     "aaaa-mm-dd": [/^(\d{4})-(\d{1,2})-(\d{1,2})$/, [1, 2, 3]],
     "mm/dd/aaaa": [/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/, [3, 1, 2]],
@@ -99,6 +106,12 @@ export function parseDateAs(raw: string, fmt: FormatoData): Date | undefined | n
   if (!x) return null;
   return utcDay(+x[y], +x[m], +x[d]) ?? null;
 }
+
+/**
+ * Ano de 2 dígitos → ano completo, com janela fixa: 00–69 vira 20aa e 70–99 vira 19aa ("26" → 2026, "85" → 1985).
+ * Fixa (não depende da data de hoje) para que o mesmo arquivo seja sempre lido igual.
+ */
+export const anoDe2Digitos = (aa: number) => (aa <= 69 ? 2000 + aa : 1900 + aa);
 
 const ISO = /^(\d{4})-(\d{2})-(\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
 const MESES: Record<string, number> = {
@@ -226,7 +239,8 @@ export function guessLayout(tipo: TipoLayout, header: string[], t: Tabela, linha
       // Nunca escolhe dd/mm sem avisar: o usuário responde
       alta = false;
       perguntas.data = fs;
-      motivos.push(fs.includes("dd/mm/aaaa") && fs.includes("mm/dd/aaaa") ? "Data pode ser dia/mês ou mês/dia" : "Mais de um formato de data possível");
+      const diaMes = (fs.includes("dd/mm/aaaa") && fs.includes("mm/dd/aaaa")) || (fs.includes("dd/mm/aa") && fs.includes("mm/dd/aa"));
+      motivos.push(diaMes ? "Data pode ser dia/mês ou mês/dia" : "Mais de um formato de data possível");
     }
   }
   let formatoValor: FormatoValor | undefined;
@@ -316,8 +330,16 @@ export function amostrasPorColuna(t: Tabela, linhaCabecalho: number, n = 3): str
 
 export type LinhaConvertida = { linha: number; referencia: string; valor?: number; data?: string; pagador?: string; forma?: string; ignorada?: string; erro?: string };
 
-// `indices` (opcional) recebe a posição em t.linhas de cada linha devolvida (para a prova)
-function convertRows(t: Tabela, layout: Layout, header: string[], limit = Infinity, indices?: number[]) {
+/** Linha que não pôde ser lida: o primeiro campo com problema, o texto original (até 20 caracteres, CPF/CNPJ mascarados) e o motivo. */
+export type LinhaInvalida = { linha: number; campo: "valor" | "data" | "referencia" | "sinal"; bruto: string; motivo: string };
+/** Máximo de linhas inválidas guardadas e devolvidas (o total é sempre o real). */
+export const MAX_INVALIDAS = 200;
+/** Texto original seguro para exibir e gravar: CPF/CNPJ mascarados e no máximo 20 caracteres. */
+export const brutoSeguro = (raw: string) => mascararDocs(raw).slice(0, 20);
+
+// `indices` (opcional) recebe a posição em t.linhas de cada linha devolvida (para a prova);
+// `invalidas` (opcional) recebe o motivo estruturado de cada linha com erro
+function convertRows(t: Tabela, layout: Layout, header: string[], limit = Infinity, indices?: number[], invalidas?: LinhaInvalida[]) {
   const idx = (name?: string) => (name ? header.indexOf(name) : -1);
   const I = { ref: idx(layout.colunas.referencia), val: idx(layout.colunas.valor), data: idx(layout.colunas.data), pag: idx(layout.colunas.pagador), desc: idx(layout.colunas.descricao), sinal: idx(layout.colunas.sinal), forma: idx(layout.colunas.forma) };
   const get = (r: string[], i: number) => (i >= 0 ? (r[i] ?? "").trim() : "");
@@ -334,29 +356,57 @@ function convertRows(t: Tabela, layout: Layout, header: string[], limit = Infini
     const forma = layout.tipo === "esperados" ? get(r, I.forma).slice(0, 40) : "";
     if (forma) item.forma = forma;
     const erros: string[] = [];
+    const problemas: Omit<LinhaInvalida, "linha">[] = [];
+    const prob = (campo: LinhaInvalida["campo"], raw: string, motivo: (b: string) => string) => {
+      const bruto = brutoSeguro(raw);
+      problemas.push({ campo, bruto, motivo: motivo(bruto) });
+    };
     const v = rawV ? money(rawV, layout.formatoValor) : null;
     const d = parseDateAs(rawD, layout.formatoData);
     if (d) item.data = d.toISOString().slice(0, 10);
     if (layout.tipo === "extrato") {
       const s = normHeader(get(r, I.sinal));
       if (!rawV) item.ignorada = "sem valor";
-      else if (v === null) erros.push(`valor ${rawV} ilegível`);
-      else if (s.startsWith("d") || v <= 0) item.ignorada = "débito";
-      else if (s && !s.startsWith("c")) erros.push(`débito/crédito "${get(r, I.sinal).slice(0, 20)}" não reconhecido`);
-      else if (!validMoney(v)) erros.push(`valor ${rawV} fora do limite`);
-      else item.valor = v;
+      else if (v === null) {
+        erros.push(`valor ${rawV} ilegível`);
+        prob("valor", rawV, (b) => `valor '${b}' não é um número`);
+      } else if (s.startsWith("d") || v <= 0) item.ignorada = "débito";
+      else if (s && !s.startsWith("c")) {
+        erros.push(`débito/crédito "${get(r, I.sinal).slice(0, 20)}" não reconhecido`);
+        prob("sinal", get(r, I.sinal), (b) => `débito/crédito '${b}' não reconhecido`);
+      } else if (!validMoney(v)) {
+        erros.push(`valor ${rawV} fora do limite`);
+        prob("valor", rawV, (b) => `valor '${b}' fora do limite`);
+      } else item.valor = v;
     } else {
-      if (!referencia) erros.push("referência obrigatória");
-      if (!rawV) erros.push("valor obrigatório");
-      else if (v === null) erros.push(`valor ${rawV} ilegível`);
-      else if (!validMoney(v)) erros.push(`valor ${rawV} deve ser positivo`);
-      else item.valor = v;
+      if (!referencia) {
+        erros.push("referência obrigatória");
+        prob("referencia", "", () => "referência obrigatória");
+      }
+      if (!rawV) {
+        erros.push("valor obrigatório");
+        prob("valor", "", () => "valor obrigatório");
+      } else if (v === null) {
+        erros.push(`valor ${rawV} ilegível`);
+        prob("valor", rawV, (b) => `valor '${b}' não é um número`);
+      } else if (!validMoney(v)) {
+        erros.push(`valor ${rawV} deve ser positivo`);
+        prob("valor", rawV, (b) => `valor '${b}' deve ser positivo`);
+      } else item.valor = v;
     }
     if (!item.ignorada) {
-      if (referencia.length > REF_MAX) erros.push(`referência com mais de ${REF_MAX} caracteres`);
-      if (d === null) erros.push(`data ${rawD.slice(0, 20)} inválida`);
+      if (referencia.length > REF_MAX) {
+        erros.push(`referência com mais de ${REF_MAX} caracteres`);
+        prob("referencia", referencia, () => `referência com mais de ${REF_MAX} caracteres`);
+      }
+      if (d === null) {
+        erros.push(`data ${rawD.slice(0, 20)} inválida`);
+        prob("data", rawD, (b) => `data '${b}' inválida`);
+      }
     }
     if (erros.length) item.erro = erros.join(", ");
+    // Uma entrada por linha: o campo é o do primeiro problema; o motivo junta todos
+    if (problemas.length) invalidas?.push({ linha, campo: problemas[0].campo, bruto: problemas[0].bruto, motivo: problemas.map((x) => x.motivo).join("; ") });
     out.push(item);
     indices?.push(i);
   }
@@ -366,19 +416,66 @@ function convertRows(t: Tabela, layout: Layout, header: string[], limit = Infini
 /** Primeiras linhas convertidas, com erro ou motivo de ser ignorada (para a prévia na tela). */
 export const previewRows = (t: Tabela, layout: Layout, n = 10) => convertRows(t, layout, headerOf(t.linhas, layout.linhaCabecalho), n);
 
-/** Converte a planilha inteira. Linhas inválidas viram BankFileError com o número da linha. */
-export function convertWithLayout(t: Tabela, layout: Layout): ExpectedEntry[] | BankEntry[] {
+const CAMPOS_INVALIDA = ["valor", "data", "referencia", "sinal"];
+/** Resumo de linhas inválidas gravado em options.linhasInvalidas; null se ausente (conciliações antigas) ou malformado. */
+export function lerLinhasInvalidas(options: unknown): ResumoInvalidas | null {
+  const l = isRec(options) ? options.linhasInvalidas : undefined;
+  if (!isRec(l) || typeof l.total !== "number" || !Array.isArray(l.itens)) return null;
+  const itens = l.itens
+    .filter((x): x is LinhaInvalida => isRec(x) && typeof x.linha === "number" && CAMPOS_INVALIDA.includes(x.campo as string) && typeof x.bruto === "string" && typeof x.motivo === "string")
+    .slice(0, MAX_INVALIDAS)
+    .map(({ linha, campo, bruto, motivo }) => ({ linha, campo, bruto, motivo }));
+  return { total: l.total, itens };
+}
+
+/** Linhas inválidas do arquivo inteiro: total real e as `n` primeiras (para a prévia na tela). */
+export function invalidasDoArquivo(t: Tabela, layout: Layout, n = 20): ResumoInvalidas {
+  const inv: LinhaInvalida[] = [];
+  convertRows(t, layout, headerOf(t.linhas, layout.linhaCabecalho), Infinity, undefined, inv);
+  return { total: inv.length, itens: inv.slice(0, Math.min(n, MAX_INVALIDAS)) };
+}
+
+/** Linhas inválidas de uma conversão parcial: total real e até MAX_INVALIDAS itens, na ordem do arquivo. */
+export type ResumoInvalidas = { total: number; itens: LinhaInvalida[] };
+export type ConversaoParcial = { entries: ExpectedEntry[] | BankEntry[]; invalidas: ResumoInvalidas };
+
+// Conversão comum: entries válidas, resumo estruturado e os textos de erro no formato antigo
+function converter(t: Tabela, layout: Layout) {
   const pos: number[] = [];
-  const rows = convertRows(t, layout, headerOf(t.linhas, layout.linhaCabecalho), Infinity, pos);
+  const inv: LinhaInvalida[] = [];
+  const rows = convertRows(t, layout, headerOf(t.linhas, layout.linhaCabecalho), Infinity, pos, inv);
   const label = layout.tipo === "esperados" ? "de esperados" : "do banco";
-  fileErrors(label, rows.filter((r) => r.erro).map((r) => `Linha ${r.linha}: ${r.erro}`));
+  const erros = rows.filter((r) => r.erro).map((r) => `Linha ${r.linha}: ${r.erro}`);
   const origem = new Map(rows.map((r, k) => [r, { linha: r.linha, celulas: t.linhas[pos[k]] }]));
-  const ok = rows.filter((r) => !r.ignorada && r.valor !== undefined);
-  if (!ok.length) throw new BankFileError(`Arquivo ${label}: nenhuma linha com valor válido.`);
+  const ok = rows.filter((r) => !r.erro && !r.ignorada && r.valor !== undefined);
   const date = (s?: string) => (s ? new Date(`${s}T00:00:00.000Z`) : undefined);
-  return layout.tipo === "esperados"
-    ? ok.map((r) => ({ reference: r.referencia, payer: r.pagador, amount: r.valor!, dueAt: date(r.data), ...(r.forma ? { forma: r.forma } : {}), origem: origem.get(r) }))
-    : ok.map((r) => ({ reference: r.referencia, payer: r.pagador, amount: r.valor!, paidAt: date(r.data), origem: origem.get(r) }));
+  const entries: ExpectedEntry[] | BankEntry[] =
+    layout.tipo === "esperados"
+      ? ok.map((r) => ({ reference: r.referencia, payer: r.pagador, amount: r.valor!, dueAt: date(r.data), ...(r.forma ? { forma: r.forma } : {}), origem: origem.get(r) }))
+      : ok.map((r) => ({ reference: r.referencia, payer: r.pagador, amount: r.valor!, paidAt: date(r.data), origem: origem.get(r) }));
+  return { label, erros, entries, invalidas: { total: inv.length, itens: inv.slice(0, MAX_INVALIDAS) } };
+}
+
+/**
+ * Converte a planilha inteira tolerando linhas inválidas: elas ficam em `invalidas` (linha, campo, texto e motivo) e não
+ * entram nas entries. Só lança BankFileError se não sobrar nenhuma linha válida. Uso previsto: só o EXTRATO; a lista
+ * de esperados continua bloqueando (convertWithLayout).
+ */
+export function convertWithLayoutParcial(t: Tabela, layout: Layout): ConversaoParcial {
+  const r = converter(t, layout);
+  if (!r.entries.length) {
+    fileErrors(r.label, r.erros);
+    throw new BankFileError(`Arquivo ${r.label}: nenhuma linha com valor válido.`);
+  }
+  return { entries: r.entries, invalidas: r.invalidas };
+}
+
+/** Converte a planilha inteira. Linhas inválidas viram BankFileError com o número da linha (contrato de sempre). */
+export function convertWithLayout(t: Tabela, layout: Layout): ExpectedEntry[] | BankEntry[] {
+  const r = converter(t, layout);
+  fileErrors(r.label, r.erros);
+  if (!r.entries.length) throw new BankFileError(`Arquivo ${r.label}: nenhuma linha com valor válido.`);
+  return r.entries;
 }
 
 /** Nomes de coluna que mudaram entre dois layouts (para a auditoria). */
@@ -419,6 +516,8 @@ export type PreviaArquivo = {
   origem: "ia" | "heuristica" | "usuario";
   motivos: string[];
   linhas: LinhaConvertida[];
+  /** Só extrato: linhas do arquivo inteiro que não puderam ser lidas (total e as 20 primeiras). */
+  invalidas?: ResumoInvalidas;
   erro?: string;
 };
 /**

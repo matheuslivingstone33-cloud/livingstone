@@ -4,7 +4,7 @@ import { decodeText } from "./upload";
 import { formatBytes } from "./upload-limits";
 import { findHeaderLine, readTable, type RawTable } from "./planilha";
 import { jsonCanonico, sha256Hex, type FonteProva } from "./prova-conciliacao";
-import { colunasDoLayout, convertWithLayout, headerOf, layoutSignature, moedaDoLayout, validateLayout, type Layout, type TipoLayout } from "./layout-conciliacao";
+import { colunasDoLayout, convertWithLayout, convertWithLayoutParcial, headerOf, layoutSignature, moedaDoLayout, validateLayout, type Layout, type ResumoInvalidas, type TipoLayout } from "./layout-conciliacao";
 import { MOEDAS, isMoeda, type Moeda } from "./moeda";
 import { parseCotacao, parseToleranciaPct, type Cotacao } from "./cambio";
 
@@ -14,6 +14,8 @@ export type FieldError = { campo: string; mensagem: string };
 export const API_LIMITS = { esperados: 20_000, lancamentos: 20_000, arquivoBytes: 2_900_000 } as const;
 
 export type ReconciliationInput = {
+  /** Linhas do extrato (planilha com layout) que não puderam ser lidas; ausente nos outros formatos. */
+  linhasInvalidas?: ResumoInvalidas;
   name: string;
   expected: ExpectedEntry[];
   expectedFileName: string;
@@ -115,7 +117,9 @@ function fromTable(tipo: TipoLayout, campo: ApiFileField, ctx: ApiContext, error
     return void errors.push({ campo, mensagem: SEM_LAYOUT });
   }
   try {
-    return { entries: convertWithLayout(t, v.layout), formato: t.formato, cabecalho: header, colunas: colunasDoLayout(v.layout, header), moeda: moedaDoLayout(v.layout) };
+    // Extrato tolera linhas inválidas (ficam registradas); a lista de esperados continua bloqueando
+    const conv = tipo === "extrato" ? convertWithLayoutParcial(t, v.layout) : { entries: convertWithLayout(t, v.layout), invalidas: undefined };
+    return { entries: conv.entries, invalidas: conv.invalidas, formato: t.formato, cabecalho: header, colunas: colunasDoLayout(v.layout, header), moeda: moedaDoLayout(v.layout) };
   } catch (e) {
     errors.push({ campo, mensagem: e instanceof BankFileError ? e.message : "Não foi possível converter o arquivo." });
   }
@@ -182,6 +186,7 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
   let bankFormat = "";
   let fonteBanco: Omit<FonteProva, "arquivo" | "formato"> = { sha256: "" };
   let moedaLayoutExt: Moeda | undefined;
+  let linhasInvalidas: ResumoInvalidas | undefined;
   const banco = body.banco;
   if (banco !== undefined && body.arquivoBanco !== undefined) errors.push({ campo: "banco", mensagem: "Envie exatamente um: banco ou arquivoBanco." });
   else if (body.arquivoBanco !== undefined) {
@@ -206,6 +211,7 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
           entries = r.entries as BankEntry[];
           bankFormat = r.formato;
           moedaLayoutExt = r.moeda;
+          linhasInvalidas = r.invalidas;
           fonteBanco = { ...fonteBanco, cabecalho: r.cabecalho, colunas: r.colunas };
         }
       }
@@ -294,5 +300,5 @@ export function validateReconciliationBody(body: unknown, cnab400?: Cnab400Layou
 
   if (errors.length) return { ok: false, errors: errors.slice(0, 50), ...(flags.semLayout ? { status: 422 as const } : {}) };
   const fontes = { esperados: { arquivo: expectedFileName, ...fonteEsp }, banco: { arquivo: bankFileName, formato: bankFormat, ...fonteBanco } };
-  return { ok: true, value: { name, expected, expectedFileName, bankFileName, bankFormat, entries, options, fontes, moedas, ...(cambio ? { cambio } : {}) } };
+  return { ok: true, value: { name, expected, expectedFileName, bankFileName, bankFormat, entries, options, fontes, moedas, ...(cambio ? { cambio } : {}), ...(linhasInvalidas ? { linhasInvalidas } : {}) } };
 }

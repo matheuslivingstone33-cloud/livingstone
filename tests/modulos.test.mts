@@ -1748,7 +1748,7 @@ test("Layout: validação estrita recusa chaves extras, colunas inexistentes, en
   bad([]);
   bad({ ...layoutAlt, extra: 1 });
   bad({ ...layoutAlt, tipo: "outro" });
-  bad({ ...layoutAlt, formatoData: "dd/mm/aa" });
+  bad({ ...layoutAlt, formatoData: "aa/mm/dd" });
   bad({ ...layoutAlt, formatoValor: "eua" });
   bad({ ...layoutAlt, separador: "x" });
   bad({ ...layoutAlt, linhaCabecalho: 11 });
@@ -2834,7 +2834,8 @@ test("Moeda: fmtMoeda segue o idioma da interface e a moeda do dado; fmtBRL é a
   assert.equal(FV_LAYOUT, FV_MOEDA);
   assert.deepEqual([...FV_MOEDA], ["br", "ponto", "us"]);
   assert.deepEqual(FD_MOEDA.slice(0, 6), ["dd/mm/aaaa", "aaaa-mm-dd", "mm/dd/aaaa", "dd-mm-aaaa", "dd.mm.aaaa", "aaaammdd"]);
-  assert.deepEqual(FD_MOEDA.slice(6), ["mmm dd, aaaa", "dd-mmm-aaaa"]);
+  assert.deepEqual(FD_MOEDA.slice(6, 8), ["mmm dd, aaaa", "dd-mmm-aaaa"]);
+  assert.deepEqual(FD_MOEDA.slice(8), ["mm/dd/aa", "dd/mm/aa"]);
   // moeda.ts vai para o navegador: nada de node:crypto; a cópia das constantes saiu do componente
   const src = readFileSync(new URL("../src/lib/moeda.ts", import.meta.url), "utf8");
   assert.ok(!/from "node:|from "\.\//.test(src));
@@ -3423,4 +3424,148 @@ test("vídeo de boas-vindas: só para os e-mails listados", () => {
   assert.equal(mostraVideoBoasVindas("amanda@admin.com", ""), false);
   assert.equal(mostraVideoBoasVindas(null, undefined), false);
   assert.equal(mostraVideoBoasVindas("b@x.com", "a@x.com, B@x.com"), true);
+});
+
+// ---------- Extrato em dólar com negativos e ano de 2 dígitos (Refs #1) ----------
+import { MAX_INVALIDAS, anoDe2Digitos, convertWithLayoutParcial, lerLinhasInvalidas } from "../src/lib/layout-conciliacao";
+import { reconciliationJson } from "../src/lib/servicos/conciliacao-api";
+import type { Reconciliation } from "@prisma/client";
+
+const csvTab = (linhas: string[][]) => ({ linhas, numeros: linhas.map((_, i) => i + 1) });
+const layoutUs2 = (formatoData: "dd/mm/aa" | "mm/dd/aa" = "dd/mm/aa"): Layout => ({
+  tipo: "extrato", colunas: { referencia: "Reference", valor: "Amount", data: "Date", descricao: "Description" }, formatoData, formatoValor: "us", linhaCabecalho: 0, separador: ",", moeda: "USD",
+});
+
+test("parseDateAs: ano com 2 dígitos, janela 00–69/70–99, inválidas e aaaa recusando aa", () => {
+  const dia = (s: string, f: Parameters<typeof parseDateAs>[1]) => {
+    const d = parseDateAs(s, f);
+    return d ? d.toISOString().slice(0, 10) : d;
+  };
+  assert.equal(dia("1/5/26", "mm/dd/aa"), "2026-01-05");
+  assert.equal(dia("1/5/26", "dd/mm/aa"), "2026-05-01");
+  assert.equal(dia("11/04/26", "mm/dd/aa"), "2026-11-04");
+  assert.equal(dia("11/04/26", "dd/mm/aa"), "2026-04-11");
+  // Janela fixa
+  assert.equal(anoDe2Digitos(0), 2000);
+  assert.equal(anoDe2Digitos(69), 2069);
+  assert.equal(anoDe2Digitos(70), 1970);
+  assert.equal(anoDe2Digitos(99), 1999);
+  assert.equal(dia("01/01/69", "dd/mm/aa"), "2069-01-01");
+  assert.equal(dia("01/01/70", "dd/mm/aa"), "1970-01-01");
+  assert.equal(dia("29/02/00", "dd/mm/aa"), "2000-02-29");
+  // Inválidas: mês 13, dia 45, 29/02 em ano não bissexto, ano com 3 ou 4 dígitos no formato aa
+  assert.equal(dia("13/04/26", "mm/dd/aa"), null);
+  assert.equal(dia("13/45/26", "dd/mm/aa"), null);
+  assert.equal(dia("29/02/26", "dd/mm/aa"), null);
+  assert.equal(dia("11/04/2026", "dd/mm/aa"), null);
+  assert.equal(dia("1/5/026", "mm/dd/aa"), null);
+  assert.equal(dia("", "dd/mm/aa"), undefined);
+  // ISO continua valendo em qualquer formato
+  assert.equal(dia("2026-04-11", "dd/mm/aa"), "2026-04-11");
+  // Formatos de 4 dígitos não leem ano de 2
+  for (const f of ["dd/mm/aaaa", "mm/dd/aaaa"] as const) assert.equal(dia("11/04/26", f), null, f);
+});
+
+test("guessLayout: ano de 2 dígitos ambíguo vira pergunta; com 13/04/26 decide dd/mm/aa", () => {
+  const cab = ["Date", "Description", "Reference", "Amount"];
+  const amb = csvTab([cab, ["1/5/26", "A", "INV-1", "$10.00"], ["11/04/26", "B", "INV-2", "$20.00"]]);
+  const g = guessLayout("extrato", cab, amb, 0);
+  assert.equal(g.formatoData, undefined);
+  assert.deepEqual(g.perguntas?.data, ["mm/dd/aa", "dd/mm/aa"]);
+  assert.equal(g.confianca, "baixa");
+  assert.ok(g.motivos.includes("Data pode ser dia/mês ou mês/dia"), g.motivos.join("; "));
+  const dec = csvTab([...amb.linhas, ["13/04/26", "C", "INV-3", "$30.00"]]);
+  const g2 = guessLayout("extrato", cab, dec, 0);
+  assert.equal(g2.formatoData, "dd/mm/aa");
+  assert.equal(g2.perguntas?.data, undefined);
+  assert.equal(g2.confianca, "alta", g2.motivos.join("; "));
+  // Ano com 4 dígitos segue como antes (não vira aa)
+  const g4 = guessLayout("extrato", cab, csvTab([cab, ["13/04/2026", "C", "INV-3", "$30.00"]]), 0);
+  assert.equal(g4.formatoData, "dd/mm/aaaa");
+});
+
+test("parseMoneyUs: os 6 formatos de negativo e os casos ilegíveis", () => {
+  const ok: [string, number][] = [["-$150.00", -150], ["$-150.00", -150], ["-US$ 1,234.56", -1234.56], ["USD -150.00", -150], ["($150.00)", -150], ["$(150.00)", -150], ["US$(1,234.56)", -1234.56], ["U$(10)", -10]];
+  for (const [s, n] of ok) assert.equal(parseMoneyUs(s), n, s);
+  // Duplo negativo e lixo continuam null
+  for (const s of ["-$(150.00)", "($-150.00)", "$(-150.00)", "-$-150.00", "($(150.00))", "$()", "$(abc)", "$abc", "(150.00", "$150.00)"]) assert.equal(parseMoneyUs(s), null, s);
+});
+
+test("convertWithLayoutParcial: demo em dólar com negativos e ano de 2 dígitos", async () => {
+  const t = await tab("bank_statement_us_2digitos.csv");
+  const lh = findHeaderLine(t.linhas);
+  assert.equal(lh, 0);
+  const header = headerOf(t.linhas, lh);
+  const v = validateLayout(layoutUs2(), header);
+  assert.ok(v.ok, !v.ok ? v.erro : "");
+  const r = convertWithLayoutParcial(t, v.layout);
+  // Débitos (os 6 formatos de negativo) são ignorados, não inválidos
+  const prev = previewRows(t, v.layout, 20);
+  assert.deepEqual(prev.filter((l) => l.ignorada === "débito").map((l) => l.linha), [5, 6, 7, 8, 9, 10]);
+  assert.deepEqual(r.invalidas, {
+    total: 2,
+    itens: [
+      { linha: 11, campo: "valor", bruto: "$abc", motivo: "valor '$abc' não é um número" },
+      { linha: 12, campo: "data", bruto: "13/45/26", motivo: "data '13/45/26' inválida" },
+    ],
+  });
+  const e = r.entries as BankEntryT[];
+  assert.deepEqual(e.map((x) => [x.reference, x.amount, x.paidAt?.toISOString().slice(0, 10)]), [
+    ["INV-3001", 1250, "2026-05-01"],
+    ["INV-3002", 980.5, "2026-04-11"],
+    ["INV-3003", 300, "2026-04-13"],
+  ]);
+  assert.equal(e[0].origem?.linha, 2);
+  // O contrato antigo continua bloqueando o arquivo inteiro
+  assert.throws(
+    () => convertWithLayout(t, v.layout),
+    (err: Error) => err instanceof BankFileError && /Arquivo do banco: 2 linha\(s\) inválida\(s\)/.test(err.message) && /Linha 11: valor \$abc ilegível/.test(err.message) && /Linha 12: data 13\/45\/26 inválida/.test(err.message),
+  );
+});
+
+test("convertWithLayoutParcial: sem nenhuma linha válida é erro; bruto mascarado e cortado; limite de 200", () => {
+  const cab = ["Date", "Description", "Reference", "Amount"];
+  const so = csvTab([cab, ["01/04/26", "A", "R1", "$abc"], ["02/04/26", "B", "R2", "-$5.00"]]);
+  assert.throws(() => convertWithLayoutParcial(so, layoutUs2()), (e: Error) => e instanceof BankFileError && /Linha 2: valor \$abc ilegível/.test(e.message));
+  const soDebitos = csvTab([cab, ["01/04/26", "A", "R1", "-$1.00"]]);
+  assert.throws(() => convertWithLayoutParcial(soDebitos, layoutUs2()), /nenhuma linha com valor válido/);
+  // CPF no texto original sai mascarado e com no máximo 20 caracteres
+  const cpf = csvTab([cab, ["01/04/26", "A", "R1", "$1.00"], ["02/04/26", "B", "R2", "529.982.247-25 xxxxxxxxxx"]]);
+  const it = convertWithLayoutParcial(cpf, layoutUs2()).invalidas.itens[0];
+  assert.equal(it.bruto, "***.982.247-** xxxxx");
+  assert.ok(!it.motivo.includes("529"));
+  // Total real, itens até 200
+  const muitas = csvTab([cab, ["01/04/26", "A", "R0", "$1.00"], ...Array.from({ length: 250 }, (_, i) => ["01/04/26", "x", `R${i + 1}`, "$abc"])]);
+  const m = convertWithLayoutParcial(muitas, layoutUs2()).invalidas;
+  assert.equal(m.total, 250);
+  assert.equal(m.itens.length, MAX_INVALIDAS);
+});
+
+test("Layout salvo antigo (sem os formatos novos) continua válido e lendo igual", async () => {
+  const t = await tab("bank_statement_usd.csv");
+  const header = headerOf(t.linhas, 0);
+  const antigo = { tipo: "extrato", colunas: { referencia: "Reference", valor: "Amount", data: "Posted Date", descricao: "Description", sinal: "Type" }, formatoData: "mmm dd, aaaa", formatoValor: "us", linhaCabecalho: 0, separador: "," };
+  const v = validateLayout(antigo, header);
+  assert.ok(v.ok, !v.ok ? v.erro : "");
+  const parcial = convertWithLayoutParcial(t, v.layout);
+  assert.deepEqual(parcial.invalidas, { total: 0, itens: [] });
+  assert.deepEqual(parcial.entries, convertWithLayout(t, v.layout));
+  // Os formatos novos também passam na validação
+  assert.ok(validateLayout({ ...antigo, formatoData: "dd/mm/aa" }, header).ok);
+});
+
+test("reconciliationJson: linhasInvalidas opcional (null nas antigas) e fora de opcoes", () => {
+  const base = {
+    id: "r1", name: "X", createdAt: new Date("2026-11-01T00:00:00Z"), bankFormat: "CSV", matched: 1, divergent: 0, missing: 0, unexpected: 0,
+    totalExpected: 10, totalReceived: 10, totalExcess: 0, currency: "USD", bankFileSha256: null, expectedFileSha256: null,
+  } as unknown as Reconciliation;
+  const antiga = reconciliationJson({ ...base, options: { toleranciaCentavos: 0 } } as Reconciliation);
+  assert.equal(antiga.linhasInvalidas, null);
+  assert.deepEqual(antiga.opcoes, { toleranciaCentavos: 0 });
+  const li = { total: 1, itens: [{ linha: 11, campo: "valor", bruto: "$abc", motivo: "valor '$abc' não é um número" }] };
+  const nova = reconciliationJson({ ...base, options: { toleranciaCentavos: 0, linhasInvalidas: li } } as unknown as Reconciliation);
+  assert.deepEqual(nova.linhasInvalidas, li);
+  assert.deepEqual(nova.opcoes, { toleranciaCentavos: 0 });
+  assert.equal(lerLinhasInvalidas({ linhasInvalidas: { total: "x" } }), null);
+  assert.equal(lerLinhasInvalidas(null), null);
 });
