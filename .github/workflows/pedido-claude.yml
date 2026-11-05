@@ -3,9 +3,8 @@
 name: Pedido -> Claude
 
 on:
-  issues:
-    # opened cobre a issue já criada com as labels pela API; labeled cobre pôr a label à mão
-    types: [opened, labeled]
+  # Disparo automático por issue DESLIGADO: os pedidos agora são implementados pelo Claude Code local.
+  # Para religar, volte com: issues: types: [opened, labeled]
   # Rodar à mão: Actions -> Pedido -> Claude -> Run workflow, informando o número da issue
   workflow_dispatch:
     inputs:

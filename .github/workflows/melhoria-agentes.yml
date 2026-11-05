@@ -3,8 +3,8 @@
 name: Melhoria dos agentes
 
 on:
-  pull_request:
-    types: [closed]
+  # Disparo automático DESLIGADO (melhoria dos agentes é feita pelo Claude Code local). Para religar: pull_request: types: [closed]
+  workflow_dispatch:
 
 permissions:
   contents: write
