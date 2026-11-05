@@ -1,6 +1,7 @@
 // Consolidado Financeiro: linhas da DRE e do balanço, identidades contábeis e KPIs. Lógica pura (sem banco, sessão nem IA).
 // Convenção de sinais: despesas, custos e deduções são positivos e subtraídos; resultado_financeiro tem sinal próprio.
-// Valores sempre em reais (já multiplicados pela unidade do documento, ex.: "R$ mil" → × 1000).
+// Valores sempre na moeda do período (já multiplicados pela unidade do documento, ex.: "R$ mil" → × 1000).
+// outras_despesas (opcional) é o líquido de outras receitas/despesas fora da operação (ex.: "Net Other Income" com sinal trocado).
 
 export type TipoLinha = "fluxo" | "estoque";
 
@@ -15,6 +16,7 @@ export const LINHAS = [
   { chave: "depreciacao", tipo: "fluxo", rotulo: "Depreciação e amortização" },
   { chave: "ebit", tipo: "fluxo", rotulo: "Resultado operacional (EBIT)" },
   { chave: "resultado_financeiro", tipo: "fluxo", rotulo: "Resultado financeiro" },
+  { chave: "outras_despesas", tipo: "fluxo", rotulo: "Outras despesas (líquidas)", opcional: true },
   { chave: "lair", tipo: "fluxo", rotulo: "Lucro antes do IR e CSLL (LAIR)" },
   { chave: "ir_csll", tipo: "fluxo", rotulo: "IR e CSLL" },
   { chave: "lucro_liquido", tipo: "fluxo", rotulo: "Lucro líquido" },
@@ -48,24 +50,25 @@ export type Identidade = {
   diferenca: number | null;
 };
 
-const IDENTIDADES: { chave: string; descricao: string; alvo: ChaveLinha; termos: [ChaveLinha, 1 | -1][] }[] = [
+// Termo opcional (terceiro elemento true): ausente conta como 0 e não deixa a identidade "sem_dados".
+const IDENTIDADES: { chave: string; descricao: string; alvo: ChaveLinha; termos: [ChaveLinha, 1 | -1, true?][] }[] = [
   { chave: "receita_liquida", descricao: "Receita líquida = receita bruta − deduções", alvo: "receita_liquida", termos: [["receita_bruta", 1], ["deducoes", -1]] },
   { chave: "lucro_bruto", descricao: "Lucro bruto = receita líquida − CMV", alvo: "lucro_bruto", termos: [["receita_liquida", 1], ["cmv", -1]] },
   // Parte da receita líquida (não do lucro bruto) para que um erro de digitação num subtotal gere um único alerta.
   { chave: "ebitda", descricao: "EBITDA = receita líquida − CMV − despesas operacionais", alvo: "ebitda", termos: [["receita_liquida", 1], ["cmv", -1], ["despesas_operacionais", -1]] },
   { chave: "ebit", descricao: "EBIT = EBITDA − depreciação", alvo: "ebit", termos: [["ebitda", 1], ["depreciacao", -1]] },
-  { chave: "lair", descricao: "LAIR = EBIT + resultado financeiro", alvo: "lair", termos: [["ebit", 1], ["resultado_financeiro", 1]] },
+  { chave: "lair", descricao: "LAIR = EBIT + resultado financeiro − outras despesas", alvo: "lair", termos: [["ebit", 1], ["resultado_financeiro", 1], ["outras_despesas", -1, true]] },
   { chave: "lucro_liquido", descricao: "Lucro líquido = LAIR − IR e CSLL", alvo: "lucro_liquido", termos: [["lair", 1], ["ir_csll", -1]] },
 ];
 
-/** As 6 identidades da DRE. Tolerância de R$ 1 × unidade do documento (ex.: R$ 1.000 em "R$ mil"). */
+/** As 6 identidades da DRE. Tolerância de 1 × unidade do documento, na moeda do período (ex.: R$ 1.000 em "R$ mil"). */
 export function checarIdentidades(linhas: Linhas, unidade = 1): Identidade[] {
   const tol = Math.abs(unidade) * 1 + 1e-9;
   return IDENTIDADES.map((id) => {
     const enc = linhas[id.alvo];
-    const vals = id.termos.map(([k]) => linhas[k]);
+    const vals = id.termos.filter((t) => !t[2]).map(([k]) => linhas[k]);
     if (!num(enc) || !vals.every(num)) return { chave: id.chave, descricao: id.descricao, status: "sem_dados", esperado: null, encontrado: num(enc) ? enc : null, diferenca: null };
-    const esp = id.termos.reduce((s, [k, sinal]) => s + sinal * (linhas[k] as number), 0);
+    const esp = id.termos.reduce((s, [k, sinal]) => s + sinal * (linhas[k] ?? 0), 0);
     const dif = enc - esp;
     return { chave: id.chave, descricao: id.descricao, status: Math.abs(dif) <= tol ? "ok" : "divergente", esperado: esp, encontrado: enc, diferenca: dif };
   });
@@ -73,9 +76,19 @@ export function checarIdentidades(linhas: Linhas, unidade = 1): Identidade[] {
 
 // ---------- KPIs ----------
 
-export type Motivo = "divisor_zero" | "pl_negativo" | "capital_negativo" | "sem_custo_variavel" | "linha_ausente" | "sem_periodos";
+export type Motivo =
+  | "divisor_zero"
+  | "pl_negativo"
+  | "capital_negativo"
+  | "sem_custo_variavel"
+  | "linha_ausente"
+  | "sem_periodos"
+  | "contas_nao_classificadas"
+  | "sem_balanco"
+  | "margem_contribuicao_negativa";
 export type Aviso = "saldo_final" | "aliquota_padrao";
-export type Kpi = { valor: number | null; motivo?: Motivo; avisos?: Aviso[] };
+/** valor na moeda do período (EBITDA, ponto de equilíbrio) ou fração (margens e retornos). `pendentes`: caminhos das contas sem classe. */
+export type Kpi = { valor: number | null; motivo?: Motivo; avisos?: Aviso[]; pendentes?: string[] };
 
 export const KPI_CHAVES = [
   "margem_bruta",
@@ -101,6 +114,8 @@ export type OpcoesKpi = {
   aliquotaPadrao?: number;
   /** Parte do CMV que é custo variável (0..1), quando a DRE não separa custos fixos e variáveis. */
   pctVariavelSobreCmv?: number;
+  /** Contas ainda sem classe (fixo/variável/fora). Se houver alguma, o ponto de equilíbrio fica null com "contas_nao_classificadas". */
+  pendentesClassificacao?: string[];
 };
 
 const nulo = (motivo: Motivo): Kpi => ({ valor: null, motivo });
@@ -121,7 +136,11 @@ function capital(l: Linhas, o: OpcoesKpi): number | undefined {
 }
 
 /** Saldos de estoque a usar como divisor: média dos disponíveis, ou o final. `soFinal` indica que faltou o início. */
-type Saldos = { pl?: number; ativo?: number; capital?: number; soFinal: boolean };
+type Saldos = { pl?: number; ativo?: number; capital?: number; soFinal: boolean; semBalanco: boolean };
+
+const ESTOQUES: ChaveLinha[] = LINHAS.filter((l) => l.tipo === "estoque").map((l) => l.chave);
+/** true se nenhum dos períodos tem linha de balanço (ex.: só o P&L do QuickBooks). */
+const semBalanco = (ls: Linhas[]) => !ls.some((l) => ESTOQUES.some((k) => num(l[k])));
 
 function media(xs: (number | undefined)[]): number | undefined {
   const v = xs.filter(num);
@@ -131,6 +150,10 @@ function media(xs: (number | undefined)[]): number | undefined {
 function calcular(f: Linhas, s: Saldos, o: OpcoesKpi): Kpis {
   const rl = f.receita_liquida;
   const avSaldo: Aviso[] = s.soFinal ? ["saldo_final"] : [];
+  if (s.semBalanco) {
+    const sb = nulo("sem_balanco");
+    return { ...calcular(f, { soFinal: s.soFinal, semBalanco: false }, o), roe: sb, roa: sb, roic: sb, roi: sb };
+  }
 
   // ROE: PL ≤ 0 tem motivo próprio.
   let roe: Kpi;
@@ -176,9 +199,13 @@ function calcular(f: Linhas, s: Saldos, o: OpcoesKpi): Kpis {
  * 1) Usa custos_variaveis e custos_fixos da DRE, se houver.
  * 2) Senão, com pctVariavelSobreCmv: variáveis = CMV × pct; fixos = CMV × (1 − pct) + despesas operacionais + depreciação.
  * 3) Senão, null com "sem_custo_variavel".
+ * Contas pendentes de classificação bloqueiam o cálculo ("contas_nao_classificadas", com a lista).
+ * Margem de contribuição negativa (variáveis > receita) não tem equilíbrio: "margem_contribuicao_negativa".
+ * Valor na moeda do período.
  */
 export function pontoEquilibrio(f: Linhas, o: OpcoesKpi = {}): Kpi {
   const rl = f.receita_liquida;
+  if (o.pendentesClassificacao?.length) return { valor: null, motivo: "contas_nao_classificadas", pendentes: [...o.pendentesClassificacao] };
   let variaveis: number | undefined, fixos: number | undefined;
   if (num(f.custos_variaveis) && num(f.custos_fixos)) {
     variaveis = f.custos_variaveis;
@@ -193,6 +220,7 @@ export function pontoEquilibrio(f: Linhas, o: OpcoesKpi = {}): Kpi {
   if (rl === 0) return nulo("divisor_zero");
   const pctMc = (rl - variaveis) / rl;
   if (pctMc === 0) return nulo("divisor_zero");
+  if (pctMc < 0) return nulo("margem_contribuicao_negativa");
   return razao(fixos, pctMc);
 }
 
@@ -209,6 +237,7 @@ export function kpis(periodo: Periodo | Linhas, anterior?: Periodo | Linhas, opc
     ativo: par((l) => l.ativo_total),
     capital: par((l) => capital(l, opcoes)),
     soFinal: usarMedia && !a,
+    semBalanco: semBalanco([f]),
   };
   return calcular(f, s, opcoes);
 }
@@ -253,13 +282,39 @@ export function kpisTrimestre(periodos: Periodo[], opcoes: OpcoesKpi = {}): Kpis
     ativo: pega((l) => l.ativo_total),
     capital: pega((l) => capital(l, opcoes)),
     soFinal: false,
+    semBalanco: semBalanco(ok.map((p) => p.linhas)),
   };
   return { kpis: calcular(linhas, s, opcoes), meses, parcial: meses < 3, situacao, linhas };
+}
+
+// ---------- KPIs opcionais ----------
+
+/** KPIs fora do painel padrão. O lucro oficial continua sendo lucro_liquido (o Net Income do relatório). */
+export const KPI_OPCIONAIS = ["lucro_liquido_ajustado"] as const;
+export type KpiOpcional = (typeof KPI_OPCIONAIS)[number];
+
+/**
+ * lucro_liquido_ajustado = lucro líquido + distribuições aos sócios lançadas como despesa (ex.: "Shareholder Distributions").
+ * Na moeda do período. Sem distribuições informadas, é igual ao lucro líquido.
+ */
+export function kpisOpcionais(f: Linhas, extra: { distribuicoes?: number } = {}): Record<KpiOpcional, Kpi> {
+  const ll = f.lucro_liquido;
+  return { lucro_liquido_ajustado: num(ll) ? { valor: ll + (num(extra.distribuicoes) ? extra.distribuicoes : 0) } : nulo("linha_ausente") };
 }
 
 // ---------- Fórmulas explicadas ----------
 
 export type Formula = { chave: KpiChave; nome: string; formula: string; explicacao: string };
+export type FormulaOpcional = { chave: KpiOpcional; nome: string; formula: string; explicacao: string };
+
+export const FORMULAS_OPCIONAIS: Record<"pt" | "en", FormulaOpcional[]> = {
+  pt: [
+    { chave: "lucro_liquido_ajustado", nome: "Lucro líquido ajustado", formula: "Lucro líquido + Distribuições aos sócios", explicacao: "O lucro sem descontar o que os sócios retiraram e foi lançado como despesa. O lucro oficial continua sendo o do relatório." },
+  ],
+  en: [
+    { chave: "lucro_liquido_ajustado", nome: "Adjusted net income", formula: "Net income + Shareholder distributions", explicacao: "Profit before the owners' withdrawals booked as expenses. The official profit is still the one in the report." },
+  ],
+};
 
 export const FORMULAS: Record<"pt" | "en", Formula[]> = {
   pt: [

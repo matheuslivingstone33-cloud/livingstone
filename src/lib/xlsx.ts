@@ -1,6 +1,8 @@
 // Gerador mínimo de .xlsx (sem dependências), port em TypeScript de scripts/xlsx-mini.mjs, com formatos numéricos.
 import { crc32, deflateRawSync } from "node:zlib";
 import { FORMULAS, KPI_CHAVES, LINHAS, kpis, kpisTrimestre, type Kpi, type OpcoesKpi, type Periodo } from "./demonstrativos";
+import { efetivo, flagDe, type ArvoreContas, type Classe } from "./plano-contas";
+import type { Moeda } from "./moeda";
 
 export type ZipEntry = { name: string; data: string | Buffer; declaredSize?: number };
 
@@ -77,7 +79,11 @@ function celulaXml(c: Celula, ref: string): string {
   return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${esc(c)}</t></is></c>`;
 }
 
-export function buildXlsx(sheets: Aba[]): Buffer {
+/** Formato da célula "moeda": sem `moeda`, "#,##0.00" (como antes); com ela, o símbolo explícito ("R$"/"US$"). */
+const FMT_MOEDA: Record<Moeda, string> = { BRL: '"R$" #,##0.00', USD: '"US$" #,##0.00' };
+
+export function buildXlsx(sheets: Aba[], opcoes: { moeda?: Moeda } = {}): Buffer {
+  const fmtMoeda = esc(opcoes.moeda ? FMT_MOEDA[opcoes.moeda] : "#,##0.00");
   const sheetXml = (rows: Celula[][]) =>
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows
       .map((r, ri) => `<row r="${ri + 1}">${r.map((c, ci) => celulaXml(c, `${col(ci)}${ri + 1}`)).join("")}</row>`)
@@ -107,7 +113,7 @@ export function buildXlsx(sheets: Aba[]): Buffer {
     },
     {
       name: "xl/styles.xml",
-      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="2"><numFmt numFmtId="164" formatCode="#,##0.00"/><numFmt numFmtId="165" formatCode="0.0%"/></numFmts><fonts count="1"><font/></fonts><fills count="1"><fill/></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="4"><xf numFmtId="0"/><xf numFmtId="14" applyNumberFormat="1"/><xf numFmtId="164" applyNumberFormat="1"/><xf numFmtId="165" applyNumberFormat="1"/></cellXfs></styleSheet>`,
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="2"><numFmt numFmtId="164" formatCode="${fmtMoeda}"/><numFmt numFmtId="165" formatCode="0.0%"/></numFmts><fonts count="1"><font/></fonts><fills count="1"><fill/></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="4"><xf numFmtId="0"/><xf numFmtId="14" applyNumberFormat="1"/><xf numFmtId="164" applyNumberFormat="1"/><xf numFmtId="165" applyNumberFormat="1"/></cellXfs></styleSheet>`,
     },
     ...sheets.map((s, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: sheetXml(s.rows) })),
   ];
@@ -116,12 +122,40 @@ export function buildXlsx(sheets: Aba[]): Buffer {
 
 // ---------- Planilha do Consolidado Financeiro ----------
 
-const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-const TRIMESTRES = ["T1", "T2", "T3", "T4"];
+const TXT = {
+  pt: {
+    meses: ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"],
+    tri: ["T1", "T2", "T3", "T4"],
+    abas: ["Dados", "KPIs", "Fórmulas", "Contas"],
+    situacao: "Situação",
+    conferido: "conferido",
+    formulas: ["Chave", "Indicador", "Fórmula", "Explicação"],
+    contas: ["Conta", "Caminho", "Seção", "Nível", "Valor", "Classe", "Atenção"],
+  },
+  en: {
+    meses: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+    tri: ["Q1", "Q2", "Q3", "Q4"],
+    abas: ["Data", "KPIs", "Formulas", "Accounts"],
+    situacao: "Status",
+    conferido: "reviewed",
+    formulas: ["Key", "Indicator", "Formula", "Explanation"],
+    contas: ["Account", "Path", "Section", "Level", "Amount", "Class", "Attention"],
+  },
+} as const;
 const KPI_MOEDA = new Set(["ebitda", "ponto_equilibrio"]);
 
-/** Planilha com 3 abas (Dados, KPIs, Fórmulas). Só entram períodos CONFERIDO do ano. */
-export function montarPlanilhaConsolidada(ano: number, periodos: Periodo[], opcoes: OpcoesKpi & { idioma?: "pt" | "en" } = {}): Buffer {
+export type OpcoesPlanilha = OpcoesKpi & {
+  idioma?: "pt" | "en";
+  /** Símbolo da moeda nas células de valor. Sem ele, "#,##0.00" como antes. */
+  moeda?: Moeda;
+  /** Aba opcional "Contas": a árvore do relatório com a classe de cada conta. */
+  contas?: { arvore: ArvoreContas; classes: Record<string, Classe> };
+};
+
+/** Planilha com 3 abas (Dados, KPIs, Fórmulas) e, opcionalmente, Contas. Só entram períodos CONFERIDO do ano. Valores na moeda do período. */
+export function montarPlanilhaConsolidada(ano: number, periodos: Periodo[], opcoes: OpcoesPlanilha = {}): Buffer {
+  const t = TXT[opcoes.idioma ?? "pt"];
+  const MESES = t.meses;
   const ok = periodos.filter((p) => p.ano === ano && p.status === "CONFERIDO");
   const doMes = (m: number) => ok.find((p) => p.mes === m);
   const anteriorDe = (m: number) => (m === 1 ? periodos.find((p) => p.ano === ano - 1 && p.mes === 12 && p.status === "CONFERIDO") : doMes(m - 1));
@@ -130,7 +164,7 @@ export function montarPlanilhaConsolidada(ano: number, periodos: Periodo[], opco
     const p = doMes(i + 1);
     return p ? kpis(p, anteriorDe(i + 1), opcoes) : null;
   });
-  const cab: Celula[] = ["", ...MESES, ...TRIMESTRES];
+  const cab: Celula[] = ["", ...MESES, ...t.tri];
 
   const dados: Celula[][] = [
     cab,
@@ -147,14 +181,33 @@ export function montarPlanilhaConsolidada(ano: number, periodos: Periodo[], opco
   const indicadores: Celula[][] = [
     cab,
     ...KPI_CHAVES.map((k) => [nome(k), ...kMes.map((m) => cel(k, m?.[k])), ...tris.map((t) => cel(k, t.meses ? t.kpis[k] : undefined))]),
-    ["Situação", ...kMes.map((m) => (m ? "conferido" : null)), ...tris.map((t) => (t.meses ? t.situacao : null))],
+    [t.situacao, ...kMes.map((m) => (m ? t.conferido : null)), ...tris.map((t) => (t.meses ? t.situacao : null))],
   ];
 
-  const abaFormulas: Celula[][] = [["Chave", "Indicador", "Fórmula", "Explicação"], ...formulas.map((f) => [f.chave, f.nome, f.formula, f.explicacao])];
+  const abaFormulas: Celula[][] = [[...t.formulas], ...formulas.map((f) => [f.chave, f.nome, f.formula, f.explicacao])];
 
-  return buildXlsx([
-    { name: "Dados", rows: dados },
-    { name: "KPIs", rows: indicadores },
-    { name: "Fórmulas", rows: abaFormulas },
-  ]);
+  const abas: Aba[] = [
+    { name: t.abas[0], rows: dados },
+    { name: t.abas[1], rows: indicadores },
+    { name: t.abas[2], rows: abaFormulas },
+  ];
+  if (opcoes.contas) {
+    const { arvore, classes } = opcoes.contas;
+    abas.push({
+      name: t.abas[3],
+      rows: [
+        [...t.contas],
+        ...arvore.contas.map((c): Celula[] => [
+          `${"  ".repeat(c.nivel)}${c.nome}`,
+          c.caminho,
+          c.secao,
+          c.nivel,
+          { n: efetivo(c), fmt: "moeda" },
+          c.secao === "income" ? null : (classes[c.caminho] ?? "nao_classificada"),
+          flagDe(c.nome),
+        ]),
+      ],
+    });
+  }
+  return buildXlsx(abas, { moeda: opcoes.moeda });
 }

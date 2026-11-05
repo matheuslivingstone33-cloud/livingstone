@@ -97,3 +97,147 @@ const chaves = Object.keys(MESES["2026-01"]);
 const csv = [`linha;${Object.keys(MESES).join(";")}`, ...chaves.map((k) => `${k};${Object.values(MESES).map((m) => m[k].toFixed(2)).join(";")}`)].join("\n") + "\n";
 writeFileSync(new URL("../public/demo/demonstrativos_2026_esperado.csv", import.meta.url), csv);
 console.log("Gerados: dre_balanco_2026_01.pdf, _02.pdf, _03.pdf e demonstrativos_2026_esperado.csv em public/demo/");
+
+// ---------- P&L do QuickBooks (fictício, em dólar): public/demo/quickbooks_pl_2026_09.pdf + _esperado.json ----------
+// "Harbor & Pine Law LLC" e todos os valores são inventados. Layout do relatório "Profit & Loss" mensal do QuickBooks:
+// 2 páginas, o grupo de Other Expense atravessa a quebra; "Accrual Basis", cabeçalho "September 2026", coluna "Sep 26".
+
+const QB_EMPRESA = "Harbor & Pine Law LLC";
+// [nome, centavos] para folha; [nome, [...filhas]] para grupo. Seções na ordem do relatório.
+const QB = [
+  ["Income", [
+    ["Legal Fees", [["Hourly Billing", 14825000], ["Flat Fee Matters", 3640000], ["Contingency Fees", 2275000]]],
+    ["Reimbursed Expenses", 318050],
+    ["Refunds to Clients", -125000],
+  ]],
+  ["Cost of Goods Sold", [
+    ["Contract Attorneys", [["Of Counsel", 1850000], ["Paralegal Contractors", 924000]]],
+    ["Court Filing Fees", 431575],
+    ["Expert Witness Fees", 680000],
+  ]],
+  ["Expenses", [
+    ["Advertising & Marketing", 425000],
+    ["Automobile Expense", [["Fuel", 61240], ["Parking", 38500]]],
+    ["Bank Service Charges", 14500],
+    ["Continuing Education", 120000],
+    ["Dues & Subscriptions", 89000],
+    ["Insurance Expense", 342000],
+    ["Meals 100%", 74230],
+    ["Meals 50%", 118460],
+    ["Merchant Account Fees", 209331],
+    ["Office Supplies", 103685],
+    ["Payroll Expenses", [["Payroll Fee", 41000], ["Payroll Tax", 687215], ["Wages", 7850000]]],
+    ["Postage and Delivery", 28640],
+    ["Professional Fees", 350000],
+    ["Rent Expense", 1200000],
+    ["Software Subscriptions", 214500],
+    ["Telephone & Internet", 96820],
+    ["Travel Expense", 174000],
+    ["Utilities", 112500],
+  ]],
+  ["Other Expense", [
+    ["Ask My Accountant", [["Uncategorized Card Charges", 134218], ["Unmatched Transfers", 56000], ["Owner Draw Pending Review", 210000]]],
+    ["Shareholder Distributions", 6000000],
+  ]],
+];
+
+const usd = (c, cifrao) => {
+  const s = (Math.abs(c) / 100).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `${c < 0 ? "-" : ""}${cifrao ? "$" : ""}${s}`;
+};
+const soma = (itens) => itens.reduce((t, [, v]) => t + (Array.isArray(v) ? soma(v) : v), 0);
+const normQ = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+const SEC = { "Income": "income", "Cost of Goods Sold": "cogs", "Expenses": "expense", "Other Expense": "other_expense" };
+
+const linhasQb = []; // [nivel, rotulo, centavos|null, cifrao?]
+const contasEsperadas = {};
+function emitir(itens, nivel, sec, cam) {
+  for (const [nome, v] of itens) {
+    const c = [...cam, normQ(nome)];
+    if (Array.isArray(v)) {
+      linhasQb.push([nivel, nome, null]);
+      emitir(v, nivel + 1, sec, c);
+      linhasQb.push([nivel, `Total ${nome}`, soma(v)]);
+      contasEsperadas[[sec, ...c].join(" > ")] = soma(v) / 100;
+    } else {
+      linhasQb.push([nivel, nome, v]);
+      contasEsperadas[[sec, ...c].join(" > ")] = v / 100;
+    }
+  }
+}
+const tot = Object.fromEntries(QB.map(([s, it]) => [SEC[s], soma(it)]));
+const gross = tot.income - tot.cogs, netOrd = gross - tot.expense, netOther = -tot.other_expense, netInc = netOrd + netOther;
+linhasQb.push([0, "Ordinary Income/Expense", null]);
+for (const [s, itens] of QB) {
+  if (s === "Other Expense") {
+    linhasQb.push([0, "Net Ordinary Income", netOrd, true]);
+    linhasQb.push([0, "Other Income/Expense", null]);
+  }
+  linhasQb.push([1, s, null]);
+  emitir(itens, 2, SEC[s], []);
+  linhasQb.push([1, `Total ${s}`, tot[SEC[s]], true]);
+  if (s === "Cost of Goods Sold") linhasQb.push([0, "Gross Profit", gross, true]);
+}
+linhasQb.push([0, "Net Other Income", netOther, true]);
+linhasQb.push([0, "Net Income", netInc, true]);
+
+/** PDF de várias páginas (mesmo formato do pdf() acima, que fica intacto para os PDFs BR). */
+function pdfPaginas(paginas) {
+  const n = paginas.length;
+  const objs = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    `<< /Type /Pages /Kids [${paginas.map((_, i) => `${5 + 2 * i} 0 R`).join(" ")}] /Count ${n} >>`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
+  ];
+  paginas.forEach((linhas, i) => {
+    const conteudo = linhas.map(([x, y, t, sz, b]) => `BT /${b ? "F2" : "F1"} ${sz} Tf ${x} ${y} Td (${pdfEsc(t)}) Tj ET`).join("\n");
+    objs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${6 + 2 * i} 0 R >>`);
+    objs.push(`<< /Length ${Buffer.byteLength(conteudo, "latin1")} >>\nstream\n${conteudo}\nendstream`);
+  });
+  let out = "%PDF-1.4\n";
+  const offs = [];
+  objs.forEach((o, i) => {
+    offs.push(Buffer.byteLength(out, "latin1"));
+    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+  });
+  const xref = Buffer.byteLength(out, "latin1");
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${offs.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("")}`;
+  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, "latin1");
+}
+
+// Quebra no meio do grupo "Ask My Accountant" (depois da 2ª subconta).
+const quebra = linhasQb.findIndex(([, r]) => r === "Unmatched Transfers") + 1;
+const blocos = [linhasQb.slice(0, quebra), linhasQb.slice(quebra)];
+const paginasQb = blocos.map((bloco, p) => {
+  const L = [];
+  // Cabeçalho do QuickBooks: hora/data/base à esquerda, empresa/título/período ao centro, rótulo da coluna.
+  L.push([36, 750, "10:42 AM", 8, true], [230, 750, QB_EMPRESA, 12, true]);
+  L.push([36, 738, "10/06/26", 8, true], [262, 734, "Profit & Loss", 14, true]);
+  L.push([36, 726, "Accrual Basis", 8, true], [262, 718, "September 2026", 10, true]);
+  L.push([500, 696, "Sep 26", 9, true]);
+  let y = 680;
+  for (const [nivel, rot, v, cifrao] of bloco) {
+    y -= 12.5;
+    const negrito = v === null || rot.startsWith("Total ") || nivel === 0;
+    L.push([36 + nivel * 10, y, rot, 8, negrito]);
+    if (v !== null) L.push([480, y, usd(v, cifrao), 8, negrito]);
+  }
+  L.push([280, 30, `Page ${p + 1} of ${blocos.length}`, 8, false]);
+  return L;
+});
+writeFileSync(new URL("../public/demo/quickbooks_pl_2026_09.pdf", import.meta.url), pdfPaginas(paginasQb));
+
+const esperadoQb = {
+  aviso: "Dados fictícios para demonstração. Não corresponde a nenhuma empresa real.",
+  empresa: QB_EMPRESA,
+  ano: 2026,
+  mes: 9,
+  moeda: "USD",
+  secoes: Object.fromEntries(Object.entries(tot).map(([k, v]) => [k, v / 100])),
+  resumo: { gross_profit: gross / 100, net_ordinary: netOrd / 100, net_other: netOther / 100, net_income: netInc / 100 },
+  contas: contasEsperadas,
+};
+writeFileSync(new URL("../public/demo/quickbooks_pl_2026_09_esperado.json", import.meta.url), JSON.stringify(esperadoQb, null, 2) + "\n");
+console.log("Gerados: quickbooks_pl_2026_09.pdf e quickbooks_pl_2026_09_esperado.json em public/demo/");

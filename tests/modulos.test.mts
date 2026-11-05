@@ -3703,3 +3703,214 @@ test("Demonstrativos: FORMULAS pt e en com as mesmas chaves", () => {
   assert.deepEqual([...ch("pt")].sort(), [...KPI_CHAVES].sort());
   for (const f of [...FORMULAS.pt, ...FORMULAS.en]) assert.ok(f.nome && f.formula && f.explicacao);
 });
+
+// ---------- Consolidado Financeiro (fases 2/3: P&L do QuickBooks, plano de contas e classificação) ----------
+import { FORMULAS_OPCIONAIS, KPI_OPCIONAIS, kpisOpcionais } from "../src/lib/demonstrativos";
+import { aplicarClassificacao, checarContas, classificar, distribuicoes, efetivo, mapearQuickbooks, padroesQuickbooks, type ArvoreContas, type Classe } from "../src/lib/plano-contas";
+import { detectarMes, parseQuickbooksPL, type PlQuickbooks } from "../src/lib/quickbooks-pl";
+import { inflateRawSync } from "node:zlib";
+
+const qbEsperado = () => JSON.parse(demo("quickbooks_pl_2026_09_esperado.json").toString("utf8"));
+const qbTexto = () => pdfText(demo("quickbooks_pl_2026_09.pdf"));
+async function qbDemo(): Promise<PlQuickbooks> {
+  const r = parseQuickbooksPL([await qbTexto()]);
+  assert.ok(!("erro" in r), JSON.stringify(r));
+  return r as PlQuickbooks;
+}
+const pertoRel = (a: number | null, b: number) => assert.ok(a !== null && Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(b)), `${a} != ${b}`);
+
+/** Conteúdo de uma entrada do zip gerado por buildZip (deflate, sem descritor de dados). */
+function entradaZip(buf: Buffer, nome: string): string {
+  for (let o = 0; buf.readUInt32LE(o) === 0x04034b50; ) {
+    const comp = buf.readUInt32LE(o + 18), n = buf.readUInt16LE(o + 26), x = buf.readUInt16LE(o + 28);
+    const ini = o + 30 + n + x;
+    if (buf.toString("utf8", o + 30, o + 30 + n) === nome) return inflateRawSync(buf.subarray(ini, ini + comp)).toString("utf8");
+    o = ini + comp;
+  }
+  throw new Error(`sem ${nome}`);
+}
+
+test("QuickBooks P&L: parser lê a demo de setembro igual ao esperado (mês, moeda, negativos, quebra de página)", async () => {
+  const esp = qbEsperado();
+  const r = await qbDemo();
+  assert.equal(r.empresa, "Harbor & Pine Law LLC");
+  assert.equal(r.ano, 2026);
+  assert.equal(r.mes, 9);
+  assert.equal(r.moeda, "USD");
+  assert.deepEqual(r.secoes, esp.secoes);
+  assert.deepEqual(r.resumo, esp.resumo);
+  assert.deepEqual(Object.fromEntries(r.contas.map((c) => [c.caminho, efetivo(c)])), esp.contas);
+  // Negativos com "-": uma conta e o Net Other Income.
+  assert.equal(r.contas.find((c) => c.caminho === "income > refunds to clients")!.valor, -1250);
+  assert.ok(r.resumo.net_other! < 0 && r.resumo.net_income! < 0);
+  // "Ask My Accountant" atravessa a página e mantém as 3 subcontas.
+  const ama = r.contas.find((c) => c.caminho === "other_expense > ask my accountant")!;
+  assert.equal(ama.filhas.length, 3);
+  assert.equal(ama.total, 4002.18);
+  assert.equal(r.contas.filter((c) => c.secao === "expense" && c.pai === null).length, 18);
+  // Cabeçalho e rodapé das páginas não viram contas.
+  assert.ok(!r.contas.some((c) => /page|harbor|profit|sep 26|basis/i.test(c.nome)));
+  // Também aceita o texto por página, com "$" e parênteses.
+  const p = parseQuickbooksPL([
+    "Acme LLC\nProfit and Loss\nSep '26\nIncome\nFees $ 1,000.00\nRefund (100.00)\nTotal Income $900.00",
+    "Acme LLC\nProfit and Loss\nSep '26\nNet Income $900.00\nPage 2",
+  ]) as PlQuickbooks;
+  assert.ok(!("erro" in p));
+  assert.equal(p.contas[1].valor, -100);
+  assert.equal(p.resumo.net_income, 900);
+});
+
+test("QuickBooks P&L: detectarMes nos formatos aceitos e recusa período não mensal", () => {
+  const cab = (s: string) => `Acme\nProfit & Loss\n${s}\nIncome\nFees 1.00`;
+  for (const s of ["September 2026", "Sep 2026", "Sep 26", "Sep '26", "Sept 2026", "September 2026\nSep 26", "September 1-30, 2026"]) assert.deepEqual(detectarMes(cab(s)), { ano: 2026, mes: 9 }, s);
+  assert.deepEqual(detectarMes(cab("January 2025")), { ano: 2025, mes: 1 });
+  for (const s of ["January - September 2026", "Jan - Sep 26", "September 2026\nJul 26 Aug 26 Sep 26 TOTAL", "Dec 2025 - Jan 2026"]) assert.deepEqual(detectarMes(cab(s)), { erro: "periodo_nao_mensal" }, s);
+  // Sem mês no cabeçalho: nunca usa a data atual.
+  assert.deepEqual(detectarMes(cab("All Dates")), { erro: "sem_periodo" });
+  assert.deepEqual(parseQuickbooksPL([cab("Jan - Sep 26") + "\nTotal Income 1.00\nNet Income 1.00"]), { erro: "periodo_nao_mensal" });
+});
+
+test("QuickBooks P&L: layout desconhecido (demo BR, sem Net Income, só números, totais que não batem)", async () => {
+  const br = await pdfText(demo("dre_balanco_2026_01.pdf"));
+  assert.deepEqual(parseQuickbooksPL([br]), { erro: "layout_desconhecido" });
+  const base = (await qbTexto()).split("\n");
+  assert.deepEqual(parseQuickbooksPL([base.filter((l) => !/net income/i.test(l)).join("\n")]), { erro: "layout_desconhecido" });
+  // Rótulo e valor em linhas separadas: mais de 20% de linhas só com número.
+  const separado = base.map((l) => l.replace(/^(.*[a-z%)]) (-?\$?[\d,]+\.\d{2})$/i, "$1\n$2")).join("\n");
+  assert.equal((parseQuickbooksPL([separado]) as { erro: string }).erro, "layout_desconhecido");
+  // Um valor trocado: checarContas reprova.
+  const errado = parseQuickbooksPL([base.join("\n").replace("Rent Expense 12,000.00", "Rent Expense 12,100.00")]) as { erro: string; divergencias: { chave: string }[] };
+  assert.equal(errado.erro, "layout_desconhecido");
+  assert.deepEqual(errado.divergencias.map((d) => d.chave), ["expense"]);
+});
+
+test("Plano de contas: checarContas ok na demo e aponta divergência pontual", async () => {
+  const r = await qbDemo();
+  assert.deepEqual(checarContas(r), { ok: true, divergencias: [] });
+  const wages = r.contas.find((c) => c.nome === "Wages")!;
+  const com = (d: number): ArvoreContas => ({ ...r, contas: r.contas.map((c) => (c === wages ? { ...c, valor: c.valor + d } : c)) });
+  const chk = checarContas(com(0.05));
+  assert.equal(chk.ok, false);
+  assert.deepEqual(chk.divergencias.map((d) => d.chave), ["expense > payroll expenses"]);
+  assert.equal(chk.divergencias[0].diferenca, -0.05);
+  assert.equal(checarContas(com(0.01)).ok, true); // tolerância de 0,01
+  const resumo = checarContas({ ...r, resumo: { ...r.resumo, net_income: -17000 } });
+  assert.deepEqual(resumo.divergencias.map((d) => d.chave), ["net_income"]);
+});
+
+test("Plano de contas: mapeamento do QuickBooks fecha as identidades; demo BR inalterada", async () => {
+  const r = await qbDemo();
+  const { linhas, inferidas, alertas } = mapearQuickbooks(r);
+  assert.equal(linhas.receita_liquida, 209330.5);
+  assert.equal(linhas.cmv, 38855.75);
+  assert.equal(linhas.lucro_bruto, 170474.75);
+  assert.equal(linhas.despesas_operacionais, 123506.21);
+  assert.equal(linhas.ebit, 46968.54);
+  assert.equal(linhas.outras_despesas, 64002.18);
+  assert.equal(linhas.lucro_liquido, -17033.64);
+  assert.deepEqual(inferidas, ["deducoes", "depreciacao", "resultado_financeiro", "ir_csll"]);
+  for (const k of inferidas) assert.equal(linhas[k], 0);
+  assert.ok(checarIdentidades(linhas).every((i) => i.status === "ok"));
+  assert.deepEqual(
+    alertas.filter((a) => a.caminho).map((a) => [a.codigo, a.caminho]),
+    [
+      ["suspensa", "other_expense > ask my accountant"],
+      ["distribuicao", "other_expense > shareholder distributions"],
+    ],
+  );
+  assert.ok(alertas.some((a) => a.codigo === "sem_balanco"));
+  // LAIR com outras despesas; sem o termo opcional segue como na fase 1.
+  const lair = (l: Linhas) => checarIdentidades(l).find((i) => i.chave === "lair")!;
+  assert.equal(lair({ ebit: 100, resultado_financeiro: -10, outras_despesas: 30, lair: 60 }).status, "ok");
+  assert.equal(lair({ ebit: 100, resultado_financeiro: -10, outras_despesas: 30, lair: 90 }).status, "divergente");
+  assert.equal(lair({ ebit: 100, resultado_financeiro: -10, lair: 90 }).status, "ok");
+  const d = demoDemonstrativos();
+  assert.equal(d["2026-01"].outras_despesas, undefined);
+  assert.equal(checarIdentidades(d["2026-01"]).filter((i) => i.status !== "ok").length, 0);
+});
+
+test("Plano de contas: classificação padrão deixa pendentes e bloqueia o ponto de equilíbrio", async () => {
+  const r = await qbDemo();
+  const padrao = padroesQuickbooks(r);
+  assert.equal(padrao["cogs > contract attorneys"], "variavel");
+  assert.equal(padrao["expense > payroll expenses"], "fixo");
+  assert.equal(padrao["other_expense > ask my accountant"], "fora");
+  const cl = classificar(r);
+  // Filhas herdam a classe da mãe.
+  assert.equal(cl.classes["expense > payroll expenses > wages"], "fixo");
+  assert.equal(cl.classes["cogs > contract attorneys > of counsel"], "variavel");
+  assert.equal(cl.classes["other_expense > ask my accountant > unmatched transfers"], "fora");
+  // 17 contas de Expense sem classe (Automobile entra uma vez, sem as filhas).
+  assert.equal(cl.pendentes.length, 17);
+  assert.ok(cl.pendentes.includes("expense > automobile expense") && !cl.pendentes.includes("expense > automobile expense > fuel"));
+  const linhas = aplicarClassificacao(mapearQuickbooks(r).linhas, cl);
+  assert.equal(linhas.custos_fixos, undefined);
+  const k = kpis(linhas, undefined, { pendentesClassificacao: cl.pendentes });
+  assert.equal(k.ponto_equilibrio.valor, null);
+  assert.equal(k.ponto_equilibrio.motivo, "contas_nao_classificadas");
+  assert.deepEqual(k.ponto_equilibrio.pendentes, cl.pendentes);
+});
+
+test("Plano de contas: classificação completa calcula o ponto de equilíbrio à mão", async () => {
+  const r = await qbDemo();
+  const mapa: Record<string, Classe> = Object.fromEntries(classificar(r).pendentes.map((c) => [c, "fixo" as Classe]));
+  mapa["expense > merchant account fees"] = "variavel";
+  // A org pode mudar uma filha: Fuel vira variável e Parking segue a mãe (fixo).
+  mapa["expense > automobile expense > fuel"] = "variavel";
+  const cl = classificar(r, mapa);
+  assert.deepEqual(cl.pendentes, []);
+  assert.equal(cl.classes["expense > automobile expense > parking"], "fixo");
+  // Variáveis = COGS 38.855,75 + Merchant 2.093,31 + Fuel 612,40 = 41.561,46; fixos = 123.506,21 − 2.093,31 − 612,40 = 120.800,50.
+  assert.equal(cl.custos_variaveis, 41561.46);
+  assert.equal(cl.custos_fixos, 120800.5);
+  const k = kpis(aplicarClassificacao(mapearQuickbooks(r).linhas, cl));
+  pertoRel(k.ponto_equilibrio.valor, 120800.5 / ((209330.5 - 41561.46) / 209330.5));
+  assert.equal(pontoEquilibrio({ receita_liquida: 100, custos_variaveis: 150, custos_fixos: 10 }).motivo, "margem_contribuicao_negativa");
+});
+
+test("Demonstrativos: sem_balanco em ROE/ROA/ROIC/ROI quando o período não tem linha de estoque", async () => {
+  const { linhas } = mapearQuickbooks(await qbDemo());
+  const k = kpis(linhas);
+  for (const c of ["roe", "roa", "roic", "roi"] as const) assert.deepEqual(k[c], { valor: null, motivo: "sem_balanco" });
+  pertoRel(k.margem_bruta.valor, 170474.75 / 209330.5);
+  pertoRel(k.margem_liquida.valor, -17033.64 / 209330.5);
+  assert.equal(k.ebitda.valor, 46968.54);
+  assert.equal(kpisTrimestre([{ ano: 2026, mes: 9, status: "CONFERIDO", linhas }]).kpis.roe.motivo, "sem_balanco");
+  assert.notEqual(kpis(perDemo(1)).roe.motivo, "sem_balanco");
+});
+
+test("Demonstrativos: lucro líquido ajustado soma as distribuições aos sócios", async () => {
+  const r = await qbDemo();
+  assert.equal(distribuicoes(r), 60000);
+  const { linhas } = mapearQuickbooks(r);
+  pertoRel(kpisOpcionais(linhas, { distribuicoes: distribuicoes(r) }).lucro_liquido_ajustado.valor, 42966.36);
+  assert.equal(kpisOpcionais(linhas).lucro_liquido_ajustado.valor, -17033.64);
+  assert.equal(kpisOpcionais({}).lucro_liquido_ajustado.motivo, "linha_ausente");
+  for (const l of ["pt", "en"] as const) assert.deepEqual(FORMULAS_OPCIONAIS[l].map((f) => f.chave), [...KPI_OPCIONAIS]);
+});
+
+test("Demonstrativos: XLSX em dólar, em inglês e com a aba Contas, relido", async () => {
+  const { default: readXlsxFile } = await import("read-excel-file/node");
+  const r = await qbDemo();
+  const { linhas } = mapearQuickbooks(r);
+  const cl = classificar(r);
+  const buf = montarPlanilhaConsolidada(2026, [{ ano: 2026, mes: 9, status: "CONFERIDO", linhas }], { idioma: "en", moeda: "USD", contas: { arvore: r, classes: cl.classes } });
+  const abas = await readXlsxFile(buf);
+  assert.deepEqual(abas.map((a) => a.sheet), ["Data", "KPIs", "Formulas", "Accounts"]);
+  assert.equal(abas[0].data[0][9], "Sep");
+  assert.equal(abas[0].data[0][15], "Q3");
+  assert.equal(abas[0].data[1][9], 209330.5);
+  assert.deepEqual(abas[2].data[0], ["Key", "Indicator", "Formula", "Explanation"]);
+  const contas = abas[3].data;
+  assert.equal(contas.length, r.contas.length + 1);
+  const wages = contas.find((l) => l[1] === "expense > payroll expenses > wages")!;
+  assert.equal(wages[4], 78500);
+  assert.equal(wages[5], "fixo");
+  assert.equal(contas.find((l) => l[1] === "other_expense > shareholder distributions")![6], "distribuicao");
+  assert.ok(entradaZip(buf, "xl/styles.xml").includes('formatCode="&quot;US$&quot; #,##0.00"'));
+  assert.ok(entradaZip(montarPlanilhaConsolidada(2026, [perDemo(1)], { moeda: "BRL" }), "xl/styles.xml").includes('formatCode="&quot;R$&quot; #,##0.00"'));
+  // Sem opções: português e "#,##0.00", como na fase 1.
+  const padrao = montarPlanilhaConsolidada(2026, [perDemo(1)]);
+  assert.ok(entradaZip(padrao, "xl/styles.xml").includes('formatCode="#,##0.00"'));
+  assert.deepEqual((await readXlsxFile(padrao)).map((a) => a.sheet), ["Dados", "KPIs", "Fórmulas"]);
+});
