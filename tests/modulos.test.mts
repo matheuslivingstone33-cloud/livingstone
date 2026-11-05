@@ -3914,3 +3914,15 @@ test("Demonstrativos: XLSX em dólar, em inglês e com a aba Contas, relido", as
   assert.ok(entradaZip(padrao, "xl/styles.xml").includes('formatCode="#,##0.00"'));
   assert.deepEqual((await readXlsxFile(padrao)).map((a) => a.sheet), ["Dados", "KPIs", "Fórmulas"]);
 });
+
+test("QuickBooks P&L: cabeçalho no fim da página (como sai do PDF real) também é lido", () => {
+  const p1 = ["Sep 26", "Ordinary Income/Expense", "Income", "Fees 1,000.00", "Total Income 1,000.00", "Cost of Goods Sold", "Court Costs 100.00", "Total COGS 100.00",
+    "Gross Profit 900.00", "Expense", "Payroll Expenses", "Wages 300.00", "Total Payroll Expenses 300.00", "Rent Expense 200.00", "Total Expense 500.00",
+    "Net Ordinary Income 400.00", "1:51 PM Exemplo Fictício LLC", "10/26/26 Profit & Loss", "Accrual Basis September 2026", "Page 1"].join("\n");
+  const p2 = ["Sep 26", "Other Income/Expense", "Other Expense", "Shareholder Distributions 50.00", "Total Other Expense 50.00", "Net Other Income -50.00",
+    "Net Income 350.00", "1:51 PM Exemplo Fictício LLC", "10/26/26 Profit & Loss", "Accrual Basis September 2026", "Page 2"].join("\n");
+  const r = parseQuickbooksPL([p1, p2]);
+  assert.ok(!("erro" in r), JSON.stringify(r));
+  const pl = r as PlQuickbooks;
+  assert.deepEqual([pl.mes, pl.ano, pl.moeda, pl.resumo.net_income], [9, 2026, "USD", 350]);
+});

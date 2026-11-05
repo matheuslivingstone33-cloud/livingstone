@@ -118,7 +118,8 @@ export function parseQuickbooksPL(paginas: string[]): ResultadoQuickbooks {
     return c;
   };
 
-  for (const bruta of ls.slice(Math.max(0, iPl))) {
+  // Todas as linhas: no texto extraído o cabeçalho pode vir no fim da página (como no PDF real do QuickBooks)
+  for (const bruta of ls) {
     const l = limparCabecalho(bruta);
     if (ruido(l)) continue;
     corpo++;
