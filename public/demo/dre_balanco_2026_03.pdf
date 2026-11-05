@@ -1,0 +1,77 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+6 0 obj
+<< /Length 2179 >>
+stream
+BT /F2 13 Tf 50 790 Td (Comercial Exemplo Ltda. \(dados fictícios\)) Tj ET
+BT /F1 11 Tf 50 772 Td (Demonstração do Resultado e Balanço Patrimonial - março de 2026) Tj ET
+BT /F1 10 Tf 50 756 Td (Valores em R$) Tj ET
+BT /F2 11 Tf 50 726 Td (DEMONSTRAÇÃO DO RESULTADO \(DRE\)) Tj ET
+BT /F1 10 Tf 50 702 Td (Receita bruta) Tj ET
+BT /F1 10 Tf 420 702 Td (520.000,00) Tj ET
+BT /F1 10 Tf 50 684 Td (\(-\) Deduções da receita) Tj ET
+BT /F1 10 Tf 420 684 Td (78.000,00) Tj ET
+BT /F1 10 Tf 50 666 Td (Receita líquida) Tj ET
+BT /F1 10 Tf 420 666 Td (442.000,00) Tj ET
+BT /F1 10 Tf 50 648 Td (\(-\) Custo das mercadorias vendidas) Tj ET
+BT /F1 10 Tf 420 648 Td (265.200,00) Tj ET
+BT /F1 10 Tf 50 630 Td (Lucro bruto) Tj ET
+BT /F1 10 Tf 420 630 Td (178.600,00) Tj ET
+BT /F1 10 Tf 50 612 Td (\(-\) Despesas operacionais) Tj ET
+BT /F1 10 Tf 420 612 Td (86.000,00) Tj ET
+BT /F1 10 Tf 50 594 Td (EBITDA) Tj ET
+BT /F1 10 Tf 420 594 Td (90.800,00) Tj ET
+BT /F1 10 Tf 50 576 Td (\(-\) Depreciação e amortização) Tj ET
+BT /F1 10 Tf 420 576 Td (10.000,00) Tj ET
+BT /F1 10 Tf 50 558 Td (Resultado operacional \(EBIT\)) Tj ET
+BT /F1 10 Tf 420 558 Td (80.800,00) Tj ET
+BT /F1 10 Tf 50 540 Td (Resultado financeiro) Tj ET
+BT /F1 10 Tf 420 540 Td (\(4.800,00\)) Tj ET
+BT /F1 10 Tf 50 522 Td (Lucro antes do IR e CSLL) Tj ET
+BT /F1 10 Tf 420 522 Td (76.000,00) Tj ET
+BT /F1 10 Tf 50 504 Td (\(-\) IR e CSLL) Tj ET
+BT /F1 10 Tf 420 504 Td (25.840,00) Tj ET
+BT /F1 10 Tf 50 486 Td (Lucro líquido do período) Tj ET
+BT /F1 10 Tf 420 486 Td (50.160,00) Tj ET
+BT /F2 11 Tf 50 452 Td (BALANÇO PATRIMONIAL \(saldo final do mês\)) Tj ET
+BT /F1 10 Tf 50 428 Td (Ativo total) Tj ET
+BT /F1 10 Tf 420 428 Td (1.290.000,00) Tj ET
+BT /F1 10 Tf 50 410 Td (Caixa e equivalentes) Tj ET
+BT /F1 10 Tf 420 410 Td (130.000,00) Tj ET
+BT /F1 10 Tf 50 392 Td (Passivo circulante) Tj ET
+BT /F1 10 Tf 420 392 Td (305.000,00) Tj ET
+BT /F1 10 Tf 50 374 Td (Empréstimos e financiamentos) Tj ET
+BT /F1 10 Tf 420 374 Td (230.000,00) Tj ET
+BT /F1 10 Tf 50 356 Td (Patrimônio líquido) Tj ET
+BT /F1 10 Tf 420 356 Td (704.160,00) Tj ET
+BT /F1 8 Tf 50 316 Td (Documento fictício para demonstração. Não corresponde a nenhuma empresa real.) Tj ET
+endstream
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000251 00000 n 
+0000000348 00000 n 
+0000000450 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+2681
+%%EOF

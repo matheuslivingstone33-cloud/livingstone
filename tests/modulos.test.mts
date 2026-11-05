@@ -3569,3 +3569,137 @@ test("reconciliationJson: linhasInvalidas opcional (null nas antigas) e fora de 
   assert.equal(lerLinhasInvalidas({ linhasInvalidas: { total: "x" } }), null);
   assert.equal(lerLinhasInvalidas(null), null);
 });
+
+// ---------- Consolidado Financeiro (fase 1: lib pura, XLSX e demo) ----------
+import { FORMULAS, KPI_CHAVES, checarIdentidades, kpis, kpisTrimestre, pontoEquilibrio, type Linhas, type Periodo } from "../src/lib/demonstrativos";
+import { montarPlanilhaConsolidada } from "../src/lib/xlsx";
+import { pdfText } from "../src/lib/pdf";
+
+function demoDemonstrativos(): Record<string, Linhas> {
+  const [cab, ...ls] = demo("demonstrativos_2026_esperado.csv").toString("utf8").trim().split("\n").map((l) => l.split(";"));
+  const out: Record<string, Linhas> = {};
+  cab.slice(1).forEach((p, i) => (out[p] = Object.fromEntries(ls.map((l) => [l[0], Number(l[i + 1])]))));
+  return out;
+}
+const perDemo = (mes: number, status: Periodo["status"] = "CONFERIDO"): Periodo => ({ ano: 2026, mes, status, linhas: demoDemonstrativos()[`2026-0${mes}`] });
+const perto = (a: number | null, b: number) => assert.ok(a !== null && Math.abs(a - b) < 1e-9, `${a} != ${b}`);
+
+test("Demonstrativos: identidades batem em jan e fev e geram 1 alerta em mar (lucro bruto)", () => {
+  const d = demoDemonstrativos();
+  assert.equal(checarIdentidades(d["2026-01"]).filter((i) => i.status !== "ok").length, 0);
+  // Fevereiro veio em R$ mil: arredondamento até R$ 1.000 é tolerado.
+  const fev = { ...d["2026-02"], ir_csll: 27880 };
+  assert.equal(checarIdentidades(fev, 1000).filter((i) => i.status !== "ok").length, 0);
+  assert.equal(checarIdentidades(fev, 1).filter((i) => i.status !== "ok").length, 1);
+  const mar = { ...d["2026-03"], lucro_bruto: 178600 }; // como impresso no PDF
+  const alertas = checarIdentidades(mar).filter((i) => i.status === "divergente");
+  assert.equal(alertas.length, 1);
+  assert.equal(alertas[0].chave, "lucro_bruto");
+  assert.equal(alertas[0].diferenca, 1800);
+  assert.equal(checarIdentidades({}).every((i) => i.status === "sem_dados"), true);
+});
+
+test("Demonstrativos: KPIs de janeiro e fevereiro calculados à mão", () => {
+  const jan = kpis(perDemo(1));
+  perto(jan.margem_bruta.valor, 170000 / 425000);
+  perto(jan.margem_ebitda.valor, 0.2);
+  perto(jan.margem_operacional.valor, 75000 / 425000);
+  perto(jan.margem_liquida.valor, 46200 / 425000);
+  perto(jan.roe.valor, 0.077);
+  assert.deepEqual(jan.roe.avisos, ["saldo_final"]);
+  perto(jan.roa.valor, 0.0385);
+  perto(jan.roic.valor, (75000 * 0.66) / 750000);
+  perto(jan.roi.valor, 46200 / 750000);
+  assert.equal(jan.ebitda.valor, 85000);
+  assert.deepEqual(jan.ponto_equilibrio, { valor: null, motivo: "sem_custo_variavel" });
+  const fev = kpis(perDemo(2), perDemo(1));
+  perto(fev.roe.valor, 54000 / 627000);
+  assert.equal(fev.roe.avisos, undefined);
+  perto(fev.roa.valor, 54000 / 1225000);
+  perto(fev.roic.valor, (86000 * (1 - 28000 / 82000)) / ((750000 + 779000) / 2));
+  // Sem saldo médio: usa o saldo final, sem aviso.
+  perto(kpis(perDemo(2), perDemo(1), { saldoMedio: false }).roe.valor, 54000 / 654000);
+  perto(kpis(perDemo(1), undefined, { capitalInvestido: "pl_emprestimos" }).roi.valor, 46200 / 850000);
+  for (const k of KPI_CHAVES) for (const v of [jan[k].valor, fev[k].valor]) assert.ok(v === null || Number.isFinite(v));
+});
+
+test("Demonstrativos: divisor zero, PL negativo e LAIR <= 0", () => {
+  const base = perDemo(1).linhas;
+  const z = kpis({ ...base, receita_liquida: 0, patrimonio_liquido: 0, emprestimos: 100000, caixa: 100000 });
+  assert.deepEqual(z.margem_bruta, { valor: null, motivo: "divisor_zero" });
+  assert.equal(z.roe.motivo, "divisor_zero");
+  assert.equal(z.roic.motivo, "divisor_zero");
+  assert.equal(z.roi.motivo, "divisor_zero");
+  const neg = kpis({ ...base, patrimonio_liquido: -50000 });
+  assert.deepEqual(neg.roe, { valor: null, motivo: "pl_negativo" });
+  const prej = kpis({ ...base, resultado_financeiro: -80000, lair: -5000, ir_csll: 0, lucro_liquido: -5000 });
+  assert.deepEqual(prej.roic.avisos, ["saldo_final", "aliquota_padrao"]);
+  perto(prej.roic.valor, (75000 * 0.66) / 750000);
+  perto(kpis({ ...base, lair: 0, ir_csll: 0 }, undefined, { aliquotaPadrao: 0.24 }).roic.valor, (75000 * 0.76) / 750000);
+  assert.equal(kpis({}).margem_bruta.motivo, "linha_ausente");
+});
+
+test("Demonstrativos: trimestre soma fluxos, usa saldo final, marca parcial e ignora rascunho", () => {
+  const t = kpisTrimestre([perDemo(1), perDemo(2), perDemo(3)]);
+  assert.equal(t.situacao, "completo");
+  assert.equal(t.linhas.receita_liquida, 425000 + 459000 + 442000);
+  assert.equal(t.linhas.lucro_liquido, 46200 + 54000 + 50160);
+  assert.equal(t.linhas.patrimonio_liquido, 704160);
+  perto(t.kpis.margem_bruta.valor, (170000 + 184000 + 176800) / 1326000);
+  perto(t.kpis.roe.valor, 150360 / ((600000 + 654000 + 704160) / 3));
+  const p = kpisTrimestre([perDemo(1), perDemo(2), perDemo(3, "RASCUNHO")]);
+  assert.equal(p.situacao, "parcial (2/3)");
+  assert.equal(p.parcial, true);
+  assert.equal(p.linhas.receita_liquida, 884000);
+  assert.equal(p.linhas.patrimonio_liquido, 654000);
+  const v = kpisTrimestre([perDemo(1, "RASCUNHO")]);
+  assert.equal(v.situacao, "parcial (0/3)");
+  assert.equal(v.kpis.roe.motivo, "sem_periodos");
+});
+
+test("Demonstrativos: ponto de equilíbrio nos 3 casos", () => {
+  const l = perDemo(1).linhas;
+  // 1) custos separados na DRE: MC = 425.000 − 200.000 = 225.000; PE = 150.000 / (225/425)
+  perto(pontoEquilibrio({ ...l, custos_variaveis: 200000, custos_fixos: 150000 }).valor, 150000 / (225000 / 425000));
+  // 2) % variável do CMV: todo o CMV variável → fixos = 85.000 + 10.000; MC% = 0,4
+  perto(pontoEquilibrio(l, { pctVariavelSobreCmv: 1 }).valor, 237500);
+  // 3) sem informação
+  assert.deepEqual(pontoEquilibrio(l), { valor: null, motivo: "sem_custo_variavel" });
+  assert.equal(pontoEquilibrio({ ...l, custos_variaveis: 425000, custos_fixos: 1 }).motivo, "divisor_zero");
+});
+
+test("Demonstrativos: pdfText lê os PDFs da demo e encontra os números", async () => {
+  const t1 = await pdfText(demo("dre_balanco_2026_01.pdf"));
+  for (const s of ["500.000,00", "46.200,00", "(5.000,00)", "1.200.000,00", "Lucro líquido"]) assert.ok(t1.includes(s), s);
+  const t2 = await pdfText(demo("dre_balanco_2026_02.pdf"));
+  for (const s of ["R$ mil", "540", "654"]) assert.ok(t2.includes(s), s);
+  const t3 = await pdfText(demo("dre_balanco_2026_03.pdf"));
+  assert.ok(t3.includes("178.600,00") && !t3.includes("176.800,00"));
+  assert.ok(!/\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}/.test(t1 + t2 + t3), "sem CNPJ");
+});
+
+test("Demonstrativos: XLSX com 3 abas e números como número", async () => {
+  const { default: readXlsxFile } = await import("read-excel-file/node");
+  const buf = montarPlanilhaConsolidada(2026, [perDemo(1), perDemo(2), perDemo(3, "RASCUNHO")]);
+  const abas = await readXlsxFile(buf);
+  assert.deepEqual(abas.map((a) => a.sheet), ["Dados", "KPIs", "Fórmulas"]);
+  const dados = abas[0].data;
+  assert.equal(dados[0][1], "Jan");
+  assert.equal(dados[0][13], "T1");
+  assert.equal(dados[1][0], "Receita bruta");
+  assert.equal(dados[1][1], 500000);
+  assert.equal(dados[1][3], null); // março em rascunho fica vazio
+  assert.equal(dados[1][13], 1040000);
+  const k = abas[1].data;
+  assert.equal(typeof k[1][1], "number");
+  perto(k[1][1] as number, 0.4);
+  assert.equal(k.at(-1)![13], "parcial (2/3)");
+  assert.equal(abas[2].data.length, FORMULAS.pt.length + 1);
+});
+
+test("Demonstrativos: FORMULAS pt e en com as mesmas chaves", () => {
+  const ch = (l: "pt" | "en") => FORMULAS[l].map((f) => f.chave);
+  assert.deepEqual(ch("pt"), ch("en"));
+  assert.deepEqual([...ch("pt")].sort(), [...KPI_CHAVES].sort());
+  for (const f of [...FORMULAS.pt, ...FORMULAS.en]) assert.ok(f.nome && f.formula && f.explicacao);
+});
